@@ -31,6 +31,16 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
+## What's new in 0.4.8
+
+* **Start mode: Linux desktop or CodeAque only - no commands.** *Settings > Start mode* has two clear choices, **Use Linux desktop** and **Use CodeAque only (console mode)**. It shows the current setting, read back from the computer's own files, asks for your password in the on-screen box (once), and then offers **Log out now** or **Restart the computer now** (the restart asks again, with No highlighted).
+  - *Use Linux desktop* copies the three console-mode files to `/var/lib/atari-launcher/kiosk-backup/` and then removes them (the auto-login to the CodeAque session goes away). CodeAque stays installed, is put in the Mint menu and as an icon on the desktop, and your games, saves and settings are untouched.
+  - *Use CodeAque only* writes the three files again (same as before).
+  - If another LightDM file still auto-logs in to the CodeAque session, the result says which file.
+* **Power menu > Quit to the Linux desktop** (only in console mode): asks first, then logs out into the Mint desktop for this login only, with no password. The next start is CodeAque again.
+* The old *CodeAque-only mode* page is still there (details, update, repair), under the new row.
+* By hand, in a Terminal (for helpers): back to the desktop - `sudo rm /etc/lightdm/lightdm.conf.d/90-atari-kiosk.conf` and restart. Console mode again from the backup - `sudo cp -p /var/lib/atari-launcher/kiosk-backup/90-atari-kiosk.conf /etc/lightdm/lightdm.conf.d/ && sudo cp -p /var/lib/atari-launcher/kiosk-backup/atari-session /usr/local/bin/ && sudo cp -p /var/lib/atari-launcher/kiosk-backup/atari.desktop /usr/share/xsessions/` and restart.
+
 ## What's new in 0.4.7
 
 * **New name and logo: CodeAque.** The app is now called **CodeAque** everywhere you can see it (window title, menus, About page, Power menu
@@ -111,7 +121,7 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 - **If the in-app updater cannot be trusted on your connection, one command does the same by hand** (resumes if it drops, checks the SHA256 against the release's own list, keeps your settings and games):
 
   ```bash
-  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.4.7.tar.gz https://github.com/hoodlumasylum/atari/releases/download/v0.4.7/atari-0.4.7.tar.gz && curl -fsSL https://github.com/hoodlumasylum/atari/releases/download/v0.4.7/SHA256SUMS.txt | grep ' atari-0.4.7.tar.gz$' | sha256sum -c - && tar xzf atari-0.4.7.tar.gz && cd atari-0.4.7 && ./install.sh --yes
+  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.4.8.tar.gz https://github.com/hoodlumasylum/atari/releases/download/v0.4.8/atari-0.4.8.tar.gz && curl -fsSL https://github.com/hoodlumasylum/atari/releases/download/v0.4.8/SHA256SUMS.txt | grep ' atari-0.4.8.tar.gz$' | sha256sum -c - && tar xzf atari-0.4.8.tar.gz && cd atari-0.4.8 && ./install.sh --yes
   ```
 
 ## What's new in 0.4.1
@@ -333,13 +343,13 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.4.7.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
+1. Download **`atari-0.4.8.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
 2. Open a **Terminal** and type:
 
    ```bash
    cd ~/Downloads
-   tar xzf atari-0.4.7.tar.gz
-   cd atari-0.4.7
+   tar xzf atari-0.4.8.tar.gz
+   cd atari-0.4.8
    ./install.sh
    ```
 

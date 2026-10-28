@@ -546,6 +546,7 @@ Window {
         else if (r.kind === "sgdbkey") openOsk("sgdbkey")
         else if (r.kind === "installmenu") backend.installEmulators()
         else if (r.kind === "steampage") openPage("steam")
+        else if (r.kind === "startmodepage") openPage("startmode")
         else if (r.kind === "kioskpage") openPage("kiosk")
         else if (r.kind === "quietbootpage") openPage("quietboot")
         else if (r.kind === "bootreport") backend.saveBootReport()

@@ -16,7 +16,7 @@ from typing import Callable
 Run = Callable[..., tuple]
 
 NO_NMCLI = ("This computer has no NetworkManager (the nmcli tool), so CodeAque cannot manage WiFi. On Linux Mint it is installed "
-            "by default - connect with the network icon on the Mint desktop instead (Settings > Back to Mint desktop).")
+            "by default - connect with the network icon on the Mint desktop instead (Settings > Start mode > Use Linux desktop).")
 NO_NM = ("NetworkManager is not running, so WiFi cannot be managed here. Restart the computer; if it is still off, "
          "connect with the Mint desktop's network settings.")
 NO_ADAPTER = ("No WiFi adapter was found in this computer. If it should have one, check that it is not switched off by a key or "

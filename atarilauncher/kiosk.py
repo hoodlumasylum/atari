@@ -7,7 +7,7 @@ What turning it ON does (one password window, `pkexec`; three small files, all n
 Nothing else is touched. Turning it OFF removes exactly those three files.
 
 Ways back to the normal Mint desktop (also written in the README and Help):
-  * CodeAque > Settings > "Back to Mint desktop"  (needs the password once; removes the three files)
+  * CodeAque > Settings > Start mode > "Use Linux desktop"  (needs the password once; copies the three files to a backup folder, then removes them)
   * CodeAque > Settings > "Open the Mint desktop once"  (no password; this login only)
   * safety net: if CodeAque crashes 5 times in a row, each within seconds of starting, the session starts the Mint desktop by itself
   * at the login screen: click the session icon (top right / next to your name) and choose Cinnamon
@@ -42,6 +42,7 @@ class Layout:
     session_script: str = "usr/local/bin/atari-session"
     xsession: str = "usr/share/xsessions/atari.desktop"
     lightdm_conf: str = "etc/lightdm/lightdm.conf.d/90-atari-kiosk.conf"
+    backup_dir: str = "var/lib/atari-launcher/kiosk-backup"      # "Use Linux desktop" copies the three files here before removing them
 
     def p(self, rel: str) -> Path:
         return self.root / rel
@@ -210,7 +211,7 @@ def session_outdated(layout: Layout = DEFAULT) -> bool:
 
 def render_session_script(run_sh: Path, desktop_exec: str, home_hint: str = "") -> str:
     return f"""#!/bin/sh
-# CodeAque-only session. Written by CodeAque > Settings > CodeAque-only mode. Remove it with Settings > Back to Mint desktop.
+# CodeAque-only session. Written by CodeAque > Settings > CodeAque-only mode. Remove it with Settings > Start mode > Use Linux desktop.
 # atari-session-version: {SESSION_VERSION}
 # This script IS the session: it never ends while CodeAque is wanted. Whenever CodeAque stops - a crash, a game that took it down,
 # "Restart CodeAque" - it starts CodeAque again after a second. Launching and closing games, browsers and emulators never reaches here.
@@ -268,7 +269,7 @@ Type=XSession
 
 
 def render_lightdm(user: str) -> str:
-    return f"""# Written by CodeAque > Settings > CodeAque-only mode. Remove with Settings > Back to Mint desktop.
+    return f"""# Written by CodeAque > Settings > CodeAque-only mode. Remove with Settings > Start mode > Use Linux desktop.
 [Seat:*]
 autologin-user={user}
 autologin-user-timeout=0
@@ -296,8 +297,31 @@ def enable_script(user: str, layout: Layout = DEFAULT, run_sh: Path | None = Non
     return "\n".join(steps)
 
 
+def backup_files(layout: Layout = DEFAULT) -> list[Path]:
+    return [layout.p(layout.backup_dir) / f.name for f in layout.files]
+
+
+def has_backup(layout: Layout = DEFAULT) -> bool:
+    return all(f.is_file() for f in backup_files(layout))
+
+
 def disable_script(layout: Layout = DEFAULT) -> str:
-    return "set -e\nrm -f " + " ".join(shlex.quote(str(f)) for f in layout.files)
+    """Copies each of the three files into the backup folder first (only those that exist), then removes them. A failed copy stops the
+    script before anything is removed (set -e), so the files are never lost."""
+    b = shlex.quote(str(layout.p(layout.backup_dir)))
+    lines = ["set -e", f"mkdir -p {b}"]
+    for f in layout.files:
+        q = shlex.quote(str(f))
+        lines.append(f"[ ! -f {q} ] || cp -p {q} {b}/")
+    lines.append("rm -f " + " ".join(shlex.quote(str(f)) for f in layout.files))
+    return "\n".join(lines)
+
+
+def restore_backup_command(layout: Layout = DEFAULT) -> str:
+    """The Terminal line that puts the three files back from the backup (the manual way to turn CodeAque-only mode on again)."""
+    b = layout.p(layout.backup_dir)
+    return (f"sudo cp -p {b}/90-atari-kiosk.conf {layout.p(layout.lightdm_conf)} && sudo cp -p {b}/atari-session {layout.p(layout.session_script)} "
+            f"&& sudo cp -p {b}/atari.desktop {layout.p(layout.xsession)}")
 
 
 def _pkexec(script: str, out: Callable[[str], None], run: Callable | None) -> int:
@@ -317,8 +341,63 @@ def _result_text(rc: int, ok_text: str, fail_text: str) -> tuple[bool, str]:
 
 
 ON_TEXT = ("CodeAque-only mode is ON. Next time the computer starts (or after you log out) it goes straight into CodeAque. "
-           "To get the normal desktop back: Settings > Back to Mint desktop.")
-OFF_TEXT = ("CodeAque-only mode is OFF. The normal Mint login comes back after the next restart (or log out and in).")
+           "To get the normal desktop back: Settings > Start mode > Use Linux desktop.")
+OFF_TEXT = ("Linux desktop mode is ON. CodeAque is still installed. The normal Mint login and desktop come back after you restart the computer "
+            "or log out - do that now, then CodeAque is in the Mint menu and on the desktop.")
+
+
+# ------------------------------------------------------------------ which mode is it? (read back from the files, never guessed)
+def autologin_leftovers(layout: Layout = DEFAULT) -> list[str]:
+    """LightDM files other than ours that still auto-log-in into the CodeAque session (they would keep the computer in console mode)."""
+    found = []
+    mine = layout.p(layout.lightdm_conf)
+    cands = [layout.p("etc/lightdm/lightdm.conf")]
+    d = layout.p("etc/lightdm/lightdm.conf.d")
+    if d.is_dir():
+        cands += sorted(d.glob("*.conf"))
+    for f in cands:
+        if f == mine:
+            continue
+        try:
+            if re.search(rf"^\s*autologin-session\s*=\s*{SESSION_NAME}\s*$", f.read_text(errors="replace"), re.M):
+                found.append(str(f))
+        except OSError:
+            pass
+    return found
+
+
+def read_mode(layout: Layout = DEFAULT, env: dict | None = None) -> dict:
+    """What the computer is set to do at the next start, read from the files, and what this running CodeAque is.
+    {'next': 'console'|'desktop'|'broken', 'running': 'console'|'desktop', 'lines': [plain text], 'backup': bool}"""
+    conf = layout.p(layout.lightdm_conf)
+    present = [f.is_file() for f in layout.files]
+    leftovers = autologin_leftovers(layout)
+    lines: list[str] = []
+    if all(present):
+        try:
+            sets_login = bool(re.search(rf"^\s*autologin-session\s*=\s*{SESSION_NAME}\s*$", conf.read_text(errors="replace"), re.M))
+        except OSError:
+            sets_login = False
+        nxt = "console" if sets_login else "broken"
+        lines.append("Next start: CodeAque only (console mode) - the computer starts straight into CodeAque." if sets_login else
+                     "Next start: unclear - the CodeAque session files are there but the auto-login line is missing.")
+    elif any(present):
+        nxt = "broken"
+        lines.append("Next start: unclear - only some of the CodeAque-only files are there (" + ", ".join(f.name for f, p in zip(layout.files, present) if p)
+                     + "). Choose one of the two buttons to put it right.")
+    elif leftovers:
+        nxt = "broken"
+        lines.append("Next start: probably CodeAque only - another LightDM file still logs in to the CodeAque session: " + ", ".join(leftovers))
+    else:
+        nxt = "desktop"
+        lines.append("Next start: the Linux Mint login and desktop. CodeAque is installed and starts from the menu.")
+    kind, _ = running_description(env)
+    running = "console" if kind == "code-only" else "desktop"
+    lines.append("Right now CodeAque is running " + ("as the console-mode session." if running == "console" else "inside the Linux desktop."))
+    backup = has_backup(layout)
+    if backup:
+        lines.append("A backup of the console-mode files is kept in /" + layout.backup_dir + ".")
+    return {"next": nxt, "running": running, "lines": lines, "backup": backup, "leftovers": leftovers}
 
 
 WM_NAMES = ("openbox", "metacity", "marco", "xfwm4")
@@ -385,6 +464,13 @@ def disable(layout: Layout = DEFAULT, run: Callable | None = None, out: Callable
         ok, text = _result_text(rc, OFF_TEXT, "Could not turn CodeAque-only mode off")
         if ok and enabled(layout):
             return False, "The files are still there. In a Terminal run:  sudo rm /etc/lightdm/lightdm.conf.d/90-atari-kiosk.conf"
+        if ok:
+            left = autologin_leftovers(layout)
+            if left:
+                return True, (text + " Careful: " + ", ".join(left) + " also logs in to the CodeAque session, so the computer may still start in "
+                              "console mode. Open that file and remove the autologin-session line.")
+            if not has_backup(layout):
+                text += " (No backup copy of the old files was found; Use CodeAque only (console mode) writes them again.)"
         return ok, text
     except Exception as exc:
         return False, f"Could not turn CodeAque-only mode off: {exc}"
@@ -407,17 +493,28 @@ def open_desktop_once(home: Path | None = None, run: Callable = None, which: Cal
         flag.write_text("1")
     except OSError as exc:
         return False, f"Could not leave the note for the next login: {exc}"
+    done, _ = log_out(run, which, env)
+    if not done:
+        return True, "Done. Log out (or restart) and the Mint desktop opens once."
+    return True, "Logging out - the Mint desktop opens next."
+
+
+def log_out(run: Callable | None = None, which: Callable = shutil.which, env: dict | None = None) -> tuple[bool, str]:
+    """End this login (no password). (False, text) when no way to log out was found or it failed."""
+    import subprocess
+    run = run or subprocess.run
+    env = env if env is not None else os.environ
     if which("cinnamon-session-quit"):
         cmd = ["cinnamon-session-quit", "--logout", "--no-prompt"]
     elif which("loginctl") and env.get("XDG_SESSION_ID"):
         cmd = ["loginctl", "terminate-session", env["XDG_SESSION_ID"]]
     else:
-        return True, "Done. Log out (or restart) and the Mint desktop opens once."
+        return False, "Could not find a way to log out from here. Log out from the menu, or restart the computer."
     try:
         run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
-    except (OSError, subprocess.SubprocessError):
-        return True, "Done. Log out (or restart) and the Mint desktop opens once."
-    return True, "Logging out - the Mint desktop opens next."
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"Logging out did not work ({exc}). Restart the computer instead."
+    return True, "Logging out ..."
 
 
 def session_log_path(home: Path | None = None) -> Path:

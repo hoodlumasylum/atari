@@ -141,6 +141,7 @@ class Backend(QObject):
             rootauth.set_provider(lambda prompt, error: self.ask_text_blocking("ADMINISTRATOR PASSWORD", prompt, True, "", error))
         self._kiosk_busy = False
         self._kiosk_msg = ""
+        self._sm_changed = ""            # "desktop" / "console" after a successful switch on the Start mode page (shows the log-out / restart prompt)
         self._kiosk_layout = kiosk.DEFAULT
         self.quietbootDone.connect(self._quietboot_finished, Qt.QueuedConnection)
         self.bootReportDone.connect(self._boot_report_finished, Qt.QueuedConnection)
@@ -1225,7 +1226,7 @@ class Backend(QObject):
                                 "no login screen. Your files and games are not touched."),
                      self._info("What changes (needs your password once): three small files named \"atari\" - the login screen's auto-login and a "
                                 "\"session\" that starts CodeAque. Turning it off removes exactly those files."),
-                     self._info("Ways back, always: Settings > Back to Mint desktop; or at the login screen pick the Cinnamon session; "
+                     self._info("Ways back, always: Settings > Start mode > Use Linux desktop; or at the login screen pick the Cinnamon session; "
                                 "or if CodeAque crashes five times in a row right after starting, the Mint desktop starts by itself."),
                      self._info(kiosk.RECOVERY)]
             for c in checks:
@@ -1240,6 +1241,105 @@ class Backend(QObject):
         rows.append({"kind": "item", "id": "back", "title": "No, keep my normal desktop" if not kiosk.enabled(lay) else "Back"})
         return rows
 
+    # ----- Start mode: Linux desktop or CodeAque only ----------------------------------------
+    def _startmode_rows(self) -> list:
+        lay = self._kiosk_layout
+        if self._kiosk_busy:
+            return [self._info("Working - CodeAque asks for your password on this screen first..."), {"kind": "item", "id": "back", "title": "Back"}]
+        rows: list = []
+        if self._kiosk_msg:
+            rows.append(self._info("Result:  " + self._kiosk_msg))
+        mode = kiosk.read_mode(lay)
+        nxt = mode["next"]
+        if self._sm_changed:
+            rows.append(self._info("The change is saved. It takes effect after you log out or restart - choose below."))
+            rows.append({"kind": "item", "id": "smlogout", "title": "Log out now",
+                         "detail": "No password. You come back to the " + ("Linux Mint login." if self._sm_changed == "desktop" else "computer's login, which then starts CodeAque.")})
+            rows.append({"kind": "item", "id": "smreboot", "title": "Restart the computer now",
+                         "detail": "Asks once more, with No highlighted."})
+            rows.append({"kind": "item", "id": "back", "title": "Later (I will restart myself)"})
+        rows += [self._info("Read back from the computer just now:  " + t) for t in mode["lines"]]
+        rows.append(self._info("Choose how this computer starts. Your games, saves and settings are never touched; CodeAque stays installed either way."))
+        rows.append({"kind": "done", "id": "smdesktop", "title": "Use Linux desktop",
+                     "value": "SELECTED" if nxt == "desktop" else "",
+                     "detail": "Normal Linux Mint login and desktop at start-up. CodeAque goes into the Mint menu and onto the desktop. "
+                               "Asks for your password once; a backup of the old files is kept."})
+        rows.append({"kind": "done", "id": "smconsole", "title": "Use CodeAque only (console mode)",
+                     "value": "SELECTED" if nxt == "console" else "",
+                     "detail": "The computer starts straight into CodeAque, like a games console, with no Mint desktop. Asks for your password once."})
+        if mode["running"] == "console":
+            rows.append({"kind": "item", "id": "smonce", "title": "Open the Mint desktop once (log out now)",
+                         "detail": "No password. This login only - the next start is CodeAque again."})
+        if nxt == "desktop":
+            have = branding.launchers_present()
+            rows.append({"kind": "item", "id": "smlaunchers", "title": "Put CodeAque on the desktop and in the Mint menu",
+                         "value": "Both there" if all(have.values()) else "",
+                         "detail": "Menu: " + ("yes" if have["menu"] else "missing") + ".  Desktop icon: " + ("yes" if have["desktop"] else "missing")
+                                   + ".  Press to add whatever is missing (never replaces other programs' files)."})
+        rows.append(self._info("If something goes wrong: " + kiosk.RECOVERY))
+        rows.append(self._info("To go back to the Linux desktop by hand, in a Terminal:  sudo rm /etc/lightdm/lightdm.conf.d/90-atari-kiosk.conf  and restart."))
+        rows.append(self._info("To turn console mode on again by hand (from the backup):  " + kiosk.restore_backup_command(lay)
+                               + "  or the repair line:  " + kiosk.RESTORE_COMMAND))
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    def _startmode_activate(self, rid: str) -> str:
+        if rid in ("smdesktop", "smconsole"):
+            if self._kiosk_busy:
+                return ""
+            lay = self._kiosk_layout
+            mode = kiosk.read_mode(lay)
+            want = "desktop" if rid == "smdesktop" else "console"
+            if mode["next"] == want and not mode["leftovers"]:
+                self.show_toast("It is already set that way. Nothing was changed.", 6000)
+                return ""
+            self._kiosk_busy = True
+            self._kiosk_msg = ""
+            self._sm_changed = ""
+            self.show_toast("Type your password in the box that opens on this screen ...", 6000)
+
+            def work():
+                try:
+                    if want == "desktop":
+                        done, msg = kiosk.disable(lay)
+                        if done:
+                            added = branding.ensure_launchers(desktop=True)
+                            msg += (" CodeAque was added to " + " and ".join(added) + ".") if added else ""
+                    else:
+                        done, msg = kiosk.enable(lay)
+                    after = kiosk.read_mode(lay)["next"]             # read it back from the files, do not trust the exit code alone
+                    if done and after != want:
+                        done, msg = False, "The change did not take: the files say \"" + after + "\". " + msg
+                    elif done:
+                        msg += " Read back: next start is " + ("the Linux desktop." if after == "desktop" else "CodeAque only.")
+                    if done:
+                        self._sm_changed = want
+                except Exception as exc:  # pragma: no cover
+                    done, msg = False, f"The change hit a problem: {exc}"
+                studio_fix.log(f"start mode {want}: ok={done} {msg}")
+                self.kioskDone.emit(done, msg)
+            threading.Thread(target=work, daemon=True, name="atari-startmode").start()
+            return "refresh"
+        if rid == "smlogout":
+            ok, msg = kiosk.log_out()
+            self.show_toast(msg, 8000)
+            return ""
+        if rid == "smreboot":
+            self._power_pending = "reboot"
+            return "page:power"
+        if rid == "smonce":
+            done, msg = kiosk.open_desktop_once()
+            self.show_toast(msg, 8000)
+            return ""
+        if rid == "smlaunchers":
+            added = branding.ensure_launchers(desktop=True)
+            have = branding.launchers_present()
+            self._kiosk_msg = ("Added to " + " and ".join(added) + "." if added else "Nothing to add.") + \
+                f" Read back: menu {'yes' if have['menu'] else 'NO'}, desktop icon {'yes' if have['desktop'] else 'NO'}."
+            self.pageChanged.emit()
+            return "refresh"
+        return ""
+
     # ----- Power menu ------------------------------------------------------------------
     @Slot()
     def powerReset(self) -> None:
@@ -1247,6 +1347,11 @@ class Backend(QObject):
 
     def _power_rows(self) -> list:
         pend = self._power_pending
+        if pend == "desktop":
+            return [self._info("Quit to the Linux desktop?  CodeAque closes and the Linux Mint desktop opens for this login only (no password). "
+                               "The next time the computer starts, it goes straight into CodeAque again."),
+                    {"kind": "item", "id": "power_no", "title": "No, stay in CodeAque"},
+                    {"kind": "item", "id": "power_yes", "title": "Yes, quit to the Linux desktop"}]
         if pend:
             what, _ = power.ACTIONS[pend]
             return [self._info(f"Really {what}?  Anything you are playing that is not saved will be lost."),
@@ -1255,6 +1360,8 @@ class Backend(QObject):
         return [{"kind": "item", "id": "power_restartcode", "title": "Restart CodeAque" if kiosk.in_session() else "Restart CodeAque (close it and open it again)",
                  "detail": "Starts CodeAque again. Your games keep their settings and play time."},
                 *([] if kiosk.in_session() else [{"kind": "item", "id": "power_quitcode", "title": "Quit CodeAque"}]),
+                *([{"kind": "item", "id": "power_desktop", "title": "Quit to the Linux desktop",
+                    "detail": "Opens the normal Mint desktop for this login only. The next start is CodeAque again."}] if kiosk.in_session() else []),
                 {"kind": "item", "id": "power_reboot", "title": "Restart device", "detail": "Restarts the whole computer (asks first)."},
                 {"kind": "item", "id": "power_poweroff", "title": "Shut down", "detail": "Turns the computer off (asks first)."},
                 {"kind": "item", "id": "power_suspend", "title": "Sleep", "detail": "Suspends the computer; press the power button to wake it."},
@@ -1267,6 +1374,18 @@ class Backend(QObject):
         if rid == "power_quitcode":
             self.quit()
             return ""
+        if rid == "power_desktop":
+            self._power_pending = "desktop"
+            return "page:power"
+        if rid == "power_yes" and self._power_pending == "desktop":
+            self._power_pending = ""
+            if self._demo:
+                self.show_toast("Demo mode: nothing happens.")
+                return "close"
+            done, msg = kiosk.open_desktop_once()
+            kiosk.log_event("quit to desktop: " + msg)
+            self.show_toast(msg, 10000)
+            return "close"
         if rid in ("power_reboot", "power_poweroff"):
             self._power_pending = rid[len("power_"):]
             return "page:power"          # reopen the page: the highlight goes to the first row, "No, go back" (a refresh would keep the old row = Yes)
@@ -3576,8 +3695,13 @@ class Backend(QObject):
         rows.append({"kind": "wifipage", "title": "WiFi", "value": self.wifi.summary or "",
                      "detail": "Find a network, type its password with the on-screen keyboard, see if it connected, or forget a network. "
                                "Works in CodeAque-only mode too."})
-        rows.append({"kind": "kioskpage", "title": ("Back to Mint desktop (CodeAque-only mode is ON)" if kiosk.enabled(self._kiosk_layout)
-                                          else "CodeAque-only mode (start straight into CodeAque)"),
+        _mode = kiosk.read_mode(self._kiosk_layout)["next"]
+        rows.append({"kind": "startmodepage", "title": "Start mode: Linux desktop or CodeAque only",
+                     "value": {"console": "CODEAQUE ONLY", "desktop": "LINUX DESKTOP"}.get(_mode, "CHECK"),
+                     "detail": "Choose whether the computer starts into the normal Linux Mint desktop or straight into CodeAque like a console. "
+                               "Shows the current setting, read back from the computer."})
+        rows.append({"kind": "kioskpage", "title": ("CodeAque-only mode: details, update and repair (ON)" if kiosk.enabled(self._kiosk_layout)
+                                          else "CodeAque-only mode: details (OFF)"),
                      "value": "ON" if kiosk.enabled(self._kiosk_layout) else "OFF",
                      "detail": "Makes the computer boot into CodeAque with no Mint desktop. Asks you to confirm first, and there is always a way back."})
         rows.append({"kind": "quietbootpage", "title": "Quiet boot: hide the Mint logo and menus",
@@ -3724,7 +3848,7 @@ class Backend(QObject):
                 "winchoose": "WHICH PROGRAM STARTS THE GAME?", "winwork": "OPENING THE ARCHIVE",
                 "install": "INSTALL", "installmenu": "INSTALL EMULATORS & APPS", "steam": "STEAM",
                 "recordings": "RECORDINGS", "coverpick": "PICK A COVER", "nocovers": "COVERS NOT FOUND",
-                "addgames": "ADD GAMES", "kiosk": "CODE-ONLY MODE", "quietboot": "QUIET BOOT", "power": "POWER", "downloads": "DOWNLOADS", "golive": "GO LIVE", "robloxfix": "FIX ROBLOX",
+                "addgames": "ADD GAMES", "kiosk": "CODEAQUE-ONLY MODE", "startmode": "START MODE", "quietboot": "QUIET BOOT", "power": "POWER", "downloads": "DOWNLOADS", "golive": "GO LIVE", "robloxfix": "FIX ROBLOX",
                 "dlsystem": "WHICH SYSTEM IS THIS FILE FOR?", "files": "MY FILES", "fileact": "WHAT TO DO WITH IT", "deletegame": "DELETE GAME", "about": "ABOUT CODEAQUE"}.get(name, name.upper())
 
     @Slot(str, result=str)
@@ -3749,6 +3873,7 @@ class Backend(QObject):
                 "coverpick": "Enter / A uses the highlighted picture.  Esc / B = back.",
                 "nocovers": "Games that no cover was found for.  Esc / B = back.",
                 "addgames": "Up/Down to choose, Enter / A or a click to press.  Esc / B = back.",
+                "startmode": "Choose one. Esc / B = back.",
                 "kiosk": "Read this, then choose.  Esc / B = back - nothing changes until you press Yes.",
                 "power": "Up/Down to choose, Enter / A to press.  Restart and shut down ask first.  Esc / B = back.",
                 "quietboot": "Read this, then choose.  Esc / B = back - nothing changes until you press Yes."}.get(name, "")
@@ -3965,6 +4090,8 @@ class Backend(QObject):
             return self._steam_rows()
         if name == "kiosk":
             return self._kiosk_rows()
+        if name == "startmode":
+            return self._startmode_rows()
         if name == "quietboot":
             return self._quietboot_rows()
         if name == "power":
@@ -4029,7 +4156,7 @@ class Backend(QObject):
                        "the on-screen keyboard (controller: D-pad + A, L1 = delete, R1 = switch letters / capitals / symbols), then CONNECT. "
                        "It works in CodeAque-only mode too. \"Forget\" removes a saved network."),
             self._info("Q: How do I make the computer start straight into CodeAque, like a console?  A: Settings > CodeAque-only mode. "
-                       "To get the normal desktop back: Settings > Back to Mint desktop (or pick the Cinnamon session on the login screen)."),
+                       "To get the normal desktop back: Settings > Start mode > Use Linux desktop (or pick the Cinnamon session on the login screen)."),
             {"kind": "item", "id": "inputfix", "title": "Steam says \"Missing permissions for input devices\"? Fix controller permissions",
              "detail": "Installs Valve's controller rules (steam-devices) so Steam and CodeAque can use your gamepad. Asks for your password once."},
             {"kind": "item", "id": "studiofix", "title": "Studio does not work? Fix Studio",
@@ -4181,6 +4308,8 @@ class Backend(QObject):
             return ""
         if name == "kiosk":
             return self._kiosk_activate(rid)
+        if name == "startmode":
+            return self._startmode_activate(rid)
         if name == "quietboot":
             return self._quietboot_activate(rid)
         if name == "power":

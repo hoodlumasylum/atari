@@ -94,7 +94,7 @@ def test_enable_writes_exactly_three_files_and_disable_removes_them(box):
     layout, run_sh, tmp = box
     run = fake_pkexec(layout)
     ok, text = kiosk.enable(layout, run, user="hazel", checks=checks(box), run_sh=run_sh)
-    assert ok and "Settings > Back to Mint desktop" in text and kiosk.enabled(layout)
+    assert ok and "Settings > Start mode > Use Linux desktop" in text and kiosk.enabled(layout)
     assert len(run.calls) == 1                                           # ONE password window
     sess, xs, lm = (layout.p(r) for r in (layout.session_script, layout.xsession, layout.lightdm_conf))
     assert os.access(sess, os.X_OK) and not os.access(xs, os.X_OK)
@@ -246,11 +246,11 @@ def test_settings_row_confirm_screen_and_result(app, tmp_path, monkeypatch, box)
         assert [r.get("id") for r in rows if r["kind"] != "info"] == ["kioskupdate", "kioskoff", "kioskonce", "back"]
         assert rows[0]["kind"] == "info" and rows[0]["title"].startswith("Result:")
         row = [r for r in b.setupRows() if r.get("kind") == "kioskpage"][0]
-        assert row["value"] == "ON" and row["title"].startswith("Back to Mint desktop")
+        assert row["value"] == "ON" and row["title"].startswith("CodeAque-only mode: details")
         assert b.pageActivate("kiosk", "kioskoff") == "refresh"            # the way back from Settings
         assert wait_for(app, lambda: not kiosk.enabled(layout), 10)
         assert wait_for(app, lambda: not b._kiosk_busy, 5)
-        assert "CodeAque-only mode is OFF" in b.toast
+        assert "Linux desktop mode is ON" in b.toast
         assert not any(f.exists() for f in layout.files)
     finally:
         ui.close()
