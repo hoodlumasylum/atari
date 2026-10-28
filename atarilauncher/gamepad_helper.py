@@ -3,6 +3,8 @@
 It uses SDL2 (bundled with the `pygame` package) which understands practically every
 controller (Xbox, PlayStation, Switch Pro, 8BitDo...). It prints one word per line:
 up down left right accept back favorite options system search prev next quitapp record
+Lines that start with `#` are information for the Controllers page: `#pad <name>`, `#pad-removed`, `#btn <name>` (every button pressed, as SDL
+names it), `#axis <name> <left|right|up|down|pulled>` (a stick or trigger moved past half way).
 (`quitapp` = Guide/Home held + B: closes a running web app or Kodi and returns to CodeAque;
 `record` = Guide/Home held + X: start / stop the screen recorder)
 
@@ -28,6 +30,16 @@ BUTTON_MAP = {
     "dpad_up": "up", "dpad_down": "down", "dpad_left": "left", "dpad_right": "right",
 }
 DIRECTIONS = {"up", "down", "left", "right"}
+AXIS_ON = 0.5
+
+
+def axis_word(name: str, value: float) -> str:
+    """Plain word for a stick / trigger pushed past half way."""
+    if name.endswith("trigger"):
+        return "pulled"
+    if name.endswith("x"):
+        return "right" if value > 0 else "left"
+    return "down" if value > 0 else "up"
 
 
 def stick_direction(x: float, y: float, deadzone: float = STICK_DEADZONE) -> str | None:
@@ -115,6 +127,9 @@ def main() -> int:
         open_pad(i)
 
     chord = GuideChord()
+    axis_names = {getattr(pygame, n): n[len("CONTROLLER_AXIS_"):].lower()
+                  for n in dir(pygame) if n.startswith("CONTROLLER_AXIS_") and n != "CONTROLLER_AXIS_MAX"}
+    axis_on: dict[tuple[int, int], bool] = {}
     parent = os.getppid()
     btn_names = {getattr(pygame, n): n[len("CONTROLLER_BUTTON_"):].lower()
                  for n in dir(pygame) if n.startswith("CONTROLLER_BUTTON_")}
@@ -130,6 +145,7 @@ def main() -> int:
                 print("#pad-removed", flush=True)
             elif t == pygame.CONTROLLERBUTTONDOWN:
                 bname = btn_names.get(ev.button, "")
+                print(f"#btn {bname or ev.button}", flush=True)
                 special = chord.button(bname, True)
                 if special:
                     if special in ("quitapp", "record"):
@@ -150,6 +166,12 @@ def main() -> int:
                     rep.release(action)
             elif t == pygame.CONTROLLERAXISMOTION:
                 axes[(ev.instance_id, ev.axis)] = ev.value / 32767.0
+                aname = axis_names.get(ev.axis, str(ev.axis))
+                was = axis_on.get((ev.instance_id, ev.axis), False)
+                now_on = abs(axes[(ev.instance_id, ev.axis)]) >= AXIS_ON
+                if now_on and not was:
+                    print(f"#axis {aname} {axis_word(aname, ev.value)}", flush=True)
+                axis_on[(ev.instance_id, ev.axis)] = now_on
                 x = axes.get((ev.instance_id, pygame.CONTROLLER_AXIS_LEFTX), 0.0)
                 y = axes.get((ev.instance_id, pygame.CONTROLLER_AXIS_LEFTY), 0.0)
                 new = stick_direction(x, y)

@@ -241,6 +241,11 @@ def identify(path: Path, size: int | None = None) -> BiosItem | None:
         return BiosItem(path, name, "ps3", "PlayStation 3 firmware", "note", size, note=(
             "PS3 firmware cannot be copied automatically. In RPCS3 choose File > Install Firmware and pick this file."))
     kn = KNOWN_BY_NAME.get(low)
+    if kn is None:                       # Xbox files under other names: "Complex 4627.bin", "Complex_4627_v1.03.BIN", "MCPX v1.0.rom", Cerbios ...
+        from . import xemuconfig
+        xkey = xemuconfig.classify_name(name, generic=False)
+        if xkey and xkey != "hdd_path":
+            kn = KNOWN_BY_NAME.get(xemuconfig.CANONICAL[xkey].lower())
     if kn is None and low.endswith(".qcow2"):  # any xemu hard-disk image: xemu is told to use it as xbox_hdd.qcow2
         kn = KNOWN_BY_NAME.get("xbox_hdd.qcow2")
     if kn is not None:
@@ -251,6 +256,11 @@ def identify(path: Path, size: int | None = None) -> BiosItem | None:
             status = "ok" if digest in kn.md5 else ("named" if not kn.strict else "odd")
         else:
             status = "named"
+        if kn.system == "xbox":          # the sizes xemu accepts: boot ROM 512 bytes, BIOS 256 KB / 512 KB / 1 MB
+            from . import xemuconfig
+            key = next((k for k, c in xemuconfig.CANONICAL.items() if c == kn.name), "")
+            if key and xemuconfig.size_problem(key, size):
+                status = "odd"
         return BiosItem(path, kn.name, kn.system, kn.label, status, size, known=kn, targets=kn.targets)
     if PS2_RE.match(low) and size in PS2_SIZES:
         comps = [path.with_suffix(ext) for ext in PS2_COMPANIONS if path.with_suffix(ext).is_file()]
@@ -266,19 +276,22 @@ def scan_for_bios(root: str | Path, cancel: threading.Event | None = None) -> Bi
     root = Path(root)
     res = BiosScan()
     best: dict[str, BiosItem] = {}
+    seen_dirs: set[str] = set()
     seen = 0
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=lambda e: None):
         if cancel is not None and cancel.is_set():
             res.cancelled = True
             return res
         dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d.lower() not in SKIP_DIRS)
+        seen_dirs.add(dirpath)
         for fn in sorted(filenames):
             seen += 1
             if seen > MAX_FILES:
                 res.truncated = True
                 break
             low = fn.lower()
-            if not (low in KNOWN_BY_NAME or low == PS3_FILE or low.endswith((".bin", ".qcow2"))):
+            if not (low in KNOWN_BY_NAME or low == PS3_FILE or low.endswith((".bin", ".qcow2", ".rom"))
+                    or xemuconfig_name(fn)):
                 continue
             item = identify(Path(dirpath) / fn)
             if item is None:
@@ -294,9 +307,52 @@ def scan_for_bios(root: str | Path, cancel: threading.Event | None = None) -> Bi
                 best[key] = item
         if res.truncated:
             break
+    _guess_xbox_flash(root, best, seen_dirs)
     order = {sid: i for i, sid in enumerate(emulators_order())}
     res.items = sorted(best.values(), key=lambda it: (order.get(it.system, 999), it.name.lower()))
     return res
+
+
+def xemuconfig_name(fn: str) -> bool:
+    """True for a file name that looks like one of the Xbox files (also names without an extension)."""
+    from . import xemuconfig
+    return bool(xemuconfig.classify_name(fn, generic=False))
+
+
+def _guess_xbox_flash(root: Path, best: dict, dirs: set) -> None:
+    """The user's BIOS may have a name nobody can recognise. When a pack has the Xbox boot ROM or hard-disk image but no BIOS, a single
+    unrecognised .bin/.rom of exactly 256 KB / 512 KB / 1 MB in the same folder is offered as the BIOS (shown as 'unusual file - check it')."""
+    from . import xemuconfig
+    if any(k.lower() == CANONICAL_FLASH.lower() for k in best):
+        return
+    xdirs = {str(it.path.parent) for it in best.values() if it.system == "xbox"}
+    if not xdirs:
+        return
+    cands = []
+    for d in xdirs:
+        try:
+            for n in sorted(os.listdir(d)):
+                p = Path(d) / n
+                low = n.lower()
+                if low in KNOWN_BY_NAME or not low.endswith((".bin", ".rom")) or xemuconfig.classify_name(n, generic=False):
+                    continue
+                if p.is_file() and p.stat().st_size in xemuconfig.FLASH_SIZES:
+                    cands.append(p)
+        except OSError:
+            continue
+    if len(cands) != 1:
+        return
+    kn = KNOWN_BY_NAME[CANONICAL_FLASH.lower()]
+    p = cands[0]
+    try:
+        item = BiosItem(p, kn.name, "xbox", kn.label + " (picked by its size)", "odd", p.stat().st_size, known=kn, targets=kn.targets)
+        item.rel = str(p.parent.relative_to(root)) if p.parent != root else ""
+    except (OSError, ValueError):
+        return
+    best[kn.name.lower()] = item
+
+
+CANONICAL_FLASH = "Complex_4627v1.03.bin"
 
 
 def missing_detail(system_id: str, extra=(), home: Path | None = None, which=shutil.which) -> list[str]:
@@ -424,7 +480,7 @@ SWITCH_NOTE = ("Switch: the firmware is installed inside the emulator (Tools > I
 
 XBOX_FILES = (
     ("mcpx_1.0.bin", "boot ROM (MCPX), 512 bytes - from your own Xbox", True),
-    ("Complex_4627v1.03.bin", "BIOS, 256 KB (any other genuine Xbox BIOS dump also works if you rename it) - from your own Xbox", True),
+    ("Complex_4627v1.03.bin", "BIOS, 256 KB / 512 KB / 1 MB (names like Complex_4627.bin or Complex 4627 are found too; any genuine Xbox BIOS dump works) - from your own Xbox", True),
     ("xbox_hdd.qcow2", "hard-disk image: an empty formatted Xbox disk (xemu's own setup page explains how to make one)", True),
     ("eeprom.bin", "EEPROM - optional, xemu makes one by itself", False),
 )
@@ -441,25 +497,15 @@ def xbox_guide(home: Path | None = None, which=shutil.which) -> list[str]:
         lines.append(("[found] " if ok else ("[needed] " if required else "[optional] ")) + f"{n}: {text}")
     lines.append("Use \"Add BIOS files\" to copy them to xemu (USB stick or folder). Games: put the .iso (or .xiso) "
                  "- or an unpacked game folder with default.xbe - into  ~/Games/Atari/xbox  and press Rescan.")
+    lines.append("If xemu says \"Failed to open flash file ''\": Settings > Emulators > \"Xbox: check and repair xemu settings\" fixes its settings file.")
     return lines
 
 
 def _maybe_write_xemu_config(home: Path | None, which) -> None:
-    for folder in target_dirs("xemu", home, None, which):
-        toml = folder / "xemu.toml"
-        if toml.exists():
-            continue
-        paths = {}
-        for key, names in (("bootrom_path", ("mcpx_1.0.bin",)),
-                           ("flashrom_path", ("Complex_4627v1.03.bin", "Complex_4627.bin")),
-                           ("hdd_path", ("xbox_hdd.qcow2",)), ("eeprom_path", ("eeprom.bin",))):
-            for n in names:
-                if (folder / n).is_file():
-                    paths[key] = str(folder / n)
-                    break
-        if {"bootrom_path", "flashrom_path", "hdd_path"} <= set(paths):
-            body = "[sys.files]\n" + "".join(f"{k} = '{v}'\n" for k, v in paths.items())
-            toml.write_text(body, encoding="utf-8")
+    """After the Xbox files were copied: put their paths into xemu.toml. xemu writes its own xemu.toml with EMPTY paths when it is first
+    started, so an existing file is no reason to skip: empty or wrong paths are filled in, paths that work are kept (see xemuconfig)."""
+    from . import xemuconfig
+    xemuconfig.repair(home, which)
 
 
 # --------------------------------------------------------------------------- what is still missing
@@ -485,6 +531,14 @@ def _have(sid: str, names: list[str], home: Path | None, which) -> set[str]:
                         found.add(k.name)
                 except OSError:
                     pass
+    if sid == "xbox":                     # Xbox files under other names ("Complex 4627.bin") count too
+        from . import xemuconfig
+        try:
+            for key, f in xemuconfig.find_files(home, which).items():
+                if not f.problem and f.how == "name":
+                    found.add(xemuconfig.CANONICAL[key])
+        except Exception:
+            pass
     if sid == "ps2":
         for tid in ("pcsx2",):
             h = home or Path.home()

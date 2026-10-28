@@ -31,6 +31,15 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
+## What's new in 0.4.9
+
+* **Xbox: "Failed to open flash file ''" fixed.** *Cause:* xemu writes its own `xemu.toml` with **empty** file paths the first time it starts, and CodeAque only wrote the paths when no `xemu.toml` existed - so the paths stayed empty. Now CodeAque checks and fills in the `[sys.files]` paths (`bootrom_path`, `flashrom_path`, `eeprom_path`, `hdd_path`) after **Add BIOS files**, again **just before every Xbox game starts**, and on demand with **Settings > Emulators > Xbox: check and repair xemu settings**. A path you chose yourself that still works is never changed; the other settings in the file are left alone; a copy of the old file is kept once (`xemu.toml.codeaque-backup`). It handles the Flatpak file (`~/.var/app/app.xemu.xemu/data/xemu/xemu/xemu.toml`), the normal/AppImage one (`~/.local/share/xemu/xemu/xemu.toml`) and a portable `xemu.toml` next to the program.
+* **BIOS names and sizes.** `Complex_4627.bin`, `Complex 4627`, `complex-4627-v1.03.BIN`, Cerbios, `MCPX v1.0.rom` ... are recognised (copied under the standard name), the sizes xemu needs are checked (boot ROM 512 bytes; BIOS 256 KB / 512 KB / 1 MB), and a single unnamed file of the right size next to the other Xbox files is offered as the BIOS (marked "unusual file - check it"). A missing boot ROM, BIOS or disk image is named in plain words - on the repair page and instead of xemu's own empty dialog when you press Play.
+* **Create empty hard-disk image (8 GB)** button (needs `qemu-img`, `sudo apt install qemu-utils`); never replaces a file; the Xbox formats the blank disk itself. Nothing is bundled.
+* **File viewer ("My files"):** every folder now shows **where you are** (breadcrumb), **Up**, and **All places**. The list of places has **Downloads, Games, Videos, each games folder (~/Games/Atari, ~/Games/Code, ~/Games/CodeAque) with its console folders, and the BIOS / emulator / CodeAque data folders** (xemu, RetroArch, DuckStation ... look-only: nothing there can be renamed or deleted). Links to folders (for example a games folder on another drive) were hidden before and now open; broken links stay hidden.
+* **Controllers page** (left list under **Settings**, and **Settings > Controllers**): lists the gamepads Linux found (name, USB / Bluetooth, ids), a **Test buttons** mode that shows each button and stick you press live (the pad does not move CodeAque's menus for those 20 seconds), and **Set up pad for xemu**, which writes the pad as **player 1** (an Xbox controller) into xemu's settings (`[input.bindings] port1_driver` / `port1`, and `[input] auto_bind = true`, with the old file saved once as `xemu.toml.codeaque-backup`). The page says plainly what it could not try: there is no xemu on the build computer, so the binding is not tested with a real xemu and real pads. xemu may use a newer SDL whose pad id differs slightly; that is why xemu's own automatic binding is left on.
+* **Steam games: no more stuck "loading".** A game that is **already running** is no longer asked for again (Steam ignores that, and CodeAque sat on "loading"): CodeAque brings the game's window to the front (needs `xdotool` or `wmctrl`, X11) and tracks it. While a game is running, the Now Playing screen has **Back to the game** and **Stop waiting - back to CodeAque** (Esc / B); the old "CodeAque was minimised" flag is reset on each launch; waiting for a game to start now gives up after 150 s with a plain message (Cancel is there all along).
+
 ## What's new in 0.4.8
 
 * **Start mode: Linux desktop or CodeAque only - no commands.** *Settings > Start mode* has two clear choices, **Use Linux desktop** and **Use CodeAque only (console mode)**. It shows the current setting, read back from the computer's own files, asks for your password in the on-screen box (once), and then offers **Log out now** or **Restart the computer now** (the restart asks again, with No highlighted).
@@ -121,7 +130,7 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 - **If the in-app updater cannot be trusted on your connection, one command does the same by hand** (resumes if it drops, checks the SHA256 against the release's own list, keeps your settings and games):
 
   ```bash
-  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.4.8.tar.gz https://github.com/hoodlumasylum/atari/releases/download/v0.4.8/atari-0.4.8.tar.gz && curl -fsSL https://github.com/hoodlumasylum/atari/releases/download/v0.4.8/SHA256SUMS.txt | grep ' atari-0.4.8.tar.gz$' | sha256sum -c - && tar xzf atari-0.4.8.tar.gz && cd atari-0.4.8 && ./install.sh --yes
+  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.4.9.tar.gz https://github.com/hoodlumasylum/atari/releases/download/v0.4.9/atari-0.4.9.tar.gz && curl -fsSL https://github.com/hoodlumasylum/atari/releases/download/v0.4.9/SHA256SUMS.txt | grep ' atari-0.4.9.tar.gz$' | sha256sum -c - && tar xzf atari-0.4.9.tar.gz && cd atari-0.4.9 && ./install.sh --yes
   ```
 
 ## What's new in 0.4.1
@@ -343,13 +352,13 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.4.8.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
+1. Download **`atari-0.4.9.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
 2. Open a **Terminal** and type:
 
    ```bash
    cd ~/Downloads
-   tar xzf atari-0.4.8.tar.gz
-   cd atari-0.4.8
+   tar xzf atari-0.4.9.tar.gz
+   cd atari-0.4.9
    ./install.sh
    ```
 

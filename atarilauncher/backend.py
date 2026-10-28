@@ -11,9 +11,9 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import Property, QObject, QProcess, Qt, QTimer, QUrl, Signal, Slot
-from PySide6.QtGui import QGuiApplication, QKeyEvent
+from PySide6.QtGui import QGuiApplication, QKeyEvent, QWindow
 
-from . import branding, donate, gamedelete, gamesroot, power, rootauth, files, steamfix, downloads, golive, icons, inputfix, intro, kiosk, quietboot, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
+from . import pads, xemuconfig, branding, donate, gamedelete, gamesroot, power, rootauth, files, steamfix, downloads, golive, icons, inputfix, intro, kiosk, quietboot, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
 from . import __version__
 from .config import Config, load_config, save_config
 from .import_model import ImportModel
@@ -141,6 +141,14 @@ class Backend(QObject):
             rootauth.set_provider(lambda prompt, error: self.ask_text_blocking("ADMINISTRATOR PASSWORD", prompt, True, "", error))
         self._kiosk_busy = False
         self._kiosk_msg = ""
+        self._xm_msg = ""
+        self._ct_msg = ""
+        self._ct_seen = -100.0
+        self._pad_events: list[str] = []          # newest first: what the Controllers page shows while testing
+        self._pad_test_until = 0.0
+        self._sdl_pads: list[str] = []            # pads the gamepad reader (SDL) recognised as standard controllers
+        self._pad_timer = QTimer(self, interval=1000)
+        self._pad_timer.timeout.connect(self._pad_tick)
         self._sm_changed = ""            # "desktop" / "console" after a successful switch on the Start mode page (shows the log-out / restart prompt)
         self._kiosk_layout = kiosk.DEFAULT
         self.quietbootDone.connect(self._quietboot_finished, Qt.QueuedConnection)
@@ -148,6 +156,7 @@ class Backend(QObject):
         self.powerFailed.connect(self._on_power_failed, Qt.QueuedConnection)
         self._fm_dir: Path | None = None        # file viewer: the folder being shown (None = the list of places)
         self._fm_items: list = []
+        self._fm_places: list = []                # files.Place list behind the "fmroot:<n>" rows of the place list
         self._fm_pick: Path | None = None       # the file / folder the actions page is about
         self._fm_msg = ""
         self._fm_ok = True
@@ -200,6 +209,8 @@ class Backend(QObject):
         self.sessionEnded.connect(self._on_session_ended, Qt.QueuedConnection)
         self.sessionStarted.connect(self._on_session_started, Qt.QueuedConnection)
         self._running_hint = ""
+        self._running_appid = ""
+        self._run_playing = False
         self._minimized_for_game = False
         # screen recorder + cover picker
         self._rec = recorder.Recorder()
@@ -391,10 +402,62 @@ class Backend(QObject):
                 if exitwatch.request_quit("gamepad"):
                     self.show_toast("Closing the app...", 2000)
                 continue
-            if line.startswith("#pad "):
-                self.show_toast("Controller connected: " + line[5:])
-            elif not line.startswith("#"):
+            if line.startswith("#"):
+                self._pad_info_line(line)
+            elif time.monotonic() >= self._pad_test_until:       # while testing buttons, the pad does not move the menu
                 self.send_action(line)
+
+    # ----- Controllers page: live button readout ----------------------------------------------
+    BUTTON_WORDS = {"a": "A", "b": "B", "x": "X", "y": "Y", "start": "Start / Menu", "back": "Back / View / Select", "guide": "Guide / Home",
+                    "leftshoulder": "Left bumper (LB)", "rightshoulder": "Right bumper (RB)", "leftstick": "Left stick pressed in",
+                    "rightstick": "Right stick pressed in", "dpad_up": "D-pad up", "dpad_down": "D-pad down", "dpad_left": "D-pad left",
+                    "dpad_right": "D-pad right", "misc1": "Extra button (share / capture)", "touchpad": "Touchpad press"}
+    AXIS_WORDS = {"leftx": "Left stick", "lefty": "Left stick", "rightx": "Right stick", "righty": "Right stick",
+                  "triggerleft": "Left trigger (LT)", "triggerright": "Right trigger (RT)"}
+
+    def _pad_info_line(self, line: str) -> None:
+        """'#...' lines from the gamepad reader: pads coming and going, and (for the Controllers page) every button and stick movement."""
+        if line.startswith("#pad "):
+            name = line[5:]
+            if name not in self._sdl_pads:
+                self._sdl_pads.append(name)
+            self.show_toast("Controller connected: " + name)
+            self._pad_page_changed()
+        elif line.startswith("#pad-removed"):
+            if self._sdl_pads:
+                self._sdl_pads.pop()
+            self._pad_page_changed()
+        elif line.startswith("#btn "):
+            name = line[5:].strip()
+            self._pad_event(self.BUTTON_WORDS.get(name, "Button " + name) + " pressed")
+        elif line.startswith("#axis "):
+            parts = line.split()
+            if len(parts) >= 3:
+                self._pad_event(f"{self.AXIS_WORDS.get(parts[1], parts[1])} {parts[2]}")
+
+    def _pad_event(self, text: str) -> None:
+        if not self._ct_page_visible():
+            return                                             # nobody is on the Controllers page
+        self._pad_events.insert(0, text)
+        del self._pad_events[8:]
+        self._pad_page_changed()
+
+    def _pad_page_changed(self) -> None:
+        if self._ct_page_visible():
+            self.pageChanged.emit()
+
+    def _ct_page_visible(self) -> bool:
+        """The Controllers page asks for its rows every time it draws; it counts as open for a few seconds after the last time."""
+        return time.monotonic() - self._ct_seen < 2.5
+
+    def _pad_tick(self) -> None:
+        if time.monotonic() >= self._pad_test_until:
+            self._pad_timer.stop()
+        self._pad_page_changed()
+
+    @property
+    def pad_testing(self) -> bool:
+        return time.monotonic() < self._pad_test_until
 
     def send_action(self, action: str) -> None:
         """Turn a gamepad action into a key press for the UI (only while CodeAque has focus)."""
@@ -1241,6 +1304,136 @@ class Backend(QObject):
         rows.append({"kind": "item", "id": "back", "title": "No, keep my normal desktop" if not kiosk.enabled(lay) else "Back"})
         return rows
 
+    # ----- Xbox / xemu settings ----------------------------------------------------------------
+    def _xemu_rows(self) -> list:
+        rep = xemuconfig.check()
+        rows: list = []
+        if self._xm_msg:
+            rows.append(self._info("Result:  " + self._xm_msg))
+        rows.append(self._info("xemu (the Xbox emulator) reads these four files from its settings file. CodeAque never includes them - they come from your own Xbox."))
+        for c in rep.configs:
+            rows.append(self._info("Settings file: " + c))
+        tone = {"ok": "ok", "fixed": "ok"}
+        for r in rep.rows:
+            rows.append({"kind": "item", "id": "xmrow", "title": f"{r.label}:  {r.path or '(not set)'}",
+                         "value": {"ok": "OK", "fixed": "FIXED", "todo": "CAN FIX", "missing": "MISSING", "bad": "WRONG SIZE"}.get(r.state, ""),
+                         "tone": tone.get(r.state, ""), "detail": r.text})
+        for n in rep.notes:
+            rows.append(self._info(n))
+        rows.append(self._info("All needed files are set and exist - xemu should start." if rep.ok else
+                               "xemu is not ready yet: " + (xemuconfig.launch_problem(rep) or "press Repair.")))
+        rows.append({"kind": "done", "id": "xmrepair", "title": "Repair xemu settings",
+                     "detail": "Writes the paths of the files found into xemu's settings (only empty or wrong ones; a path that works is kept). "
+                               "A copy of the old settings file is kept once. Close xemu first."})
+        if not any(r.key == "hdd_path" and r.state in ("ok", "fixed") for r in rep.rows):
+            tool = xemuconfig.hdd_tool()
+            if tool:
+                rows.append({"kind": "item", "id": "xmhdd", "title": "Create empty hard-disk image (8 GB)",
+                             "detail": "Makes a blank xbox_hdd.qcow2 in xemu's folder with " + Path(tool).name + ". It takes almost no space until games use it. Never replaces a file."})
+            else:
+                rows.append(self._info("No empty hard-disk image tool found. To get one: sudo apt install qemu-utils (then this page offers a button)."))
+        rows.append({"kind": "item", "id": "xmbios", "title": "Add BIOS files (from a USB stick or folder)",
+                     "detail": "Copies your Xbox BIOS, boot ROM and disk image to xemu's folder. Names like Complex_4627.bin or Complex 4627 are fine."})
+        rows.append(self._info("By hand: open xemu, Machine > System, and pick the files. Settings file in Flatpak: ~/.var/app/app.xemu.xemu/data/xemu/xemu/xemu.toml; "
+                               "otherwise ~/.local/share/xemu/xemu/xemu.toml (section [sys.files]: bootrom_path, flashrom_path, eeprom_path, hdd_path)."))
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    def _xemu_activate(self, rid: str) -> str:
+        if rid == "xmrepair":
+            rep = xemuconfig.repair()
+            if rep.written:
+                self._xm_msg = "Wrote " + ", ".join(rep.written) + ". " + ("xemu has all it needs." if rep.ok else xemuconfig.launch_problem(rep))
+            else:
+                self._xm_msg = ("Nothing needed changing - the paths already work." if rep.ok else "Nothing could be filled in. " + xemuconfig.launch_problem(rep))
+            kiosk.log_event("xemu repair: " + " | ".join(rep.lines()))
+            return "refresh"
+        if rid == "xmhdd":
+            ok, self._xm_msg = xemuconfig.create_empty_hdd()
+            kiosk.log_event(f"xemu hdd: {ok} {self._xm_msg}")
+            return "refresh"
+        if rid == "xmbios":
+            return "import:bios"
+        return ""
+
+    # ----- Controllers page ---------------------------------------------------------------------
+    def _controllers_rows(self) -> list:
+        self._ct_seen = time.monotonic()
+        found = pads.detect()
+        rows: list = []
+        if self._ct_msg:
+            rows.append(self._info("Result:  " + self._ct_msg))
+        if not found:
+            rows.append(self._info("No gamepad found. Plug it in (or pair it in Bluetooth settings), wait a few seconds, then press Refresh."))
+            rows.append(self._info("A pad that is found by Linux but not usable? Settings > Fix Steam controller / gamepad permissions."))
+        else:
+            rows.append(self._info(f"{len(found)} gamepad{'s' if len(found) != 1 else ''} found by Linux (first one = player 1):"))
+        for i, p in enumerate(found[:4]):
+            rows.append({"kind": "item", "id": "ctpad", "title": f"Player {i + 1}:  {p.name}", "value": p.how,
+                         "detail": f"Device {p.js}, vendor:product {p.ids}.  SDL id (what xemu stores): {p.guid}"})
+        if found and not self._sdl_pads:
+            rows.append(self._info("CodeAque's own button reader has not reported a standard gamepad yet. Press a button; if the test below stays "
+                                   "empty, this pad is not a standard Xbox-style pad (a wheel, flight stick or arcade stick can need setting up inside xemu)."))
+        cur = xemuconfig.read_pad()
+        if cur["file"]:
+            now = (f"{cur['driver'] or '(none)'} / {cur['guid'] or 'xemu picks the pad itself'}")
+            rows.append(self._info(f"xemu's settings now ({cur['file']}):  player 1 = {now};  automatic binding "
+                                   + {True: "ON", False: "OFF", None: "not set (xemu's default is ON)"}[cur["auto_bind"]]))
+        else:
+            rows.append(self._info("xemu has no settings file yet (it makes one the first time it starts). Setting up the pad creates the pad part of it."))
+        for i, p in enumerate(found[:4]):
+            title = "Set up pad for xemu" if len(found) == 1 else f"Set up '{p.name}' as player 1 for xemu"
+            rows.append({"kind": "done", "id": f"ctxemu:{i}", "title": title,
+                         "detail": "Writes this pad as player 1 (an Xbox controller) into xemu's settings and keeps xemu's automatic binding on. "
+                                   "A copy of the old settings file is kept once. Close xemu first."})
+        left = int(self._pad_test_until - time.monotonic())
+        if left > 0:
+            rows.append({"kind": "item", "id": "ctstop", "title": f"Testing: press buttons on the pad ({left} s left). Press here (keyboard / mouse) to stop",
+                         "detail": "While testing, the pad does not move CodeAque's menus."})
+        else:
+            rows.append({"kind": "item", "id": "cttest", "title": "Test buttons (20 seconds)",
+                         "detail": "Shows each button and stick you press, live. While testing, the pad does not move CodeAque's menus - "
+                                   "use the keyboard or mouse to stop early."})
+        if self._pad_events:
+            for t in self._pad_events:
+                rows.append(self._info("   " + t))
+        elif left > 0:
+            rows.append(self._info("   (nothing pressed yet)"))
+        rows.append({"kind": "item", "id": "ctrefresh", "title": "Refresh"})
+        rows.append(self._info("Honest note: CodeAque can write the settings and show what the pad sends, but it cannot run xemu for you here. "
+                               "If the pad does not work in xemu afterwards, open xemu > Machine > Input and pick the pad there (xemu's own screen), "
+                               "and tell us which pad it was. Not tested with real pads on every model; PlayStation pads over Bluetooth and "
+                               "8BitDo pads are the likeliest to need that."))
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    def _controllers_activate(self, rid: str) -> str:
+        if rid.startswith("ctxemu:"):
+            found = pads.detect()
+            try:
+                p = found[int(rid.split(":")[1])]
+            except (ValueError, IndexError):
+                self._ct_msg = "That pad is no longer plugged in. Press Refresh."
+                return "refresh"
+            ok, files, text = xemuconfig.set_pad(p.guid)
+            self._ct_msg = (f"{p.name} is now player 1 in xemu. " if ok else "") + text + (" Written: " + ", ".join(files) if files else "")
+            kiosk.log_event(f"xemu pad setup: {ok} {p.name} {p.guid} {files}")
+            if ok and files:                                  # read it back so the page shows what is really in the file
+                self._ct_msg += " (read back: " + xemuconfig.read_pad()["guid"] + ")"
+            return "refresh"
+        if rid == "cttest":
+            self._pad_events = []
+            self._pad_test_until = time.monotonic() + 20
+            self._pad_timer.start()
+            return "refresh"
+        if rid == "ctstop":
+            self._pad_test_until = 0.0
+            return "refresh"
+        if rid == "ctrefresh":
+            self._ct_msg = ""
+            return "refresh"
+        return ""
+
     # ----- Start mode: Linux desktop or CodeAque only ----------------------------------------
     def _startmode_rows(self) -> list:
         lay = self._kiosk_layout
@@ -2042,6 +2235,9 @@ class Backend(QObject):
         if self.cfg.music and self._snd_enabled():
             self._snd_write("music off")        # the game gets the speakers
         self._running = True
+        self._minimized_for_game = False       # never carry "CodeAque was minimised" over from an earlier launch (the window may have been
+        self._run_playing = False              # brought back by hand); a stale flag kept CodeAque in front of the second launch
+        self._running_appid = getattr(g, "steam_appid", "") or ""
         self._running_title = g.title
         self._running_gid = g.gid
         self._launch_cancel = threading.Event()
@@ -2097,6 +2293,7 @@ class Backend(QObject):
             return
         self._run_status = text
         self._run_cancelable = phase in ("starting", "launching", "waiting", "reveal")
+        self._run_playing = phase == "playing"
         self.runningStatusChanged.emit()
         guard = getattr(self, "_steam_guard", None)
         if guard is not None and phase in ("starting", "launching"):
@@ -2104,14 +2301,36 @@ class Backend(QObject):
         if phase in ("reveal", "playing") and self._shell_mode() and self._window is not None and not os.environ.get("ATARI_NO_MINIMIZE"):
             self._hide_for_game()
 
+    @Property(bool, notify=runningStatusChanged)
+    def runningPlaying(self):
+        """A Steam game is up (or was already running): the Now Playing screen offers 'Back to the game' and 'Stop waiting'."""
+        return self._run_playing and self._running
+
+    @Slot()
+    def showGame(self) -> None:
+        """Bring the running Steam game's window to the front (X11 only); says so when it cannot."""
+        if not (self._running and self._run_playing and self._running_appid):
+            return
+        appid, title = self._running_appid, self._running_title
+
+        def work():
+            ok = launcher.bring_to_front(launcher.find_steam_pids(appid))
+            kiosk.log_event(f"steam: bring {title} to the front: {'done' if ok else 'not possible'}")
+            self.launchStatus.emit("playing", f"Playing {title}" + ("" if ok else
+                                   "\nCodeAque could not bring the game to the front by itself (it needs xdotool or wmctrl, and X11). Use Alt+Tab."))
+            if ok and self._shell_mode():
+                QTimer.singleShot(0, self._hide_for_game)
+        threading.Thread(target=work, daemon=True).start()
+
     @Slot()
     def cancelLaunch(self) -> None:
         """Esc / B / the Cancel button while a Steam game is starting: stop waiting and come back to CodeAque (Steam keeps running)."""
-        if self._running and self._run_cancelable:
-            kiosk.log_event("steam launch: cancel pressed on the Now Playing screen")
+        if self._running and (self._run_cancelable or self._run_playing):
+            kiosk.log_event("steam launch: cancel pressed on the Now Playing screen" + (" (game running: stop waiting for it)" if self._run_playing else ""))
             self._launch_cancel.set()
             self._run_status = "Cancelling..."
             self._run_cancelable = False
+            self._run_playing = False
             self.runningStatusChanged.emit()
 
     @Slot()
@@ -2123,7 +2342,7 @@ class Backend(QObject):
             self._hide_timer.start()               # (Steam: its dialogs - Properties, Settings - must not open behind CodeAque's full screen window)
 
     def _hide_for_game(self) -> None:
-        if self._running and self._window is not None and not self._minimized_for_game:
+        if self._running and self._window is not None and self._window.visibility() != QWindow.Minimized:
             self._minimized_for_game = True
             self._window.showMinimized()
 
@@ -2233,34 +2452,50 @@ class Backend(QObject):
             rows.append(self._info(("DONE:  " if self._fm_ok else "NOTE:  ") + self._fm_msg))
         home = self._fm_home()
         if self._fm_dir is None:
-            places = files.roots(home)
-            rows.append(self._info("Your files: pick a place. CodeAque only shows Downloads, Games and Videos, and only changes things inside them."))
-            for i, (label, p) in enumerate(places):
-                rows.append({"kind": "item", "id": f"fmroot:{i}", "title": label, "value": "",
-                             "detail": f"{p}   -   {files.free_text(p)}"})
-            if not places:
+            places = files.places(home)
+            self._fm_places = places
+            rows.append(self._info("Your files: pick a place, then open any folder in it. Press Back (Esc / B) to go up one folder at a time. "
+                                   "Downloads, Games and Videos can be changed here; the BIOS / emulator folders are look-only."))
+            heads = {"main": "Main places", "games": "Games folders", "system": "Console folders inside your games folders", "look": "BIOS, emulator and CodeAque folders (look only)"}
+            last = ""
+            for i, pl in enumerate(places):
+                if pl.group != last:
+                    rows.append(self._info(heads[pl.group] + ":"))
+                    last = pl.group
+                rows.append({"kind": "item", "id": f"fmroot:{i}", "title": pl.label, "value": f"{pl.count} item" + ("" if pl.count == 1 else "s"),
+                             "detail": f"{pl.path}" + ("" if pl.group == "look" else f"   -   {files.free_text(pl.path)}")})
+            if not any(pl.group == "main" for pl in places):
                 rows.append(self._info("None of ~/Downloads, ~/Games or ~/Videos exists yet. Download or add something first."))
             rows.append({"kind": "item", "id": "back", "title": "Back"})
             return rows
         d = self._fm_dir
         entries, more = files.list_dir(d)
         self._fm_items = entries
-        rows.append(self._info(f"{d}   -   {files.free_text(d)}"))
-        rows.append({"kind": "item", "id": "fmup", "title": "..  Up" if not files.is_root(d, home) else "..  All places",
-                     "detail": "Go back one folder."})
-        if not files.is_root(d, home):
+        look = files.is_look_only(d, home)
+        top = files.is_top(d, home)
+        rows.append(self._info("You are here:  " + files.breadcrumb(d, home)))
+        rows.append(self._info(f"{d}   -   {files.free_text(d)}" + ("   -   look only: nothing here is changed by CodeAque" if look else "")))
+        rows.append({"kind": "item", "id": "fmup", "title": "..  Up  (one folder)" if not top else "..  Up  (to the list of places)",
+                     "detail": "Go back one folder." if not top else "Shows Downloads, Games, the games folders and the BIOS / emulator folders."})
+        rows.append({"kind": "item", "id": "fmplaces", "title": "All places  (Downloads, Games, Videos, BIOS folders ...)",
+                     "detail": "Jump to the list of every place you can open."})
+        if not top and not look:
             rows.append({"kind": "item", "id": "fmhere", "title": "Actions for THIS folder (rename, delete, add to games)",
                          "detail": f"{d.name}"})
         if not entries:
             rows.append(self._info("This folder is empty."))
         for i, e in enumerate(entries):
+            tag = "  (link)" if e.link else ""
             if e.is_dir:
-                rows.append({"kind": "item", "id": f"fm:{i}", "title": e.name + "/", "value": f"{e.count} item" + ("" if e.count == 1 else "s"),
+                rows.append({"kind": "item", "id": f"fm:{i}", "title": e.name + "/" + tag, "value": f"{e.count} item" + ("" if e.count == 1 else "s"),
                              "detail": "Folder - press to open it."})
             else:
                 what = {"zip": "Archive (zip)", "tar": "Archive (tar)", "7z": "Archive (7z)", "rar": "Archive (rar)", "video": "Video"}.get(e.kind, "File")
-                extra = " - press, then Extract here to unpack it." if e.kind in ("zip", "tar", "7z", "rar") else " - press for Open, Rename, Delete, Add to my games."
-                rows.append({"kind": "item", "id": f"fm:{i}", "title": e.name, "value": importer.human_size(e.size),
+                if look:
+                    extra = " - look only (press to see where it is)."
+                else:
+                    extra = " - press, then Extract here to unpack it." if e.kind in ("zip", "tar", "7z", "rar") else " - press for Open, Rename, Delete, Add to my games."
+                rows.append({"kind": "item", "id": f"fm:{i}", "title": e.name + tag, "value": importer.human_size(e.size),
                              "detail": what + ", " + downloads.human_age(e.mtime) + extra})
         if more:
             rows.append(self._info(f"Only the first {files.LIST_CAP} items are shown."))
@@ -2277,13 +2512,16 @@ class Backend(QObject):
         self._fm_pending_delete = False
         if rid.startswith("fmroot:"):
             try:
-                self._fm_dir = files.roots(home)[int(rid[7:])][1]
-            except (ValueError, IndexError):
+                self._fm_dir = self._fm_places[int(rid[7:])].path
+            except (ValueError, IndexError, AttributeError):
                 return "refresh"
+            return "page:files"
+        if rid == "fmplaces":
+            self._fm_dir = None
             return "page:files"
         if rid == "fmup":
             d = self._fm_dir
-            self._fm_dir = None if (d is None or files.is_root(d, home)) else d.parent
+            self._fm_dir = None if (d is None or files.is_top(d, home)) else d.parent
             return "page:files"
         if rid == "fmhere" and self._fm_dir is not None:
             self._fm_pick = self._fm_dir
@@ -2296,6 +2534,9 @@ class Backend(QObject):
             if e.is_dir:
                 self._fm_dir = e.path
                 return "page:files"
+            if files.is_look_only(e.path, home):
+                self.show_toast(f"{e.path}  ({importer.human_size(e.size)}). This folder is look-only: CodeAque shows where the file is but does not change it.", 9000)
+                return ""
             self._fm_pick = e.path
             return "page:fileact"
         return ""
@@ -2469,7 +2710,7 @@ class Backend(QObject):
                 self._fm_cancel.set()
                 return ""
             if self._fm_dir is not None:
-                self._fm_dir = None if files.is_root(self._fm_dir, self._fm_home()) else self._fm_dir.parent
+                self._fm_dir = None if files.is_top(self._fm_dir, self._fm_home()) else self._fm_dir.parent
                 self._fm_msg = ""
                 return "page:files"
         return "back"
@@ -2574,6 +2815,7 @@ class Backend(QObject):
         self._running = False
         self._run_status = ""
         self._run_cancelable = False
+        self._run_playing = False
         self.runningStatusChanged.emit()
         self._running_title = ""
         self._running_hint = ""
@@ -2646,6 +2888,10 @@ class Backend(QObject):
             rows.append({"kind": "emu", "id": sc.id, "title": sc.name, "value": value,
                          "detail": games + (label if ready else (label + ": " + hint))
                                    + (f"   [{hint}]" if ready and hint else "") + bios_line})
+            if sc.id == "xbox":
+                rows.append({"kind": "xemupage", "title": "Xbox: check and repair xemu settings", "value": "",
+                             "detail": "Shows exactly which BIOS, boot ROM and disk files xemu will use, fixes empty paths "
+                                       "(\"Failed to open flash file ''\"), and can make an empty disk image."})
             if sc.id == "xbox" and bstate != "ok":
                 for line in bios.xbox_guide():
                     rows.append({"kind": "info", "title": line, "value": "", "detail": ""})
@@ -3696,6 +3942,8 @@ class Backend(QObject):
                      "detail": "Find a network, type its password with the on-screen keyboard, see if it connected, or forget a network. "
                                "Works in CodeAque-only mode too."})
         _mode = kiosk.read_mode(self._kiosk_layout)["next"]
+        rows.append({"kind": "controllerspage", "title": "Controllers: see your gamepads, test buttons, set up for xemu",
+                     "detail": "Shows the gamepads found, a live button test, and writes player 1 into xemu's settings."})
         rows.append({"kind": "startmodepage", "title": "Start mode: Linux desktop or CodeAque only",
                      "value": {"console": "CODEAQUE ONLY", "desktop": "LINUX DESKTOP"}.get(_mode, "CHECK"),
                      "detail": "Choose whether the computer starts into the normal Linux Mint desktop or straight into CodeAque like a console. "
@@ -3848,7 +4096,7 @@ class Backend(QObject):
                 "winchoose": "WHICH PROGRAM STARTS THE GAME?", "winwork": "OPENING THE ARCHIVE",
                 "install": "INSTALL", "installmenu": "INSTALL EMULATORS & APPS", "steam": "STEAM",
                 "recordings": "RECORDINGS", "coverpick": "PICK A COVER", "nocovers": "COVERS NOT FOUND",
-                "addgames": "ADD GAMES", "kiosk": "CODEAQUE-ONLY MODE", "startmode": "START MODE", "quietboot": "QUIET BOOT", "power": "POWER", "downloads": "DOWNLOADS", "golive": "GO LIVE", "robloxfix": "FIX ROBLOX",
+                "addgames": "ADD GAMES", "kiosk": "CODEAQUE-ONLY MODE", "startmode": "START MODE", "xemusetup": "XBOX (XEMU) SETTINGS", "controllers": "CONTROLLERS", "quietboot": "QUIET BOOT", "power": "POWER", "downloads": "DOWNLOADS", "golive": "GO LIVE", "robloxfix": "FIX ROBLOX",
                 "dlsystem": "WHICH SYSTEM IS THIS FILE FOR?", "files": "MY FILES", "fileact": "WHAT TO DO WITH IT", "deletegame": "DELETE GAME", "about": "ABOUT CODEAQUE"}.get(name, name.upper())
 
     @Slot(str, result=str)
@@ -3874,6 +4122,8 @@ class Backend(QObject):
                 "nocovers": "Games that no cover was found for.  Esc / B = back.",
                 "addgames": "Up/Down to choose, Enter / A or a click to press.  Esc / B = back.",
                 "startmode": "Choose one. Esc / B = back.",
+                "xemusetup": "Esc / B = back. Your own Xbox files only - nothing is bundled.",
+                "controllers": "Up/Down to choose, Enter / A to press.  Esc / B = back.",
                 "kiosk": "Read this, then choose.  Esc / B = back - nothing changes until you press Yes.",
                 "power": "Up/Down to choose, Enter / A to press.  Restart and shut down ask first.  Esc / B = back.",
                 "quietboot": "Read this, then choose.  Esc / B = back - nothing changes until you press Yes."}.get(name, "")
@@ -4092,6 +4342,10 @@ class Backend(QObject):
             return self._kiosk_rows()
         if name == "startmode":
             return self._startmode_rows()
+        if name == "xemusetup":
+            return self._xemu_rows()
+        if name == "controllers":
+            return self._controllers_rows()
         if name == "quietboot":
             return self._quietboot_rows()
         if name == "power":
@@ -4310,6 +4564,10 @@ class Backend(QObject):
             return self._kiosk_activate(rid)
         if name == "startmode":
             return self._startmode_activate(rid)
+        if name == "xemusetup":
+            return self._xemu_activate(rid)
+        if name == "controllers":
+            return self._controllers_activate(rid)
         if name == "quietboot":
             return self._quietboot_activate(rid)
         if name == "power":

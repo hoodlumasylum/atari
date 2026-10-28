@@ -68,8 +68,9 @@ def test_listing_has_folders_first_sizes_counts_hides_dotfiles_and_links(home, t
     (d / "Zfolder" / "one").write_text("1")
     (d / "alink").symlink_to(d / "A.txt")
     entries, more = files.list_dir(d)
-    assert [e.name for e in entries] == ["Zfolder", "A.txt", "b.zip"] and not more
-    assert entries[0].is_dir and entries[0].count == 1 and entries[2].size == 2048 and entries[2].kind == "zip"
+    assert [e.name for e in entries] == ["Zfolder", "A.txt", "alink", "b.zip"] and not more          # a link to a file is shown (marked), not hidden
+    assert entries[0].is_dir and entries[0].count == 1 and entries[3].size == 2048 and entries[3].kind == "zip"
+    assert entries[2].link and not entries[1].link
     assert files.list_dir(d, cap=2)[1] is True and files.list_dir(tmp_path / "nope") == ([], False)
 
 
@@ -366,8 +367,8 @@ def test_browse_list_folders_and_back_up(ui):
     (h / "Downloads" / "pack.zip").write_bytes(b"x" * 3000)
     b.filesReset()
     rows = b.pageRows("files")
-    assert [r["title"] for r in rows if r.get("id", "").startswith("fmroot:")] == ["Downloads", "Games", "Videos"]
-    assert "Free space here" in rows[1]["detail"]
+    assert [r["title"] for r in rows if r.get("id", "").startswith("fmroot:")][:4] == ["Downloads", "Games", "Videos", "Games / Atari"]
+    assert "Free space here" in next(r for r in rows if r.get("title") == "Downloads")["detail"]
     assert b.pageActivate("files", "fmroot:0") == "page:files"
     rows = b.pageRows("files")
     assert any("Free space here" in r.get("title", "") for r in rows)

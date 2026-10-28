@@ -69,11 +69,11 @@ def test_copy_goes_to_each_emulators_folder_and_is_idempotent(stick, tmp_path):
     assert r2.copied == 0 and r2.skipped_same > 0                                    # nothing copied twice
 
 
-def test_xemu_toml_written_only_if_absent(tmp_path):
+def test_xemu_toml_is_written_and_an_existing_one_keeps_its_other_settings(tmp_path):
     s = tmp_path / "usb"
     s.mkdir()
-    for n in ("mcpx_1.0.bin", "Complex_4627v1.03.bin", "xbox_hdd.qcow2"):
-        (s / n).write_bytes(b"\x02" * 64)
+    for n, size in (("mcpx_1.0.bin", 512), ("Complex_4627v1.03.bin", 256 * 1024), ("xbox_hdd.qcow2", 64)):
+        (s / n).write_bytes(b"\x02" * size)
     items = bios.scan_for_bios(s).items
     assert {i.system for i in items} == {"xbox"} and len(items) == 3
     fresh = tmp_path / "fresh"
@@ -85,7 +85,8 @@ def test_xemu_toml_written_only_if_absent(tmp_path):
     d.mkdir(parents=True)
     (d / "xemu.toml").write_text("# mine\n")
     bios.copy_items(items, None, mine, which=nowhere)
-    assert (d / "xemu.toml").read_text() == "# mine\n"
+    text = (d / "xemu.toml").read_text()
+    assert text.startswith("# mine\n") and "[sys.files]" in text and "xbox_hdd.qcow2" in text          # the file is used, not skipped
 
 
 def test_ps3_note_is_reported_not_copied(stick, tmp_path):

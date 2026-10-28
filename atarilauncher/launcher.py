@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from . import apps, controls, emulators, exitwatch, freegames, paths, sober, webapps, windows, xbox
+from . import apps, controls, emulators, exitwatch, freegames, paths, sober, webapps, windows, xbox, xemuconfig
 from .config import Config, SystemConfig
 from .library import Game
 
@@ -159,6 +159,58 @@ def find_steam_pids(appid: str, proc_root: str = "/proc") -> list[int]:
     return pids
 
 
+def _descendants(pids: list[int], proc_root: str = "/proc") -> list[int]:
+    """These processes and every process started by them (a game's window belongs to a child of Steam's 'reaper' wrapper)."""
+    kids: dict[int, list[int]] = {}
+    try:
+        entries = os.listdir(proc_root)
+    except OSError:
+        return list(pids)
+    for e in entries:
+        if not e.isdigit():
+            continue
+        try:
+            with open(f"{proc_root}/{e}/stat", "rb") as fh:
+                rest = fh.read().rsplit(b")", 1)[1].split()
+            kids.setdefault(int(rest[1]), []).append(int(e))
+        except (OSError, IndexError, ValueError):
+            continue
+    out, todo = [], list(pids)
+    while todo and len(out) < 500:
+        pid = todo.pop()
+        if pid not in out:
+            out.append(pid)
+            todo += kids.get(pid, [])
+    return out
+
+
+def bring_to_front(pids: list[int], which: Callable = shutil.which, run: Callable = subprocess.run, proc_root: str = "/proc") -> bool:
+    """Raise the window of a game that is already running (X11: xdotool or wmctrl). False when it could not be done - on Wayland, or
+    when neither tool is installed, CodeAque cannot move another program's window."""
+    if not pids:
+        return False
+    every = _descendants(pids, proc_root)
+    try:
+        if which("xdotool"):
+            for pid in every:
+                r = run(["xdotool", "search", "--onlyvisible", "--pid", str(pid)], capture_output=True, text=True, timeout=4)
+                wins = (r.stdout or "").split()
+                if r.returncode == 0 and wins:
+                    done = run(["xdotool", "windowactivate", wins[-1]], capture_output=True, text=True, timeout=4)
+                    if done.returncode == 0:
+                        return True
+        if which("wmctrl"):
+            r = run(["wmctrl", "-lp"], capture_output=True, text=True, timeout=4)
+            for line in (r.stdout or "").splitlines():
+                f = line.split(None, 4)
+                if len(f) >= 3 and f[2].isdigit() and int(f[2]) in every:
+                    if run(["wmctrl", "-ia", f[0]], capture_output=True, text=True, timeout=4).returncode == 0:
+                        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return False
+
+
 def _check_executable(cmd: list[str], what: str) -> None:
     if not cmd or not shutil.which(cmd[0]):
         raise LaunchError(
@@ -203,6 +255,13 @@ def run_game(cfg: Config, game: Game, on_started: Callable[[], None],
         cmd = emulators.find_emu(cfg, "rpcs3")[0] + ["--installpkg", game.rom_path]
     else:
         rom = game.rom_path
+        if system.id == "xbox" and not system.command.strip() and not os.environ.get("ATARI_NO_XEMU_CHECK"):
+            choice = emulators.choose(cfg, system)
+            if choice is not None and choice.emu.id == "xemu":      # xemu shows "Failed to open flash file ''" when its settings have empty paths
+                ok, why, rep = xemuconfig.ensure_for_launch()
+                _log("xemu settings: " + " | ".join(rep.lines()))
+                if not ok:
+                    raise LaunchError(why)
         if system.id == "xbox":  # xemu starts disc images only: an unpacked game folder becomes one first
             try:
                 rom = xbox.disc_image_for(rom)
@@ -635,6 +694,9 @@ def _run_windows(cfg: Config, game: Game, on_started):
     return elapsed, ""
 
 
+GAME_WAIT_MAX = 150.0        # seconds to wait for a game process once Steam was asked (the status screen offers Cancel all along)
+
+
 def _slog(msg: str) -> None:
     """The launcher log and (so the user can read it) the session log."""
     _log("steam launch: " + msg)
@@ -647,11 +709,13 @@ def _slog(msg: str) -> None:
 
 def _run_steam(cfg: Config, game: Game, on_started, poll: float, start_timeout: float, grace: float = 6.0, status=None, cancel=None,
                steam_running=None, ui_ready=None, settle: float = 3.0, reveal_after: float = 20.0, resend_after: float = 45.0,
-               hint_after: float = 60.0):
+               hint_after: float = 60.0, game_wait: float = GAME_WAIT_MAX, front=None):
     """A Steam game from CodeAque. Never fire-and-forget: (1) start Steam first when it is not running (Big Picture) and WAIT until its
     window process exists, (2) only then hand it steam://rungameid/<id>, (3) show live status, resend the request once, offer a hint
     after hint_after seconds, (4) detect the game's process, (5) let the user cancel (Esc / B on the screen, or Esc twice once CodeAque
-    has stepped aside to show Steam's own windows). status(phase, text): starting | launching | waiting | reveal | playing."""
+    has stepped aside to show Steam's own windows). A game that is ALREADY running is not asked for again (that is what left CodeAque
+    stuck on "loading"): it is brought to the front instead. While the game plays, cancel also works: CodeAque stops tracking it (the
+    game keeps running) and goes back to normal. status(phase, text): starting | launching | waiting | reveal | playing."""
     from . import steam as steam_mod
     steam_running = steam_running or steam_mod.steam_running
     ui_ready = ui_ready or steam_mod.steam_ui_ready
@@ -700,8 +764,41 @@ def _run_steam(cfg: Config, game: Game, on_started, poll: float, start_timeout: 
             time.sleep(step)
         if settle > 0:
             time.sleep(settle)                    # the window exists a moment before Steam listens for steam:// requests
-    # 2. ask for the game
-    say("launching", f"Asking Steam to start {title}...")
+    # 2. ask for the game - unless it is already running
+    running_now = find_steam_pids(appid)
+    if running_now:
+        _slog(f"{title} is already running (process {running_now[0]}) - not asking Steam again; bringing it to the front")
+        say("launching", f"{title} is already running - bringing it to the front...")
+        shown = (front or bring_to_front)(running_now)
+        _slog("bring to front: " + ("done" if shown else "could not (no xdotool/wmctrl, or Wayland)"))
+        first_seen = time.time()
+        say("playing", f"{title} is already running." + ("" if shown else "\nCodeAque could not bring it to the front by itself - use Alt+Tab, or press Enter here to try again."))
+    else:
+        say("launching", f"Asking Steam to start {title}...")
+        first_seen = _ask_and_wait(base, appid, title, cfg, start_timeout, game_wait, step, steam_running, cancelled, say, spawn, stopped,
+                                   hint_after, reveal_after, resend_after)
+        if isinstance(first_seen, tuple):
+            return first_seen
+        say("playing", f"Playing {title}")
+    gone_since = 0.0
+    while True:
+        time.sleep(step)
+        if cancelled():
+            _slog("stopped waiting for the game while it was running (the game itself keeps running)")
+            return time.time() - first_seen, INFO + f"Back in CodeAque. {title} may still be running - use Alt+Tab or Steam to return to it."
+        if find_steam_pids(appid):
+            gone_since = 0.0
+        else:
+            gone_since = gone_since or time.time()
+            if time.time() - gone_since >= grace:  # grace period: launchers/relaunches
+                _slog(f"the game ended after {int(gone_since - first_seen)} s")
+                return gone_since - first_seen, ""
+
+
+def _ask_and_wait(base, appid, title, cfg, start_timeout, game_wait, step, steam_running, cancelled, say, spawn, stopped,
+                  hint_after, reveal_after, resend_after):
+    """Send steam://rungameid and wait for the game's process. Returns the time it was seen, or a (secs, message) tuple to hand back."""
+    from . import steam as steam_mod
     watch = None
     if exitwatch.enabled(cfg):
         watch = exitwatch.Watch(_SteamProc(steam_running), "", term=_close_bigpicture(base), grace=0.0, guard=steam_mod.steam_game_running)
@@ -709,13 +806,12 @@ def _run_steam(cfg: Config, game: Game, on_started, poll: float, start_timeout: 
     spawn(base + [f"steam://rungameid/{appid}"], "asking Steam for the game")
     t1 = time.time()
     resent = revealed = False
-    first_seen = 0.0
+    limit = min(start_timeout, game_wait)
     try:
-        # 3. wait for the game's process
-        while time.time() - t1 < start_timeout:
+        while time.time() - t1 < limit:
             if find_steam_pids(appid):
-                first_seen = time.time()
-                break
+                _slog(f"game process found after {int(time.time() - t1)} s")
+                return time.time()
             if cancelled() or (watch is not None and watch.triggered):
                 return stopped("while waiting for the game")
             w = time.time() - t1
@@ -735,22 +831,11 @@ def _run_steam(cfg: Config, game: Game, on_started, poll: float, start_timeout: 
                          "installing). Press Esc (or B) to go back to CodeAque, or Esc twice if CodeAque has stepped aside.")
             say("waiting", text)
             time.sleep(step)
-        if not first_seen:
-            _slog(f"the game never started after {int(time.time() - t1)} s")
-            return 0.0, ("Steam did not seem to start the game (play time not recorded). Open the Steam tile to see Steam's own message "
-                         "(sign in, update, or the game still installing).")
-        _slog(f"game process found after {int(first_seen - t1)} s")
+        waited = int(time.time() - t1)
+        _slog(f"the game never started after {waited} s (Steam running: {steam_running()}; any Steam game process: {steam_mod.steam_game_running()})")
+        return 0.0, (f"Steam did not start {title} within {waited} s (play time not recorded). Open the Steam tile to see Steam's own message "
+                     "(sign in, update, the game still installing, or its anti-cheat). Games with an anti-cheat can refuse to start on Linux; "
+                     "the game's ProtonDB page says whether it works and which Steam launch option it needs.")
     finally:
         if watch is not None:
             watch.stop()
-    say("playing", f"Playing {title}")
-    gone_since = 0.0
-    while True:
-        time.sleep(step)
-        if find_steam_pids(appid):
-            gone_since = 0.0
-        else:
-            gone_since = gone_since or time.time()
-            if time.time() - gone_since >= grace:  # grace period: launchers/relaunches
-                _slog(f"the game ended after {int(gone_since - first_seen)} s")
-                return gone_since - first_seen, ""

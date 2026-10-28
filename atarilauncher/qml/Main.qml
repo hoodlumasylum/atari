@@ -62,6 +62,7 @@ Window {
         s.push({ key: "favorites", label: "Favourites", icon: "heart" })
         s.push({ key: "recent", label: "Recent", icon: "clock" })
         s.push({ key: "__settings", label: "Settings", icon: "gear" })
+        s.push({ key: "__controllers", label: "Controllers", icon: "pad" })
         sideList = s
         tileIndex = Math.max(0, Math.min(tileIndex, tileList.length - 1))
         sideIndex = Math.max(0, Math.min(sideIndex, sideList.length - 1))
@@ -104,6 +105,7 @@ Window {
         var s = sideList[i]
         if (!s) return
         if (s.key === "__settings") openSetup()
+        else if (s.key === "__controllers") openPage("controllers")
         else if (s.key === "__more") backend.toggleShowAllSystems()
         else selectFilter(s.key, true)
     }
@@ -547,6 +549,7 @@ Window {
         else if (r.kind === "installmenu") backend.installEmulators()
         else if (r.kind === "steampage") openPage("steam")
         else if (r.kind === "startmodepage") openPage("startmode")
+        else if (r.kind === "controllerspage") openPage("controllers")
         else if (r.kind === "kioskpage") openPage("kiosk")
         else if (r.kind === "quietbootpage") openPage("quietboot")
         else if (r.kind === "bootreport") backend.saveBootReport()
@@ -595,6 +598,7 @@ Window {
         if (r.kind === "emu") { backend.cycleEmulator(r.id); refreshEmus(true) }
         else if (r.kind === "install" || r.kind === "app") backend.installEmulators()
         else if (r.kind === "bios") openImport("emus", "bios")
+        else if (r.kind === "xemupage") openPage("xemusetup")
         else if (r.kind === "controls") openControls("emulators")
         else if (r.kind === "back") leaveEmus()
     }
@@ -655,7 +659,8 @@ Window {
             if (inputDlg.visible) { inputDlg.handleKey(e); return }            // the password / typing box has the keyboard first
             if (win.mode === "intro") { backend.skipIntro(); return }          // any key skips the intro
             if (backend.running) {
-                if (backend.runningCancelable && (e.key === Qt.Key_Escape || e.key === Qt.Key_B || e.key === Qt.Key_Backspace)) backend.cancelLaunch()
+                if ((backend.runningCancelable || backend.runningPlaying) && (e.key === Qt.Key_Escape || e.key === Qt.Key_B || e.key === Qt.Key_Backspace)) backend.cancelLaunch()
+                else if (backend.runningPlaying && isEnter(e.key)) backend.showGame()
                 return
             }
             var snd = win.keySound(e)
@@ -1648,6 +1653,24 @@ Window {
                     width: 420 * win.u; height: 64 * win.u; radius: height / 2
                     color: "#26ffffff"; border.color: Theme.redBright; border.width: 2
                     Text { anchors.centerIn: parent; text: "Cancel - back to CodeAque  (Esc / B)"; color: "white"; font.pixelSize: 24 * win.u; font.bold: true }
+                    MouseArea { anchors.fill: parent; onClicked: backend.cancelLaunch() }
+                }
+                Rectangle {
+                    objectName: "showGame"
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    visible: backend.runningPlaying
+                    width: 520 * win.u; height: 64 * win.u; radius: height / 2
+                    color: "#26ffffff"; border.color: Theme.redBright; border.width: 2
+                    Text { anchors.centerIn: parent; text: "Back to the game  (Enter / A)"; color: "white"; font.pixelSize: 24 * win.u; font.bold: true }
+                    MouseArea { anchors.fill: parent; onClicked: backend.showGame() }
+                }
+                Rectangle {
+                    objectName: "stopWaiting"
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    visible: backend.runningPlaying
+                    width: 520 * win.u; height: 64 * win.u; radius: height / 2
+                    color: "#26ffffff"; border.color: Theme.dim; border.width: 2
+                    Text { anchors.centerIn: parent; text: "Stop waiting - back to CodeAque  (Esc / B)"; color: "white"; font.pixelSize: 24 * win.u; font.bold: true }
                     MouseArea { anchors.fill: parent; onClicked: backend.cancelLaunch() }
                 }
                 Text {

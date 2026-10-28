@@ -109,7 +109,7 @@ def test_no_game_shows_status_steps_aside_hints_and_asks_again_then_explains(env
     assert "reveal" in phases and "playing" not in phases
     assert any("Still nothing after a minute" in t for _, t in seen)
     assert fs2.calls().count("steam://rungameid/4242") == 2                      # once, plus one resend
-    assert secs == 0 and "did not seem to start the game" in err
+    assert secs == 0 and "did not start" in err
     assert any("never started" in e for e in events) and any("asking Steam again" in e for e in events)
 
 
@@ -214,5 +214,146 @@ def test_escape_on_the_now_playing_screen_cancels_a_steam_start_only(app, tmp_pa
         b.runningStatusChanged.emit()
         ui.key(Qt.Key_Escape)
         assert not b._launch_cancel.is_set()
+    finally:
+        ui.close()
+
+
+# ------------------------------------------------------------------ 0.4.9: a game that is already running, stuck "loading", stale state
+def test_a_game_that_is_already_running_is_not_asked_for_again_but_brought_to_front(env):
+    fs, cfg, events = env
+    fs.up.touch()
+    fs.game.touch()                                   # Marvel Rivals "is already running"
+    fronted = []
+    threading.Timer(0.8, lambda: fs.game.unlink()).start()
+    (secs, err), seen = run(cfg, fs, front=lambda pids: fronted.append(pids) or True)
+    assert err == "" and fronted == [[1]]
+    assert fs.calls() == []                           # no steam://rungameid at all: Steam would ignore it and CodeAque stayed on "loading"
+    assert any("already running" in t for p, t in seen) and [p for p, _ in seen][-1] == "playing"
+    assert any("already running" in e for e in events)
+
+
+def test_already_running_but_cannot_be_raised_says_what_to_do(env):
+    fs, cfg, events = env
+    fs.up.touch()
+    fs.game.touch()
+    threading.Timer(0.6, lambda: fs.game.unlink()).start()
+    (secs, err), seen = run(cfg, fs, front=lambda pids: False)
+    assert err == "" and any("Alt+Tab" in t for p, t in seen if p == "playing")
+
+
+def test_cancel_while_the_game_runs_stops_tracking_and_leaves_the_game(env):
+    fs, cfg, events = env
+    fs.up.touch()
+    fs.game.touch()
+    cancel = threading.Event()
+    threading.Timer(0.6, cancel.set).start()
+    (secs, err), seen = run(cfg, fs, front=lambda pids: True, cancel=cancel)
+    assert err.startswith(launcher.INFO) and "may still be running" in err
+    assert fs.game.exists()                           # the game itself was not touched
+    assert any("stopped waiting" in e for e in events)
+
+
+def test_waiting_for_the_game_has_its_own_shorter_limit(env):
+    fs, cfg, events = env
+    fs2 = FakeSteam(fs.tmp, start_game=False)
+    fs2.up.touch()
+    cfg.steam_command = fs2.cmd
+    t0 = time.time()
+    (secs, err), seen = run(cfg, fs2, start_timeout=60, game_wait=1.0)
+    assert time.time() - t0 < 10 and "did not start" in err and "anti-cheat" in err and "ProtonDB" in err
+
+
+def test_bring_to_front_uses_xdotool_for_the_game_and_its_children(tmp_path):
+    proc = tmp_path / "proc"
+    for pid, ppid in ((10, 1), (11, 10), (12, 11)):
+        (proc / str(pid)).mkdir(parents=True)
+        (proc / str(pid) / "stat").write_text(f"{pid} (wine) S {ppid} 0 0\n")
+    calls = []
+
+    class R:
+        def __init__(self, rc=0, out=""):
+            self.returncode, self.stdout = rc, out
+
+    def run_(cmd, **kw):
+        calls.append(cmd)
+        if cmd[:2] == ["xdotool", "search"]:
+            return R(0, "777\n") if cmd[-1] == "12" else R(1, "")
+        return R(0)
+    ok = launcher.bring_to_front([10], which=lambda n: "/usr/bin/" + n if n == "xdotool" else None, run=run_, proc_root=str(proc))
+    assert ok and ["xdotool", "windowactivate", "777"] in calls
+    assert launcher.bring_to_front([], which=lambda n: None) is False
+    assert launcher.bring_to_front([10], which=lambda n: None, run=run_, proc_root=str(proc)) is False
+
+
+def test_bring_to_front_with_wmctrl(tmp_path):
+    proc = tmp_path / "proc"
+    (proc / "10").mkdir(parents=True)
+    (proc / "10" / "stat").write_text("10 (game) S 1 0 0\n")
+    calls = []
+
+    class R:
+        returncode = 0
+        stdout = "0x01 0 99 host Other\n0x02 0 10 host Marvel Rivals\n"
+    ok = launcher.bring_to_front([10], which=lambda n: "/x/wmctrl" if n == "wmctrl" else None,
+                                 run=lambda cmd, **kw: calls.append(cmd) or R(), proc_root=str(proc))
+    assert ok and ["wmctrl", "-ia", "0x02"] in calls
+
+
+def test_playing_screen_offers_back_to_game_and_stop_waiting(app, tmp_path, monkeypatch):
+    conf(tmp_path)
+    ui = Ui(app, tmp_path, monkeypatch, config_exists=False)
+    try:
+        b = ui.backend
+        b._running, b._running_appid, b._running_title = True, "4242", "Heavy Rain Demo"
+        b._launch_cancel = threading.Event()
+        b._on_launch_status("playing", "Playing")
+        assert b.runningPlaying and not b.runningCancelable
+        pump(app, 100)
+        shown = []
+        monkeypatch.setattr(launcher, "bring_to_front", lambda pids: shown.append(pids) or True)
+        monkeypatch.setattr(launcher, "find_steam_pids", lambda appid, proc_root="/proc": [5])
+        ui.key(Qt.Key_Return)
+        for _ in range(30):
+            pump(app, 50)
+            if shown:
+                break
+        assert shown == [[5]]
+        ui.key(Qt.Key_Escape)
+        assert b._launch_cancel.is_set() and not b.runningPlaying and b.runningStatus == "Cancelling..."
+    finally:
+        ui.close()
+
+
+def test_a_new_launch_forgets_that_codeaque_was_minimised_for_the_last_one(app, tmp_path, monkeypatch):
+    conf(tmp_path)
+    ui = Ui(app, tmp_path, monkeypatch, config_exists=False)
+    try:
+        b = ui.backend
+        b._minimized_for_game = True                  # the user brought the window back by hand last time
+        monkeypatch.setattr(launcher, "run_game", lambda *a, **k: (0.0, ""))
+        g = Game("steam:4242", "Heavy Rain Demo", "steam", "Steam", steam_appid="4242")
+        b._launch_game(g)
+        assert b._minimized_for_game is False and b._running_appid == "4242"
+        for _ in range(40):
+            pump(app, 50)
+            if not b._running:
+                break
+        assert not b._running and not b.runningPlaying and b.runningStatus == ""
+    finally:
+        ui.close()
+
+
+def test_stale_minimised_flag_does_not_stop_the_next_game_stepping_aside(app, tmp_path, monkeypatch):
+    conf(tmp_path)
+    ui = Ui(app, tmp_path, monkeypatch, config_exists=False)
+    try:
+        b = ui.backend
+        calls = []
+        monkeypatch.setattr(ui.win, "showMinimized", lambda: calls.append("min"))
+        monkeypatch.setattr(b, "_window", ui.win)
+        b._running = True
+        b._minimized_for_game = True                 # left over: the window is really on screen (the user brought it back by hand)
+        b._hide_for_game()
+        assert calls == ["min"]
     finally:
         ui.close()

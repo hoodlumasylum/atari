@@ -1,4 +1,4 @@
-"""A small, safe file viewer for the places a game lives: ~/Downloads, ~/Games and ~/Videos.
+"""A small, safe file viewer for the places a game lives: ~/Downloads, ~/Games and ~/Videos (changeable), plus look-only BIOS / emulator / CodeAque folders.
 
 Everything works on one button per job so it can be driven with a controller: list a folder with sizes and free disk space, Open,
 Extract here (zip, tar, 7z, rar - one press), Add to my games, Rename and Delete (with a confirm step in the screen).
@@ -73,6 +73,120 @@ def is_root(path: Path, home: Path | None = None) -> bool:
         return True
 
 
+@dataclass
+class Place:
+    label: str
+    path: Path
+    group: str            # "main" | "games" | "system" | "look"   ("look" = BIOS / emulator folders: shown, never changed)
+    count: int = 0
+
+    @property
+    def writable(self) -> bool:
+        return self.group != "look"
+
+
+SYSTEM_PLACE_CAP = 40
+
+
+def _real(p: Path) -> str:
+    try:
+        return str(p.resolve())
+    except OSError:
+        return str(p)
+
+
+def places(home: Path | None = None) -> list[Place]:
+    """Every place the viewer can start from, in the order shown: Downloads / Games / Videos, then each games folder
+    (~/Games/Atari, ~/Games/Code, ~/Games/CodeAque - a folder that is only another name for one already listed is left out) with
+    its console sub-folders, then the BIOS / emulator / CodeAque data folders that exist (look-only)."""
+    h = home or Path.home()
+    out: list[Place] = []
+    seen: set[str] = set()
+
+    def add(label: str, p: Path, group: str) -> bool:
+        if not p.is_dir():
+            return False
+        r = _real(p)
+        if r in seen:
+            return False
+        seen.add(r)
+        try:
+            n = sum(1 for _ in os.scandir(p))
+        except OSError:
+            n = 0
+        out.append(Place(label, p, group, n))
+        return True
+
+    for label, rel in (("Downloads", "Downloads"), ("Games", "Games"), ("Videos", "Videos")):
+        add(label, h / rel, "main")
+    kept: list[Place] = []
+    for g in ("Atari", "Code", "CodeAque"):
+        if add(f"Games / {g}", h / "Games" / g, "games"):
+            kept.append(out[-1])
+    for gp in kept:
+        try:
+            subs = sorted((d for d in os.scandir(gp.path) if not d.name.startswith(".") and d.is_dir()), key=lambda d: d.name.lower())
+        except OSError:
+            subs = []
+        for d in subs[:SYSTEM_PLACE_CAP]:
+            add(f"{gp.label} / {d.name}", Path(d.path), "system")
+    from . import bios
+    names = bios.TARGET_NAMES
+    looks: list[tuple[str, Path]] = [("CodeAque data (favourites, covers, logs)", h / ".local/share/atari"),
+                                     ("CodeAque settings", h / ".config/atari")]
+    for tid in ("xemu", "duckstation", "pcsx2", "flycast", "melonds", "mgba", "ra", "mednafen", "ryujinx", "eden"):
+        emu_id, fp_id, native, flat = bios.TARGETS[tid]
+        nm = names.get(tid, tid)
+        for rel in native:
+            looks.append((f"BIOS / emulator: {nm}", h / rel))
+        for rel in flat:
+            looks.append((f"BIOS / emulator: {nm} (Flatpak)", h / ".var/app" / fp_id / rel))
+    for label, p in looks:
+        add(label, p, "look")
+    return out
+
+
+def place_of(path: Path, home: Path | None = None) -> Place | None:
+    """The most specific place that contains path (by its own name or with symlinks resolved)."""
+    best: Place | None = None
+    cands = {str(path), _real(path)}
+    for pl in places(home):
+        for base in {str(pl.path), _real(pl.path)}:
+            for c in cands:
+                if c == base or c.startswith(base + os.sep):
+                    if best is None or len(str(pl.path)) > len(str(best.path)):
+                        best = pl
+    return best
+
+
+def is_top(path: Path, home: Path | None = None) -> bool:
+    """True for the starting folders (Downloads, Games, Videos and the look-only BIOS / data folders): Up from here goes to the list of places."""
+    r = _real(path)
+    return any(_real(pl.path) == r for pl in places(home) if pl.group in ("main", "look"))
+
+
+def is_look_only(path: Path, home: Path | None = None) -> bool:
+    """Inside a BIOS / emulator / data folder: shown so you can see where files are, never changed from here."""
+    if inside_roots(path, home):
+        return False
+    pl = place_of(path, home)
+    return pl is not None and pl.group == "look"
+
+
+def breadcrumb(path: Path, home: Path | None = None) -> str:
+    """'Downloads  >  bios  >  pack' - where you are, starting at the place."""
+    pl = place_of(path, home)
+    if pl is None:
+        return str(path)
+    base = str(pl.path) if str(path).startswith(str(pl.path)) else _real(pl.path)
+    rel = str(path)[len(base):] if str(path).startswith(base) else ""
+    if not rel:
+        r = _real(path)
+        rel = r[len(_real(pl.path)):] if r.startswith(_real(pl.path)) else ""
+    parts = [x for x in rel.split(os.sep) if x]
+    return "  >  ".join([pl.label] + parts)
+
+
 def free_space(path: Path) -> tuple[int, int]:
     """(free bytes, total bytes) of the disk the folder is on; (0, 0) when unknown."""
     try:
@@ -95,6 +209,7 @@ class Entry:
     size: int
     mtime: float
     count: int = 0              # folders: number of items directly inside
+    link: bool = False          # a symbolic link (shown, opens, but nothing outside the three places is ever changed through it)
 
     @property
     def name(self) -> str:
@@ -123,7 +238,7 @@ def archive_stem(path: Path | str) -> str:
 
 
 def list_dir(path: Path, cap: int = LIST_CAP) -> tuple[list[Entry], bool]:
-    """(entries, more than cap?) folders first (A-Z), then files (A-Z). Hidden files are not shown."""
+    """(entries, more than cap?) folders first (A-Z), then files (A-Z). Hidden files are not shown; links to folders and files are."""
     dirs: list[Entry] = []
     files: list[Entry] = []
     try:
@@ -134,10 +249,11 @@ def list_dir(path: Path, cap: int = LIST_CAP) -> tuple[list[Entry], bool]:
         if e.name.startswith("."):
             continue
         try:
-            is_dir = e.is_dir(follow_symlinks=False)
-            if not is_dir and not e.is_file(follow_symlinks=False):
-                continue                                    # symlinks and special files are not shown
-            st = e.stat(follow_symlinks=False)
+            link = e.is_symlink()
+            is_dir = e.is_dir(follow_symlinks=link)         # a link to a folder (for example a games folder on another drive) opens like a folder
+            if not is_dir and not e.is_file(follow_symlinks=link):
+                continue                                    # broken links and special files are not shown
+            st = e.stat(follow_symlinks=link)
         except OSError:
             continue
         if is_dir:
@@ -145,9 +261,9 @@ def list_dir(path: Path, cap: int = LIST_CAP) -> tuple[list[Entry], bool]:
                 n = sum(1 for _ in os.scandir(e.path))
             except OSError:
                 n = 0
-            dirs.append(Entry(Path(e.path), True, 0, st.st_mtime, n))
+            dirs.append(Entry(Path(e.path), True, 0, st.st_mtime, n, link))
         else:
-            files.append(Entry(Path(e.path), False, st.st_size, st.st_mtime))
+            files.append(Entry(Path(e.path), False, st.st_size, st.st_mtime, 0, link))
     dirs.sort(key=lambda x: x.name.lower())
     files.sort(key=lambda x: x.name.lower())
     both = dirs + files
