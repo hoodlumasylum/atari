@@ -34,6 +34,9 @@ def main(argv=None) -> int:
 
     from .backend import Backend
 
+    import signal
+    signal.signal(signal.SIGINT, signal.SIG_DFL)  # Ctrl+C in a terminal just closes the app
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
     app = QGuiApplication(sys.argv[:1])
     app.setApplicationName("Atari")
     app.setDesktopFileName("atari")

@@ -75,3 +75,30 @@ def test_launch_missing_emulator_shows_friendly_message(tmp_path, monkeypatch):
         app.processEvents()
         time.sleep(0.02)
     assert "Could not find" in b.toast
+
+
+def test_setup_flow_saves_config_and_scans(tmp_path, monkeypatch):
+    monkeypatch.setenv("ATARI_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("ATARI_CONFIG_DIR", str(tmp_path / "conf"))
+    QCoreApplication.instance() or QCoreApplication([])
+    roms = tmp_path / "ROMs" / "my snes"
+    (roms / "sub").mkdir(parents=True)
+    (roms / "sub" / "Hero Quest (USA).sfc").write_bytes(b"x")
+    cfg = config.load_config()
+    assert cfg.first_run
+    cfg.steam_enabled = False
+    b = be.Backend(cfg=cfg, store=Store(tmp_path / "s.json"), enable_gamepad=False)
+    assert b.firstRun and b.emptyMessage().startswith("No games yet")
+    rows = b.setupRows()
+    assert rows[0]["kind"] == "steam" and rows[-1]["kind"] == "done"
+    assert any(r.get("id") == "snes" for r in rows)
+    # folder browser data
+    listing = b.listDir(str(tmp_path / "ROMs"))
+    assert [d["name"] for d in listing["dirs"]] == ["my snes"]
+    assert b.listDir("")["dirs"][0]["name"] == "Home"
+    b.setSystemFolder("snes", str(roms))
+    assert next(r for r in b.setupRows() if r.get("id") == "snes")["value"] == "1 game"
+    b.finishSetup()
+    assert not b.firstRun and (tmp_path / "conf" / "config.toml").is_file()
+    assert b.totalGames == 1 and b.model.rowCount() == 1
+    assert config.load_config().systems["snes"].roms == [str(roms)]

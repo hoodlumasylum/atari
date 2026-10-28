@@ -354,7 +354,7 @@ class Backend(QObject):
             n = self._lib.rom_counts.get(sc.id, 0)
             folder = ", ".join(sc.roms) if sc.roms else "Not set - press Enter to choose a folder"
             rows.append({"kind": "system", "id": sc.id, "title": sc.name,
-                         "value": f"{n} games" if sc.roms else "",
+                         "value": (f"{n} game" + ("" if n == 1 else "s")) if sc.roms else "",
                          "detail": folder})
         rows.append({"kind": "done", "title": "Save and start playing", "value": "",
                      "detail": f"Settings are saved in {self.configPath}"})

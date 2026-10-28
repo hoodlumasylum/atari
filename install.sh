@@ -82,9 +82,12 @@ if [ "$GAMEPAD" = 1 ]; then
 fi
 
 say "Testing that the app can start"
-if ! QT_QPA_PLATFORM=offscreen PYTHONPATH="$APP_DIR" "$APP_DIR/.venv/bin/python" -m atarilauncher --version; then
-    warn "The test failed - see the messages above."; exit 1
+if ! QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software ATARI_NO_GAMEPAD=1 PYTHONPATH="$APP_DIR" \
+        "$APP_DIR/.venv/bin/python" -m atarilauncher --demo --windowed --selftest >/dev/null; then
+    warn "The start-up test failed - see the messages above. (Missing system libraries are the usual cause; see the README.)"
+    exit 1
 fi
+echo "OK"
 
 # ---------------------------------------------------------------- app menu entry
 say "Adding Atari to your application menu"
