@@ -12,7 +12,7 @@ from pathlib import Path
 from PySide6.QtCore import Property, QObject, QProcess, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QKeyEvent
 
-from . import downloads, golive, icons, inputfix, intro, kiosk, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
+from . import downloads, golive, icons, inputfix, intro, kiosk, quietboot, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
 from . import __version__
 from .config import Config, load_config, save_config
 from .import_model import ImportModel
@@ -63,6 +63,7 @@ class Backend(QObject):
     coversFinished = Signal(object)         # covers.Report
     introChanged = Signal()
     introEnded = Signal(str)               # why the intro ended (from the player thread)
+    quietbootDone = Signal(bool, str)       # (worked, text) from the quiet-boot worker thread
     kioskDone = Signal(bool, str)           # (worked, text) from the Code-only mode worker thread
     inputFixDone = Signal(bool, str)        # (worked, text) from the permissions-fix thread
     iconArrived = Signal(str, str, bool)    # gid, file, fit (from the icon worker thread)
@@ -123,6 +124,10 @@ class Backend(QObject):
         self._kiosk_busy = False
         self._kiosk_msg = ""
         self._kiosk_layout = kiosk.DEFAULT
+        self.quietbootDone.connect(self._quietboot_finished, Qt.QueuedConnection)
+        self._qb_busy = False
+        self._qb_msg = ""
+        self._qb_layout = quietboot.DEFAULT
         self.importProgressed.connect(self._on_import_progress, Qt.QueuedConnection)
         self.importFinished.connect(self._on_import_finished, Qt.QueuedConnection)
         self._lib = LibraryResult()
@@ -209,9 +214,11 @@ class Backend(QObject):
                 QTimer.singleShot(1200, self._sync_music)
         if not self._demo and not os.environ.get("ATARI_NO_WIFI"):
             QTimer.singleShot(2500, self._wifi_poll)         # the WiFi name next to the clock
+        if not self._demo:
+            kiosk.log_event("started - " + kiosk.running_description()[1] + f" (pid {os.getpid()}, DESKTOP_SESSION={os.environ.get('DESKTOP_SESSION', '')})")
         if not self._demo and kiosk.session_outdated(self._kiosk_layout):
             QTimer.singleShot(7000, lambda: self.show_toast("Code-only mode needs a one-time update so Code never drops to the desktop: "
-                                                            "Settings > Code-only mode > Update.", 15000))
+                                                            "Settings > \"Update Code-only mode\".", 15000))
         if not self._demo and not os.environ.get("ATARI_NO_MEDIA"):
             QTimer.singleShot(3000, self._media_poll)        # the music control in the top bar
         # pages (help / fix my game / add Windows game)
@@ -1110,16 +1117,30 @@ class Backend(QObject):
             rows.append(self._info("Result:  " + self._kiosk_msg))
         if kiosk.enabled(lay):
             if kiosk.session_outdated(lay):
-                rows += [self._info("Code-only mode's session file is from an older Code. With it, closing Code (or an app taking Code down) can drop you "
-                                    "to the Mint desktop. Press the button below once (password) to update it."),
-                         {"kind": "done", "id": "kioskupdate", "title": "Update Code-only mode (fixes landing on the desktop)",
-                          "detail": "Asks for your password once. Rewrites the same three files; nothing else changes."}]
+                rows.append(self._info("Code-only mode's session file is from an older Code. With it, closing Code (or an app taking Code down) can drop you "
+                                       "to the Mint desktop. Press \"Update Code-only mode\" once (password) to fix it."))
+            else:
+                rows.append(self._info("Code-only mode's session file is up to date. \"Update Code-only mode\" below just writes it again (safe any time)."))
+            rows.append({"kind": "done", "id": "kioskupdate", "title": "Update Code-only mode",
+                         "detail": "Asks for your password once. Rewrites the same three files; nothing else changes."})
+            kind, rtext = kiosk.running_description()
+            if kind != "code-only":
+                rows.append(self._info("Note: " + rtext + " Closing an app can then show the desktop. Restart the computer (or log out and in) so the "
+                                       "Code-only session starts Code."))
+            facts = kiosk.diagnose(lay)
+            problems = [t for t in facts if not t.startswith(("OK ", "    ", "session log")) and "Code is running" not in t]
+            tail = kiosk.log_tail(3)
+            if problems:
+                rows.append(self._info("Check: " + " | ".join(t.strip() for t in problems)))
+            if tail:
+                rows.append(self._info("Last start-ups (" + str(kiosk.session_log_path()) + "):  " + "  /  ".join(tail)))
             rows += [self._info("Code-only mode is ON: the computer starts straight into Code, with no Linux Mint desktop."),
                      {"kind": "done", "id": "kioskoff", "title": "Back to Mint desktop (turn Code-only mode off)",
                       "detail": "Asks for your password once. The normal login and desktop come back after the next restart or log out."},
                      {"kind": "item", "id": "kioskonce", "title": "Open the Mint desktop once (log out now)",
                       "detail": "No password. This login only - the next start is Code-only again."},
-                     self._info(kiosk.RECOVERY)]
+                     self._info(kiosk.RECOVERY),
+                     self._info("If it ever starts the Mint desktop instead of Code, paste this in a Terminal to put it right: " + kiosk.RESTORE_COMMAND)]
         else:
             checks = kiosk.preflight(lay)
             why = kiosk.blocked(checks)
@@ -1141,6 +1162,73 @@ class Backend(QObject):
         rows += [self._info(t) for t in kiosk.FAST_BOOT_TIPS]
         rows.append({"kind": "item", "id": "back", "title": "No, keep my normal desktop" if not kiosk.enabled(lay) else "Back"})
         return rows
+
+    # ----- Quiet boot (hide the Mint branding) ----------------------------------------
+    def _quietboot_rows(self) -> list:
+        lay = self._qb_layout
+        if self._qb_busy:
+            return [self._info("Working - a password window may be waiting for you. Rebuilding the boot image takes up to a minute..."),
+                    {"kind": "item", "id": "back", "title": "Back"}]
+        rows: list = []
+        if self._qb_msg:
+            rows.append(self._info("Result:  " + self._qb_msg))
+        if quietboot.enabled(lay):
+            rows += [self._info("Quiet boot is ON: no boot menu, no Mint logo, the Code logo on black, hardly any text."),
+                     self._info(quietboot.HOW_TO_SHOW_MENU),
+                     {"kind": "done", "id": "qboff", "title": "Turn quiet boot off (Mint's boot screens come back)",
+                      "detail": "Asks for your password once. Removes exactly the files quiet boot added."},
+                     self._info(quietboot.RECOVERY)]
+        else:
+            checks = quietboot.preflight(lay, logo=quietboot.logo_path())
+            why = quietboot.blocked(checks)
+            rows += [self._info("Quiet boot replaces the Linux Mint start-up look with Code's: the boot menu is hidden, the Mint logo screen becomes the "
+                                "Code logo on black, and the start-up text is switched off. Works best together with Code-only mode."),
+                     self._info("What changes (password once): a GRUB setting file, a boot-splash theme called \"code\", and a rebuild of the boot image "
+                                "(update-grub, update-initramfs). Turning it off removes exactly those. " + quietboot.HOW_TO_SHOW_MENU),
+                     self._info("Safe by design: the boot menu is NOT hidden when another system (Windows ...) is on the disk, GRUB still shows by itself "
+                                "after a failed start, recovery mode is untouched, and if anything fails Code puts everything back.")]
+            for c in checks:
+                if not c.ok:
+                    rows.append(self._info(("CANNOT CONTINUE: " if c.fatal else "Note: ") + c.text))
+            if why:
+                rows.append({"kind": "item", "id": "back", "title": "Back"})
+                return rows
+            rows.append({"kind": "done", "id": "qbon", "title": "Yes, turn quiet boot ON", "detail": "A password window pops up. You can undo it any time."})
+        rows.append({"kind": "item", "id": "back", "title": "Back" if quietboot.enabled(lay) else "No, leave the boot screens as they are"})
+        return rows
+
+    def _quietboot_activate(self, rid: str) -> str:
+        if rid in ("qbon", "qboff"):
+            if self._qb_busy:
+                return ""
+            self._qb_busy = True
+            self._qb_msg = ""
+            lay = self._qb_layout
+            self.show_toast("A password window will pop up...", 6000)
+
+            def work():
+                try:
+                    done, msg = quietboot.disable(lay) if rid == "qboff" else quietboot.enable(lay)
+                except Exception as exc:  # pragma: no cover - safety net
+                    done, msg = False, f"The change hit a problem: {exc}"
+                studio_fix.log(f"quiet boot {rid}: ok={done} {msg}")
+                self.quietbootDone.emit(done, msg)
+            threading.Thread(target=work, daemon=True, name="atari-quietboot").start()
+            return "refresh"
+        return ""
+
+    @Slot(bool, str)
+    def _quietboot_finished(self, ok: bool, text: str) -> None:
+        self._qb_busy = False
+        self._qb_msg = text
+        self.show_toast(text, 12000)
+        self.pageChanged.emit()
+
+    @Slot()
+    def updateKioskSession(self) -> None:
+        """The Settings row: the same one-password update as the button on the Code-only page."""
+        if kiosk.enabled(self._kiosk_layout):
+            self._kiosk_activate("kioskupdate")
 
     def _kiosk_activate(self, rid: str) -> str:
         if rid in ("kioskon", "kioskoff", "kioskupdate"):
@@ -1494,22 +1582,40 @@ class Backend(QObject):
             self._minimized_for_game = True
             self._window.showMinimized()
 
+    def _shell_mode(self) -> bool:
+        """Code-only session, or Code-only mode installed but this copy was started from the desktop (see kiosk.shell_mode)."""
+        try:
+            return kiosk.shell_mode(self._kiosk_layout)
+        except Exception:  # pragma: no cover - never let a file check break the window logic
+            return kiosk.in_session()
+
+    def _log_window(self, why: str) -> None:
+        win = self._window
+        try:
+            kiosk.log_event(f"{why}: window visible={win.isVisible()} active={win.isActive()} "
+                            f"state={int(win.visibility())} shell_mode={self._shell_mode()} in_session={kiosk.in_session()}")
+        except Exception:
+            pass
+
     def _restore_window(self) -> None:
         win = self._window
         if win is None:
             return
         if self._minimized_for_game:
             self._minimized_for_game = False
-            if self.cfg.fullscreen or kiosk.in_session():
+            if self.cfg.fullscreen or self._shell_mode():
                 win.showFullScreen()
             else:
                 win.showNormal()
-        elif kiosk.in_session():
+        elif self._shell_mode():
             win.showFullScreen()            # Code-only: always take the whole screen back, whatever the app did to the window
         win.raise_()
         win.requestActivate()
+        if not self._demo:
+            kiosk.log_event(f"an app closed ({self._running_title or 'app'}): Code takes the screen back")
+            QTimer.singleShot(2000, lambda: self._log_window("2 s after the app closed"))
         # window managers sometimes ignore the first focus request right after a full-screen app closed: ask again
-        for ms in ((300, 1000, 2500, 5000) if kiosk.in_session() else (300, 1000)):       # Code-only: nothing else may keep the screen
+        for ms in ((300, 1000, 2500, 5000) if self._shell_mode() else (300, 1000)):       # Code-only: nothing else may keep the screen
             QTimer.singleShot(ms, self._reactivate)
 
     def _reactivate(self) -> None:
@@ -2522,6 +2628,14 @@ class Backend(QObject):
                                           else "Code-only mode (start straight into Code)"),
                      "value": "ON" if kiosk.enabled(self._kiosk_layout) else "OFF",
                      "detail": "Makes the computer boot into Code with no Mint desktop. Asks you to confirm first, and there is always a way back."})
+        rows.append({"kind": "quietbootpage", "title": "Quiet boot: hide the Mint logo and menus",
+                     "value": "ON" if quietboot.enabled(self._qb_layout) else "OFF",
+                     "detail": "Boot menu hidden, Code logo on black instead of the Mint logo, start-up text off. Reversible; the boot menu stays one key away."})
+        if kiosk.enabled(self._kiosk_layout):
+            old = kiosk.session_outdated(self._kiosk_layout)
+            rows.append({"kind": "kioskupdate", "title": "Update Code-only mode", "value": "UPDATE NEEDED" if old else "Up to date",
+                         "detail": "One press (password once) rewrites the Code-only session file so closing an app or a crash never drops you to the "
+                                   "Mint desktop. Needed once after an update from 0.3.x / 0.4.0."})
         rows.append({"kind": "bigpicture", "title": "Open Steam in Big Picture (full screen)",
                      "value": "ON" if self.cfg.steam_bigpicture else "OFF",
                      "detail": "The Steam tile opens Steam full screen with big buttons for a controller. Press Esc twice (or hold Guide and press B) "
@@ -2639,7 +2753,7 @@ class Backend(QObject):
                 "winchoose": "WHICH PROGRAM STARTS THE GAME?", "winwork": "OPENING THE ARCHIVE",
                 "install": "INSTALL", "installmenu": "INSTALL EMULATORS & APPS", "steam": "STEAM",
                 "recordings": "RECORDINGS", "coverpick": "PICK A COVER", "nocovers": "COVERS NOT FOUND",
-                "addgames": "ADD GAMES", "kiosk": "CODE-ONLY MODE", "downloads": "DOWNLOADS", "golive": "GO LIVE", "robloxfix": "FIX ROBLOX",
+                "addgames": "ADD GAMES", "kiosk": "CODE-ONLY MODE", "quietboot": "QUIET BOOT", "downloads": "DOWNLOADS", "golive": "GO LIVE", "robloxfix": "FIX ROBLOX",
                 "dlsystem": "WHICH SYSTEM IS THIS FILE FOR?"}.get(name, name.upper())
 
     @Slot(str, result=str)
@@ -2660,7 +2774,8 @@ class Backend(QObject):
                 "coverpick": "Enter / A uses the highlighted picture.  Esc / B = back.",
                 "nocovers": "Games that no cover was found for.  Esc / B = back.",
                 "addgames": "Up/Down to choose, Enter / A or a click to press.  Esc / B = back.",
-                "kiosk": "Read this, then choose.  Esc / B = back - nothing changes until you press Yes."}.get(name, "")
+                "kiosk": "Read this, then choose.  Esc / B = back - nothing changes until you press Yes.",
+                "quietboot": "Read this, then choose.  Esc / B = back - nothing changes until you press Yes."}.get(name, "")
 
     # ----- Go Live: OBS + the Twitch / TikTok / YouTube dashboards -------------------------------
     def _golive_rows(self) -> list:
@@ -2855,6 +2970,8 @@ class Backend(QObject):
             return self._steam_rows()
         if name == "kiosk":
             return self._kiosk_rows()
+        if name == "quietboot":
+            return self._quietboot_rows()
         if name == "winwork":
             return [{"kind": "info", "title": self._win_text or "Working..."},
                     {"kind": "item", "id": "cancel", "title": "Cancel"}]
@@ -3055,6 +3172,8 @@ class Backend(QObject):
             return ""
         if name == "kiosk":
             return self._kiosk_activate(rid)
+        if name == "quietboot":
+            return self._quietboot_activate(rid)
         if name == "steam":
             if rid == "steaminstall":
                 self.installSteam()

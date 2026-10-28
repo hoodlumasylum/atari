@@ -9,10 +9,12 @@ Pure Python (no Qt) so it can be tested with a fake local release server. Rules:
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import re
 import shutil
+import ssl
 import subprocess
 import tarfile
 import tempfile
@@ -104,9 +106,10 @@ def cache_dir() -> Path:
 
 
 # ------------------------------------------------------------------ talking to GitHub
-def _open(url: str, timeout: float, accept: str = "*/*"):
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": accept})
-    return urllib.request.urlopen(req, timeout=timeout)
+def _open(url: str, timeout: float, accept: str = "*/*", extra: dict | None = None):
+    headers = {"User-Agent": USER_AGENT, "Accept": accept}
+    headers.update(extra or {})
+    return urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout)
 
 
 def _net_error(exc: Exception) -> UpdateError:
@@ -154,16 +157,50 @@ def due(last_checked: float, now: float | None = None) -> bool:
 
 
 # ------------------------------------------------------------------ download + verify
-def download(url: str, dest: Path, progress: Callable[[int, int], None] | None = None,
-             cancel: threading.Event | None = None, timeout: float = 30.0) -> None:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    part = dest.with_name(dest.name + ".part")
+ATTEMPTS = 5
+_sleep = time.sleep          # tests replace this so retries do not wait
+NO_CACHE = {"Cache-Control": "no-cache", "Pragma": "no-cache", "Accept-Encoding": "identity"}
+
+
+class ShortDownload(Exception):
+    """The connection ended before the server's announced length (Wi-Fi drop, proxy, sleep): retried, never installed."""
+
+
+def _retryable(exc: BaseException) -> bool:
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code >= 500 or exc.code in (408, 416)
+    return isinstance(exc, (urllib.error.URLError, ConnectionError, TimeoutError, ssl.SSLError, ShortDownload,
+                            http.client.HTTPException))
+
+
+def _fetch_once(url: str, part: Path, progress, cancel, timeout: float) -> bool:
+    """One try, continuing the half-finished .part file when the server allows it. True when complete."""
+    have = part.stat().st_size if part.exists() else 0
+    extra = dict(NO_CACHE)
+    if have:
+        extra["Range"] = f"bytes={have}-"
     try:
-        with _open(url, timeout) as resp, open(part, "wb") as fh:
-            total = int(resp.headers.get("Content-Length") or 0)
-            if total > MAX_DOWNLOAD:
-                raise UpdateError("The download is much bigger than expected, so it was not started.")
-            done = 0
+        resp = _open(url, timeout, extra=extra)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 416 and have:                      # our partial file is not what the server has: start over
+            part.unlink(missing_ok=True)
+        raise
+    with resp:
+        status = getattr(resp, "status", 200)
+        length = int(resp.headers.get("Content-Length") or 0)
+        if status == 206 and have:
+            m = re.match(r"^bytes (\d+)-\d+/(\d+|\*)$", resp.headers.get("Content-Range") or "")
+            if not m or int(m.group(1)) != have:
+                part.unlink(missing_ok=True)
+                raise ShortDownload("the server resumed from the wrong place")
+            total = int(m.group(2)) if m.group(2).isdigit() else have + length
+            mode = "ab"
+        else:                                             # a normal answer: the whole file from the start
+            total, have, mode = length, 0, "wb"
+        if total > MAX_DOWNLOAD:
+            raise UpdateError("The download is much bigger than expected, so it was not started.")
+        done = have
+        with open(part, mode) as fh:
             while True:
                 if cancel is not None and cancel.is_set():
                     raise Cancelled("Cancelled.")
@@ -176,23 +213,85 @@ def download(url: str, dest: Path, progress: Callable[[int, int], None] | None =
                 fh.write(buf)
                 if progress:
                     progress(done, total)
-        part.replace(dest)
-    except (urllib.error.URLError, OSError, TimeoutError) as exc:
-        part.unlink(missing_ok=True)
-        if isinstance(exc, (urllib.error.URLError, TimeoutError)):
-            raise _net_error(exc)
+    if total and done != total:                           # http.client does NOT raise for a cut-off read(n): check it
+        raise ShortDownload(f"got {done} of {total} bytes")
+    return True
+
+
+def _rm(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def download(url: str, dest: Path, progress: Callable[[int, int], None] | None = None,
+             cancel: threading.Event | None = None, timeout: float = 30.0, attempts: int = ATTEMPTS) -> None:
+    """Download url to dest. Dropped connections are retried (resuming where they stopped); a file that is shorter than
+    the server said it would be is never accepted."""
+    part = dest.with_name(dest.name + ".part")
+    last: BaseException | None = None
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        _rm(part)
+        for n in range(max(1, attempts)):
+            if n:
+                _sleep(min(2 ** n, 15) * 0.5)
+            try:
+                _fetch_once(url, part, progress, cancel, timeout)
+                part.replace(dest)
+                return
+            except (UpdateError, Cancelled):
+                raise
+            except BaseException as exc:
+                if not _retryable(exc):
+                    raise
+                last = exc
+        _rm(part)
+        if isinstance(last, ShortDownload):
+            raise Offline(f"The connection kept dropping before the download finished ({last}). "
+                          "Check your Wi-Fi and try again.")
+        raise _net_error(last)
+    except urllib.error.HTTPError as exc:
+        _rm(part)
+        raise _net_error(exc)
+    except (urllib.error.URLError, TimeoutError) as exc:
+        _rm(part)
+        raise _net_error(exc)
+    except OSError as exc:
+        _rm(part)
         raise UpdateError(f"Could not save the download: {exc}")
     except BaseException:
-        part.unlink(missing_ok=True)
+        _rm(part)
         raise
 
 
-def read_text(url: str, timeout: float = 20.0) -> str:
-    try:
-        with _open(url, timeout) as resp:
-            return resp.read(1_000_000).decode("utf-8", "replace")
-    except (urllib.error.URLError, OSError, TimeoutError) as exc:
-        raise _net_error(exc)
+def read_text(url: str, timeout: float = 20.0, attempts: int = 4) -> str:
+    last: BaseException | None = None
+    for n in range(max(1, attempts)):
+        if n:
+            _sleep(min(2 ** n, 10) * 0.5)
+        try:
+            with _open(url, timeout, extra=NO_CACHE) as resp:
+                body = resp.read(1_000_000)
+                want = int(resp.headers.get("Content-Length") or 0)
+                if want and len(body) != want:
+                    raise ShortDownload(f"got {len(body)} of {want} bytes")
+                return body.decode("utf-8", "replace")
+        except BaseException as exc:
+            if not _retryable(exc):
+                if isinstance(exc, (urllib.error.URLError, OSError, TimeoutError)):
+                    raise _net_error(exc)
+                raise
+            last = exc
+    raise _net_error(last)
+
+
+class BadChecksum(UpdateError):
+    def __init__(self, name: str, expected: str, actual: str, size: int):
+        self.expected, self.actual, self.size = expected, actual, size
+        super().__init__("The downloaded file is damaged or was changed (its checksum does not match). "
+                         f"Nothing was installed. {name} is {size:,} bytes; expected sha256 {expected}, got {actual}.")
 
 
 def sha256_of(path: Path) -> str:
@@ -204,7 +303,7 @@ def sha256_of(path: Path) -> str:
 
 
 def expected_hash(sums_text: str, name: str) -> str:
-    for line in sums_text.splitlines():
+    for line in sums_text.lstrip("\ufeff").splitlines():
         m = re.match(r"^([0-9a-fA-F]{64})\s+\*?(.+?)\s*$", line)
         if m and Path(m.group(2)).name == name:
             return m.group(1).lower()
@@ -215,10 +314,11 @@ def verify(tar_path: Path, sums_text: str) -> None:
     want = expected_hash(sums_text, tar_path.name)
     if not want:
         raise UpdateError("The release has no checksum for this file, so Code will not install it.")
-    if sha256_of(tar_path) != want:
+    got = sha256_of(tar_path)
+    if got != want:
+        size = tar_path.stat().st_size
         tar_path.unlink(missing_ok=True)
-        raise UpdateError("The downloaded file is damaged or was changed (its checksum does not match). "
-                          "Nothing was installed. Please try again.")
+        raise BadChecksum(tar_path.name, want, got, size)
 
 
 # ------------------------------------------------------------------ unpack + install
@@ -345,7 +445,15 @@ def perform(rel: Release, root: Path | None = None, progress: Callable[[str, str
 
         download(rel.tar_url, tar, dl, cancel)
         say("verifying", "Checking the download is genuine ...", -1)
-        verify(tar, sums)
+        try:
+            verify(tar, sums)
+        except BadChecksum:
+            # a damaged copy (or a stale cached checksum list): fetch both once more, from scratch, before giving up
+            say("downloading", "The download did not check out, trying once more ...", -1)
+            sums = read_text(rel.sums_url)
+            download(rel.tar_url, tar, dl, cancel)
+            say("verifying", "Checking the download is genuine ...", -1)
+            verify(tar, sums)
         say("installing", "Unpacking ...", -1)
         src = safe_extract(tar, work / "pkg")
         got = version_in(src)

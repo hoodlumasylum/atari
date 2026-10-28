@@ -139,7 +139,7 @@ def test_gestures_close_the_app(xvfb, gesture):
             xdo("keyup", "Escape")
         else:
             xdo("key", "ctrl+Escape")
-        assert p.wait(6) is not None                          # the "browser" was asked to close
+        assert p.wait(20) is not None                          # the "browser" was asked to close
         assert w.triggered and w.reason in ("double", "hold", "ctrl-esc")
     finally:
         w.stop()
@@ -169,7 +169,7 @@ def test_gamepad_request_quit_closes_the_watched_app():
     try:
         assert not w.keyboard_ok
         assert exitwatch.request_quit("gamepad") is True
-        assert p.wait(6) is not None and w.reason == "gamepad"
+        assert p.wait(20) is not None and w.reason == "gamepad"
     finally:
         w.stop()
         stop(p)

@@ -31,6 +31,30 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
+## What's new in 0.4.2
+
+- **Updater fix** ("The downloaded file is damaged or was changed (its checksum does not match)"): the release files were fine. When a connection ended early (Wi-Fi drop, sleep, proxy), the old download code quietly accepted the half file, and the checksum step correctly refused it. The updater now checks the length the server announced, retries dropped connections (resuming where they stopped), asks for fresh uncached bytes, tries once more from scratch with a fresh checksum list before giving up, and a real mismatch shows the expected and actual SHA256 and the file size.
+- **Code-only mode: closing an app must show Code, never the Mint desktop.** (a) Code now takes the whole screen back after an app closes whenever Code-only mode is *installed* - also when this copy of Code was started from the desktop menu or an autostart entry instead of the Code-only session (before, only a copy started by the session program did). (b) The session program (now version 3) writes `~/.local/share/atari/session.log` (every start of Code, exit code and run time, and the exact reason if it ever starts the desktop), and Code adds a line when it starts (is it the Code-only session or inside Cinnamon?) and 2 s after every app closed (is the window visible / active?). (c) Settings > Code-only mode shows what is wrong (no window manager, an auto-login file pointing at the wrong session, a leftover "desktop once" note, Code running inside the desktop) and the last log lines.
+- **"Update Code-only mode" is always in Settings** while Code-only mode is installed (value UPDATE NEEDED or Up to date; password once; also at the top of the Code-only page).
+- **One command to put Code-only mode right** (rewrites the three files and clears a leftover "desktop once" note; asks for the sudo password):
+
+  ```bash
+  cd ~/.local/share/atari-launcher && rm -f ~/.config/atari/desktop-once && python3 -c "from atarilauncher import kiosk; print(kiosk.enable_script('$USER'))" | sudo sh
+  ```
+
+- **One command to see what is going on** (works on 0.4.1 too):
+
+  ```bash
+  echo "session=$DESKTOP_SESSION desktop=$XDG_CURRENT_DESKTOP kiosk=$ATARI_KIOSK"; ls -l /usr/local/bin/atari-session /usr/share/xsessions/atari.desktop /etc/lightdm/lightdm.conf.d/*; grep -h "version\|^RUN" /usr/local/bin/atari-session; ls ~/.config/autostart 2>/dev/null; pgrep -a "cinnamon|muffin|openbox|nemo-desktop"; tail -15 ~/.local/share/atari/session.log 2>/dev/null
+  ```
+
+- **Quiet boot - hide the Mint branding** (Settings > "Quiet boot: hide the Mint logo and menus", reversible, password once). Hides the GRUB menu (a 2 second window: hold Shift on old BIOS, tap Esc on UEFI, and the menu is there), switches kernel / systemd start-up text off, and replaces the Mint boot logo with the Code logo on black (a Plymouth theme called "code", chosen with update-alternatives; Mint's theme stays installed). It is **not** hidden when another system (Windows, macOS ...) is on the disk, GRUB still appears by itself after a failed boot, recovery mode is untouched, and if any step fails everything is put back. The login screen is skipped by Code-only mode's auto-login; it is not restyled. By hand: `sudo rm /etc/default/grub.d/90-code-quiet.cfg && sudo update-alternatives --remove default.plymouth /usr/share/plymouth/themes/code/code.plymouth && sudo update-grub && sudo update-initramfs -u`.
+- **If the in-app updater cannot be trusted on your connection, one command does the same by hand** (resumes if it drops, checks the SHA256 against the release's own list, keeps your settings and games):
+
+  ```bash
+  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.4.2.tar.gz https://github.com/hoodlumasylum/atari/releases/download/v0.4.2/atari-0.4.2.tar.gz && curl -fsSL https://github.com/hoodlumasylum/atari/releases/download/v0.4.2/SHA256SUMS.txt | grep ' atari-0.4.2.tar.gz$' | sha256sum -c - && tar xzf atari-0.4.2.tar.gz && cd atari-0.4.2 && ./install.sh --yes
+  ```
+
 ## What's new in 0.4.1
 
 - **Intro: truly full screen, original quality.** The bundled intro is now the original video file (1280x720, ~7.5 MB; it is not 1080p, so nothing is up-scaled) instead of a re-compressed copy. mpv / VLC / ffplay are started borderless, always on top and full screen, keep the whole picture (black bars if the aspect differs, never cropped), and hide the pointer; Code's own window also goes full screen for the intro and returns to window mode afterwards.
@@ -250,13 +274,13 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.4.1.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
+1. Download **`atari-0.4.2.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
 2. Open a **Terminal** and type:
 
    ```bash
    cd ~/Downloads
-   tar xzf atari-0.4.1.tar.gz
-   cd atari-0.4.1
+   tar xzf atari-0.4.2.tar.gz
+   cd atari-0.4.2
    ./install.sh
    ```
 

@@ -5,6 +5,8 @@ import os
 import subprocess
 import sys
 
+from pathlib import Path
+
 import pytest
 
 from atarilauncher import kiosk
@@ -241,7 +243,7 @@ def test_settings_row_confirm_screen_and_result(app, tmp_path, monkeypatch, box)
         assert wait_for(app, lambda: not b._kiosk_busy, 5)
         assert "Code-only mode is ON" in b.toast
         rows = b.pageRows("kiosk")
-        assert [r.get("id") for r in rows if r["kind"] != "info"] == ["kioskoff", "kioskonce", "back"]
+        assert [r.get("id") for r in rows if r["kind"] != "info"] == ["kioskupdate", "kioskoff", "kioskonce", "back"]
         assert rows[0]["kind"] == "info" and rows[0]["title"].startswith("Result:")
         row = [r for r in b.setupRows() if r.get("kind") == "kioskpage"][0]
         assert row["value"] == "ON" and row["title"].startswith("Back to Mint desktop")
@@ -310,6 +312,220 @@ def test_the_code_only_screen_offers_the_update_only_when_needed(app, tmp_path, 
         rows = b.pageRows("kiosk")
         assert any(r.get("id") == "kioskupdate" for r in rows) and "drop you to the Mint desktop" in " ".join(r.get("title", "") for r in rows)
         layout.p(layout.session_script).write_text(kiosk.render_session_script(run_sh, "cinnamon-session"))
-        assert not any(r.get("id") == "kioskupdate" for r in b.pageRows("kiosk"))
+        rows = b.pageRows("kiosk")
+        assert any(r.get("id") == "kioskupdate" for r in rows) and "up to date" in " ".join(r.get("title", "") for r in rows)  # always there
     finally:
         ui.close()
+
+
+def test_the_update_button_is_in_settings_whenever_code_only_mode_is_installed(app, tmp_path, monkeypatch, box):
+    layout, run_sh, _ = box
+    conf(tmp_path, '[steam]\nenabled = false\n')
+    ui = Ui(app, tmp_path, monkeypatch, config_exists=False)
+    try:
+        b = ui.backend
+        b._kiosk_layout = layout
+        assert not [r for r in b.setupRows() if r.get("kind") == "kioskupdate"]          # nothing installed: no row
+        for f, text in zip(layout.files, ("#!/bin/sh\n# session from Atari 0.3.2, no marker\nexec run.sh\n", "x", "x")):
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(text)
+        assert kiosk.enabled(layout) and kiosk.session_outdated(layout)                    # a 0.3.x script (no marker) counts as old
+        rows = [r for r in b.setupRows() if r.get("kind") == "kioskupdate"]
+        assert len(rows) == 1 and rows[0]["title"] == "Update Code-only mode" and rows[0]["value"] == "UPDATE NEEDED"
+        layout.p(layout.session_script).write_text(kiosk.render_session_script(run_sh, "cinnamon-session"))
+        rows = [r for r in b.setupRows() if r.get("kind") == "kioskupdate"]
+        assert len(rows) == 1 and rows[0]["value"] == "Up to date"                         # still there when current
+        page = b.pageRows("kiosk")
+        assert [r["title"] for r in page if r.get("id") == "kioskupdate"] == ["Update Code-only mode"]
+        qml = (Path(kiosk.__file__).parent / "qml" / "Main.qml").read_text()
+        assert 'r.kind === "kioskupdate"' in qml and "updateKioskSession" in qml
+    finally:
+        ui.close()
+
+
+def test_the_settings_row_runs_the_update(app, tmp_path, monkeypatch, box):
+    layout, run_sh, _ = box
+    conf(tmp_path, '[steam]\nenabled = false\n')
+    ui = Ui(app, tmp_path, monkeypatch, config_exists=False)
+    try:
+        b = ui.backend
+        b._kiosk_layout = layout
+        for f in layout.files:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text("old")
+        ran = []
+        monkeypatch.setattr(kiosk, "enable", lambda lay: (ran.append(1) or (True, "Code-only mode is ON (updated).")))
+        b.updateKioskSession()
+        assert wait_for(app, lambda: ran and not b._kiosk_busy, 10)
+    finally:
+        ui.close()
+
+
+def test_terminal_one_liner_prints_the_current_script(tmp_path, capsys):
+    import subprocess, sys
+    root = Path(kiosk.__file__).resolve().parent.parent
+    out = subprocess.run([sys.executable, "-m", "atarilauncher.kiosk", "--print-session"], cwd=root, capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0 and out.stdout.startswith("#!/bin/sh") and "atari-session-version: %d" % kiosk.SESSION_VERSION in out.stdout
+    assert "run.sh" in out.stdout and "ATARI_KIOSK=1" in out.stdout
+    assert subprocess.run(["sh", "-n"], input=out.stdout, text=True, capture_output=True).returncode == 0   # valid shell
+
+
+# ------------------------------------------------------------------ 0.4.2: the session says what it does, and can be put right
+def run_session2(tmp_path, code_body, env_extra=None, timeout=30):
+    home = tmp_path / "h"
+    home.mkdir(exist_ok=True)
+    run = tmp_path / "run.sh"
+    run.write_text("#!/bin/sh\n" + code_body)
+    run.chmod(0o755)
+    script = tmp_path / "session.sh"
+    script.write_text(kiosk.render_session_script(run, "echo DESKTOP-STARTED"))
+    env = dict(os.environ, HOME=str(home), ATARI_RESTART_DELAY="0", **(env_extra or {}))
+    p = subprocess.run(["sh", str(script)], capture_output=True, text=True, env=env, timeout=timeout)
+    log = (home / ".local/share/atari/session.log")
+    return p, (log.read_text() if log.exists() else ""), home
+
+
+def test_session_log_records_start_exit_and_the_reason_for_the_desktop(tmp_path):
+    p, log, _ = run_session2(tmp_path, "exit 3\n")                          # Code dies at once, every time
+    assert "DESKTOP-STARTED" in p.stdout
+    assert log.count("starting Code") == kiosk.MAX_QUICK_CRASHES and "Code ended: exit code 3" in log
+    assert "STARTING THE MINT DESKTOP: Code stopped %d times in a row" % kiosk.MAX_QUICK_CRASHES in log and "last exit code 3" in log
+
+
+def test_session_log_names_a_leftover_desktop_once_note(tmp_path):
+    home = tmp_path / "h"
+    (home / ".config/atari").mkdir(parents=True)
+    (home / ".config/atari/desktop-once").write_text("1")
+    p, log, _ = run_session2(tmp_path, "exit 64\n")
+    assert "DESKTOP-STARTED" in p.stdout and "'Open the Mint desktop once' note was found" in log
+    assert not (home / ".config/atari/desktop-once").exists()               # used up: the next start is Code again
+
+
+def test_a_logout_exit_code_and_a_non_executable_run_script_are_handled(tmp_path):
+    p, log, _ = run_session2(tmp_path, "exit 64\n")
+    assert "DESKTOP-STARTED" not in p.stdout and "log out on purpose" in log
+    run = tmp_path / "run.sh"
+    run.chmod(0o644)                                                         # lost its x bit: still started (through sh), not the desktop
+    script = tmp_path / "session.sh"
+    p2 = subprocess.run(["sh", str(script)], capture_output=True, text=True, timeout=30,
+                        env=dict(os.environ, HOME=str(tmp_path / "h"), ATARI_RESTART_DELAY="0"))
+    assert "DESKTOP-STARTED" not in p2.stdout and p2.returncode == 0
+
+
+def test_a_missing_run_script_says_so(tmp_path):
+    script = tmp_path / "session.sh"
+    script.write_text(kiosk.render_session_script(tmp_path / "gone" / "run.sh", "echo DESKTOP-STARTED"))
+    home = tmp_path / "h"
+    p = subprocess.run(["sh", str(script)], capture_output=True, text=True, timeout=30, env=dict(os.environ, HOME=str(home)))
+    assert "DESKTOP-STARTED" in p.stdout and "start script is missing" in (home / ".local/share/atari/session.log").read_text()
+
+
+def test_diagnose_finds_a_wrong_autologin_session_and_leftover_notes(box, tmp_path):
+    layout, run_sh, _ = box
+    home = tmp_path / "home"
+    ok, _ = kiosk.enable(layout, fake_pkexec(layout), user="hazel", checks=checks(box), run_sh=run_sh)
+    assert ok
+    facts = kiosk.diagnose(layout, home)
+    assert not [t for t in facts if t.startswith(("MISSING", "WRONG", "OLD", "WILL"))], facts
+    layout.p(layout.lightdm_conf).write_text("[Seat:*]\nautologin-user=hazel\nautologin-session=cinnamon\n")
+    (home / ".config/atari").mkdir(parents=True)
+    kiosk.desktop_once_flag(home).write_text("1")
+    layout.p(layout.session_script).write_text("#!/bin/sh\nRUN=/nope/run.sh\n")
+    facts = " ".join(kiosk.diagnose(layout, home))
+    assert "WRONG   auto-login session = cinnamon" in facts and "WILL OPEN THE DESKTOP ONCE" in facts
+    assert "MISSING Code's start script: /nope/run.sh" in facts and "OLD" in facts
+
+
+def test_the_restore_command_is_one_line_that_rewrites_the_three_files_and_clears_the_note():
+    c = kiosk.RESTORE_COMMAND
+    assert "\n" not in c and "rm -f ~/.config/atari/desktop-once" in c and "kiosk.enable_script(" in c and c.endswith("| sudo sh")
+    assert subprocess.run(["sh", "-n", "-c", c]).returncode == 0
+    out = subprocess.run(["sh", "-c", c.replace("| sudo sh", "")], capture_output=True, text=True,
+                         cwd=Path(kiosk.__file__).resolve().parent.parent, env=dict(os.environ, HOME="/tmp/nohome-xyz", USER="hazel"))
+    assert out.returncode != 0 or "atari-session" in out.stdout                 # (the cd target does not exist here; the python part is checked next)
+    gen = subprocess.run([sys.executable, "-c", "from atarilauncher import kiosk; print(kiosk.enable_script('hazel'))"], capture_output=True,
+                         text=True, cwd=Path(kiosk.__file__).resolve().parent.parent)
+    assert "autologin-user=hazel" in gen.stdout and "/usr/local/bin/atari-session" in gen.stdout and gen.stdout.startswith("set -e")
+
+
+def test_the_code_only_page_shows_problems_and_the_restore_command(app, tmp_path, monkeypatch, box):
+    layout, run_sh, _ = box
+    conf(tmp_path, '[steam]\nenabled = false\n')
+    ui = Ui(app, tmp_path, monkeypatch, config_exists=False)
+    try:
+        b = ui.backend
+        b._kiosk_layout = layout
+        for f in layout.files:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text("x")
+        layout.p(layout.lightdm_conf).write_text("[Seat:*]\nautologin-user=hazel\nautologin-session=cinnamon\n")
+        text = " ".join(r.get("title", "") for r in b.pageRows("kiosk"))
+        assert "Check:" in text and "auto-login session = cinnamon" in text and kiosk.RESTORE_COMMAND in text
+    finally:
+        ui.close()
+
+
+# ------------------------------------------------------------------ 0.4.2: Code started from the desktop still takes the screen back
+def test_shell_mode_is_the_session_or_an_installed_code_only_mode(box, monkeypatch):
+    layout, run_sh, _ = box
+    assert not kiosk.shell_mode(layout, env={})
+    assert kiosk.shell_mode(layout, env={"ATARI_KIOSK": "1"})                      # started by the session program
+    for f in layout.files:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("x")
+    assert kiosk.shell_mode(layout, env={"XDG_CURRENT_DESKTOP": "X-Cinnamon"})     # installed, but started from the desktop / autostart
+    assert kiosk.running_description({"ATARI_KIOSK": "1"})[0] == "code-only"
+    kind, text = kiosk.running_description({"XDG_CURRENT_DESKTOP": "X-Cinnamon"})
+    assert kind == "desktop" and "INSIDE the X-Cinnamon desktop" in text
+
+
+def test_log_event_appends_to_the_session_log(tmp_path):
+    kiosk.log_event("started - test", home=tmp_path)
+    kiosk.log_event("an app closed", home=tmp_path)
+    lines = kiosk.log_tail(5, tmp_path)
+    assert len(lines) == 2 and lines[0].endswith("code: started - test")
+    kiosk.log_event("never", home=Path("/proc/nope"))                              # an unwritable folder never raises
+
+
+def test_restoring_after_an_app_goes_fullscreen_when_code_only_mode_is_installed_even_from_the_desktop(app, tmp_path, monkeypatch, box):
+    layout, run_sh, _ = box
+    conf(tmp_path, '[steam]\nenabled = false\n[general]\nfullscreen = false\n')
+    ui = Ui(app, tmp_path, monkeypatch, config_exists=False)
+    try:
+        b = ui.backend
+        b._kiosk_layout = layout
+        monkeypatch.delenv("ATARI_KIOSK", raising=False)
+        calls = []
+
+        class Win:
+            def showFullScreen(self): calls.append("full")
+            def showNormal(self): calls.append("normal")
+            def raise_(self): pass
+            def requestActivate(self): pass
+        b._window, b._minimized_for_game = Win(), True
+        b._restore_window()
+        assert calls == ["normal"]                                                  # a plain desktop install: unchanged behaviour
+        for f in layout.files:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text("x")
+        calls.clear()
+        b._minimized_for_game = True
+        b._restore_window()
+        assert calls == ["full"]                                                    # Code-only mode installed: whole screen again
+        calls.clear()
+        b._minimized_for_game = False
+        b._restore_window()
+        assert calls == ["full"]
+    finally:
+        b._window = None
+        ui.close()
+
+
+def test_diagnose_notes_a_missing_window_manager_and_a_desktop_autostart(box, tmp_path, monkeypatch):
+    layout, run_sh, _ = box
+    home = tmp_path / "home"
+    (home / ".config/autostart").mkdir(parents=True)
+    (home / ".config/autostart/atari.desktop").write_text("[Desktop Entry]\n")
+    monkeypatch.setattr(kiosk.shutil, "which", lambda n: None)
+    facts = " ".join(kiosk.diagnose(layout, home))
+    assert "no window manager (openbox)" in facts and "sudo apt install openbox" in facts and "autostart" in facts

@@ -13,6 +13,7 @@ os.environ.setdefault("ATARI_NO_UPDATE_CHECK", "1")
 os.environ.setdefault("ATARI_NO_SOUND", "1")   # no helper process / audio in tests unless a test asks for it
 os.environ.setdefault("ATARI_HINT_DELAY", "0")     # no pause for the "press Esc twice" screen
 os.environ.setdefault("ATARI_NO_NOTIFY", "1")
+os.environ.setdefault("ATARI_NO_SESSIONLOG", "1")  # tests never write the real ~/.local/share/atari/session.log
 os.environ.setdefault("ATARI_NO_MEDIA", "1")       # no playerctl calls in tests unless a test fakes them
 os.environ.setdefault("ATARI_NO_WIFI", "1")        # no nmcli calls in tests unless a test mocks it
 os.environ.setdefault("ATARI_NO_INTRO", "1")      # no start-up intro in tests unless a test turns it on

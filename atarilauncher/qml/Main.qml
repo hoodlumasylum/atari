@@ -533,6 +533,8 @@ Window {
         else if (r.kind === "installmenu") backend.installEmulators()
         else if (r.kind === "steampage") openPage("steam")
         else if (r.kind === "kioskpage") openPage("kiosk")
+        else if (r.kind === "quietbootpage") openPage("quietboot")
+        else if (r.kind === "kioskupdate") { backend.updateKioskSession(); refreshSetup(true) }
         else if (r.kind === "wifipage") openWifi("setup")
         else if (r.kind === "introvideo") { backend.toggleIntro(); refreshSetup(true) }
         else if (r.kind === "introdefault") { backend.toggleIntroDefault(); refreshSetup(true) }
