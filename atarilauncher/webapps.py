@@ -29,6 +29,8 @@ class WebApp:
     note: str = ""
     background: bool = False    # keeps running behind Code (music): Esc twice brings Code back and leaves it playing
     browse: bool = False        # a normal browser window (address bar, back / forward) instead of a full-screen app window
+    mic: bool = False           # records with the microphone: the browser is told to allow it (no pop-up a controller cannot answer)
+    studio: bool = False        # listed in the Studio area (next to the built-in Studio) instead of Streaming & Social
 
     @property
     def gid(self) -> str:
@@ -53,6 +55,10 @@ WEBAPPS: list[WebApp] = [
            note="Spotify's web player in its own window (sign in once; needs a Spotify account). Music needs Widevine: Google Chrome has it "
                 "built in. It keeps playing behind Code - press Esc twice (or Guide + B) to come back and use the music buttons in the "
                 "top bar (they need playerctl)."),
+    WebApp("bandlab", "BandLab (music studio)", "https://www.bandlab.com/studio", mic=True, studio=True,
+           note="BandLab is a free music studio in the browser (record, loops, mixing; no Linux app). It opens in its own window and "
+                "remembers your login. The microphone is allowed for recording: pick it in BandLab's own audio settings. Sign in once; "
+                "a mouse helps. Press Esc twice (or Guide + B) to come back to Code."),
     WebApp("youtube", "YouTube", "https://www.youtube.com/tv",
            note="The TV layout of YouTube - big buttons, works with arrow keys and Enter. Sign in once."),
     WebApp("netflix", "Netflix", "https://www.netflix.com", True, DRM_NOTE),
@@ -133,9 +139,27 @@ def browse_flags(app: WebApp, prof: Path) -> list[str]:
     return ["--new-window", "--start-maximized", f"--user-data-dir={prof}", "--no-first-run", "--no-default-browser-check", app.url]
 
 
+MIC_FLAG = "--use-fake-ui-for-media-stream"       # Chromium: allow microphone / camera requests without the pop-up
+FIREFOX_MIC_PREFS = 'user_pref("media.navigator.permission.disabled", true);\n'
+
+
 def chromium_flags(app: WebApp, prof: Path) -> list[str]:
     return [f"--app={app.url}", "--start-fullscreen", f"--user-data-dir={prof}", "--no-first-run",
-            "--no-default-browser-check"]
+            "--no-default-browser-check"] + ([MIC_FLAG] if app.mic else [])
+
+
+def prepare_profile(app: WebApp, prof: Path) -> None:
+    """Firefox reads user.js from the profile: allow the microphone for apps that record. (Chromium gets a flag instead.)"""
+    if not app.mic:
+        return
+    try:
+        prof.mkdir(parents=True, exist_ok=True)
+        f = prof / "user.js"
+        if not f.exists() or FIREFOX_MIC_PREFS not in f.read_text(errors="replace"):
+            with open(f, "a", encoding="utf-8") as fh:
+                fh.write(FIREFOX_MIC_PREFS)
+    except OSError:
+        pass
 
 
 def status(cfg, app: WebApp, home: Path | None = None, which: Callable = shutil.which) -> tuple[bool, str]:

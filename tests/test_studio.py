@@ -651,10 +651,11 @@ def test_studio_tile_is_a_non_game_that_launches_the_studio(app, tmp_path, monke
         assert b.totalGames == 0                                     # not counted as a game
         b.setFilter("studio")
         pump(app, 100)
-        assert b.model.rowCount() == 1 and b.model.game_at(0).gid == "studio:open"
+        gids = [b.model.game_at(i).gid for i in range(b.model.rowCount())]
+        assert sorted(gids) == ["studio:open", "web:bandlab"]       # the built-in Studio and the BandLab web studio, side by side
         seen = []
         b.studioRequested.connect(lambda: seen.append(1))
-        b.launch(0)
+        b.launch(next(i for i in range(b.model.rowCount()) if b.model.game_at(i).gid == "studio:open"))
         assert seen == [1] and not b.running
         pump(app, 100)
         assert ui.mode == "studio"

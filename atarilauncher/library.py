@@ -174,6 +174,11 @@ def build_library(cfg: Config, home: Path | None = None, covers_root: Path | Non
     # the music Studio: one tile that opens the Studio screen
     res.games.append(Game(gid="studio:open", title="Hoodlum Asylum Studio", platform="studio", platform_name="Studio",
                           note="Make a beat, record your voice and share it. Press Play to open the Studio."))
+    # web studios (BandLab) sit right next to the built-in Studio
+    for wa in (w for w in webapps.WEBAPPS if w.studio):
+        ready, text = webapps.status(cfg, wa, home)
+        res.games.append(Game(gid=wa.gid, title=wa.title, platform="studio", platform_name="Studio",
+                              note=(wa.note + " " + text).strip() if ready else text, missing="" if ready else "chrome"))
     # "Tools": the screen recorder and the recordings player
     rec_missing = "" if (shutil.which("ffmpeg") or shutil.which("wf-recorder")) else "ffmpeg"
     res.games.append(Game(gid="tool:record", title="Record screen (F9)", platform="tools", platform_name="Tools",
@@ -198,7 +203,7 @@ def build_library(cfg: Config, home: Path | None = None, covers_root: Path | Non
                                     ("  Press Play to install it (free)." if fg.kind != "info" else "")),
                               meta={"genre": fg.genre} if fg.genre else {}))
     # "Streaming & Social": web apps that open in a browser window
-    for wa in webapps.WEBAPPS:
+    for wa in (w for w in webapps.WEBAPPS if not w.studio):
         ready, text = webapps.status(cfg, wa, home)
         res.games.append(Game(gid=wa.gid, title=wa.title, platform=webapps.STREAMING, platform_name=webapps.STREAMING_NAME,
                               note=(wa.note + " " + text).strip() if ready else text, missing="" if ready else "chrome"))

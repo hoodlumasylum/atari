@@ -317,6 +317,45 @@ ON_TEXT = ("Code-only mode is ON. Next time the computer starts (or after you lo
 OFF_TEXT = ("Code-only mode is OFF. The normal Mint login comes back after the next restart (or log out and in).")
 
 
+WM_NAMES = ("openbox", "metacity", "marco", "xfwm4")
+WM_PACKAGE = "openbox"
+WM_OK_TEXT = ("A window manager (openbox) is installed. Restart the computer (or log out and in) once: from then on Steam's own "
+              "windows (Properties, Settings, pop-ups) open on top and can be clicked.")
+
+
+def window_manager(which: Callable[[str], str | None] | None = None) -> str:
+    """Name of the first minimal window manager the session can start ('' = none: windows then have no stacking or focus)."""
+    which = which or shutil.which
+    return next((w for w in WM_NAMES if which(w)), "")
+
+
+def install_wm_script() -> str:
+    return ("set -e\n"
+            "export DEBIAN_FRONTEND=noninteractive\n"
+            "command -v apt-get >/dev/null 2>&1 || exit 82\n"
+            f"apt-get install -y {WM_PACKAGE} || exit 83\n"
+            f"command -v {WM_PACKAGE} >/dev/null 2>&1 || exit 84\n")
+
+
+def install_wm(run: Callable | None = None, out: Callable[[str], None] = lambda s: None,
+               which: Callable[[str], str | None] | None = None) -> tuple[bool, str]:
+    """One password: install openbox, so the Code-only session has a real window manager (Steam dialogs, focus). Never raises."""
+    try:
+        if window_manager(which):
+            return True, "A window manager is already installed. " + WM_OK_TEXT.split(". ", 1)[1]
+        rc = _pkexec(install_wm_script(), out, run)
+        if rc == 0:
+            log_event("window manager installed (openbox)")
+            return True, WM_OK_TEXT
+        ok, text = _result_text(rc, "", "Could not install the window manager")
+        if rc in (82, 83, 84):
+            text = ("Could not install openbox automatically (code %d). In a Terminal run:  sudo apt install openbox" % rc)
+        log_event("window manager install failed: " + text)
+        return False, text
+    except Exception as exc:
+        return False, f"Could not install the window manager: {exc}"
+
+
 def enable(layout: Layout = DEFAULT, run: Callable | None = None, out: Callable[[str], None] = lambda s: None,
            user: str | None = None, checks: list[Check] | None = None, run_sh: Path | None = None,
            desktop_exec: str | None = None) -> tuple[bool, str]:
@@ -423,7 +462,8 @@ def diagnose(layout: Layout = DEFAULT, home: Path | None = None) -> list[str]:
         pass
     if not any(shutil.which(w) for w in ("openbox", "metacity", "marco", "xfwm4")):
         out.append("WRONG  no window manager (openbox) is installed, so after an app closes nothing hands the screen back to Code. "
-                   "Fix:  sudo apt install openbox")
+                   "Fix:  Settings > Code-only mode > Install the window manager (or  sudo apt install openbox). "
+                   "Without it Steam's own windows (Properties, Settings) can open out of sight.")
     if (home / ".config" / "autostart" / "atari.desktop").exists():
         out.append("NOTE   Code is also started by the desktop's autostart (~/.config/autostart/atari.desktop). In the Code-only session "
                    "that is not needed; if the computer starts the Mint desktop first, Code appears on top of it.")

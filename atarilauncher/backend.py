@@ -12,7 +12,7 @@ from pathlib import Path
 from PySide6.QtCore import Property, QObject, QProcess, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QKeyEvent
 
-from . import power, downloads, golive, icons, inputfix, intro, kiosk, quietboot, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
+from . import power, steamfix, downloads, golive, icons, inputfix, intro, kiosk, quietboot, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
 from . import __version__
 from .config import Config, load_config, save_config
 from .import_model import ImportModel
@@ -127,6 +127,9 @@ class Backend(QObject):
         self._kiosk_layout = kiosk.DEFAULT
         self.quietbootDone.connect(self._quietboot_finished, Qt.QueuedConnection)
         self.powerFailed.connect(self._on_power_failed, Qt.QueuedConnection)
+        self._steam_busy = False
+        self._steam_run = subprocess.run
+        self._running_gid = ""
         self._power_pending = ""            # "reboot" / "poweroff" while the Yes / No question is on the screen
         self._power_run = power.run
         self._qb_busy = False
@@ -224,6 +227,8 @@ class Backend(QObject):
         if not self._demo and kiosk.session_outdated(self._kiosk_layout):
             QTimer.singleShot(7000, lambda: self.show_toast("Code-only mode needs a one-time update so Code never drops to the desktop: "
                                                             "Settings > \"Update Code-only mode\".", 15000))
+        if not self._demo and not os.environ.get("ATARI_NO_STEAMFIX") and self._shell_mode():
+            self._start_steam_guard()
         if not self._demo and not os.environ.get("ATARI_NO_MEDIA"):
             QTimer.singleShot(3000, self._media_poll)        # the music control in the top bar
         # pages (help / fix my game / add Windows game)
@@ -1128,6 +1133,11 @@ class Backend(QObject):
                 rows.append(self._info("Code-only mode's session file is up to date. \"Update Code-only mode\" below just writes it again (safe any time)."))
             rows.append({"kind": "done", "id": "kioskupdate", "title": "Update Code-only mode",
                          "detail": "Asks for your password once. Rewrites the same three files; nothing else changes."})
+            if not kiosk.window_manager():
+                rows.append(self._info("No window manager is installed, so Steam's own windows (game Properties, Settings, pop-ups) can open out of "
+                                       "sight. Code now hides itself while Steam runs, but the fix is the one below (password once, then restart)."))
+                rows.append({"kind": "done", "id": "kioskwm", "title": "Install the window manager (openbox)",
+                             "detail": "Asks for your password once. Installs the small 'openbox' package so windows stack, focus and can be clicked."})
             kind, rtext = kiosk.running_description()
             if kind != "code-only":
                 rows.append(self._info("Note: " + rtext + " Closing an app can then show the desktop. Restart the computer (or log out and in) so the "
@@ -1321,7 +1331,7 @@ class Backend(QObject):
             self._kiosk_activate("kioskupdate")
 
     def _kiosk_activate(self, rid: str) -> str:
-        if rid in ("kioskon", "kioskoff", "kioskupdate"):
+        if rid in ("kioskon", "kioskoff", "kioskupdate", "kioskwm"):
             if self._kiosk_busy:
                 return ""
             self._kiosk_busy = True
@@ -1331,7 +1341,10 @@ class Backend(QObject):
 
             def work():
                 try:
-                    done, msg = (kiosk.disable(lay) if rid == "kioskoff" else kiosk.enable(lay))
+                    if rid == "kioskwm":
+                        done, msg = kiosk.install_wm()
+                    else:
+                        done, msg = (kiosk.disable(lay) if rid == "kioskoff" else kiosk.enable(lay))
                 except Exception as exc:  # pragma: no cover - safety net
                     done, msg = False, f"The change hit a problem: {exc}"
                 studio_fix.log(f"code-only mode {rid}: ok={done} {msg}")
@@ -1363,6 +1376,12 @@ class Backend(QObject):
             rows.append({"kind": "done", "id": "steaminstall", "title": "Install Steam"})
         rows.append({"kind": "item", "id": "steamrescan", "title": "Rescan Steam",
                      "detail": "Use this after Steam installed a game, so it shows up in Code."})
+        if self._shell_mode():
+            rows.append(self._info("Code-only mode: Steam ALWAYS opens in Big Picture (from the tile, or started any other way). Use Big Picture's own "
+                                   "menus for game Properties and Settings - the desktop Steam windows are not made for a TV and can open out of sight. "
+                                   "Steam Play (Proton) is switched on for all games by default."))
+            rows.append({"kind": "item", "id": "steamproton", "title": "Turn Steam Play (Proton) on for all games now",
+                         "detail": "Needs Steam closed. Does nothing if you already picked a tool. Writes a backup first (config.vdf.code-backup)."})
         rows.append({"kind": "item", "id": "inputfix", "title": "Fix Steam controller / gamepad permissions",
                      "detail": "Use this if Steam says \"Missing permissions for input devices\". Installs Valve's controller rules (asks for your password once)."})
         rows.append(self._info("Where to keep Steam games: a Linux drive (ext4). Windows (NTFS) drives and USB sticks (exFAT / FAT) make many Proton games fail."))
@@ -1634,7 +1653,13 @@ class Backend(QObject):
             self._snd_write("music off")        # the game gets the speakers
         self._running = True
         self._running_title = g.title
+        self._running_gid = g.gid
         self._running_is_rom = g.platform != "steam"
+        if g.gid == "app:steam" or g.platform == "steam":
+            if g.gid == "app:steam" and getattr(self, "_steam_guard", None) is not None:
+                self._steam_guard.handled_by_code()
+            if self._shell_mode() and not os.environ.get("ATARI_NO_STEAMFIX"):
+                self._steam_prepare()
         self._running_hint = launcher.controls_hint(self.cfg, g)
         self.runningHintChanged.emit()
         self.runningChanged.emit()
@@ -1664,13 +1689,59 @@ class Backend(QObject):
     def _on_session_started(self) -> None:
         """The emulator process is up. Code's own (full screen) window must not sit between the keyboard and the
         emulator, so after a moment it is minimised; it comes back when the game ends."""
-        if getattr(self, "_running_is_rom", False) and not os.environ.get("ATARI_NO_MINIMIZE") and self._window is not None:
-            self._hide_timer.start()
+        steam_here = self._shell_mode() and getattr(self, "_running_gid", "") == "app:steam"
+        if (getattr(self, "_running_is_rom", False) or steam_here) and not os.environ.get("ATARI_NO_MINIMIZE") and self._window is not None:
+            self._hide_timer.start()               # (Steam: its dialogs - Properties, Settings - must not open behind Code's full screen window)
 
     def _hide_for_game(self) -> None:
         if self._running and self._window is not None and not self._minimized_for_game:
             self._minimized_for_game = True
             self._window.showMinimized()
+
+    # ----- Steam in Code-only mode: always Big Picture --------------------------------
+    def _start_steam_guard(self) -> None:
+        """Code-only mode: a `steam` wrapper first in PATH, Steam's own start-up setting, Steam Play for all games, and a watcher that
+        opens Big Picture on a Steam client that was started some other way."""
+        self._steam_guard = steamfix.Guard()
+        steamfix.put_shim_first(os.environ)
+        threading.Thread(target=self._steam_prepare, daemon=True, name="atari-steamfix").start()
+        self._steam_timer = QTimer(self, interval=3000)
+        self._steam_timer.timeout.connect(self._steam_tick)
+        self._steam_timer.start()
+
+    def _steam_prepare(self) -> None:
+        try:
+            for line in steamfix.apply(self.cfg):
+                kiosk.log_event("steam: " + line)
+        except Exception as exc:  # pragma: no cover - never let this touch Code
+            kiosk.log_event(f"steam: setup problem: {exc}")
+
+    def _steam_tick(self) -> None:
+        from . import steam as steam_mod
+        guard = getattr(self, "_steam_guard", None)
+        if guard is None or self._steam_busy:
+            return
+        try:
+            running = steam_mod.steam_running()
+        except Exception:
+            return
+        if self._running_gid == "app:steam" and running:
+            guard.handled_by_code()
+        if guard.tick(running, time.monotonic()):
+            self._steam_busy = True
+            threading.Thread(target=self._steam_nudge, daemon=True, name="atari-steamnudge").start()
+
+    def _steam_nudge(self) -> None:
+        try:
+            cmd, how = apps.app_command(self.cfg, apps.BY_ID["steam"])
+            if how and cmd:
+                kiosk.log_event("steam: a Steam client Code did not start is open - asking it for Big Picture")
+                self._steam_run(cmd + ["steam://open/bigpicture"], env=launcher.clean_env(), stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, timeout=20)
+        except Exception as exc:
+            kiosk.log_event(f"steam: could not ask Steam for Big Picture: {exc}")
+        finally:
+            self._steam_busy = False
 
     def _shell_mode(self) -> bool:
         """Code-only session, or Code-only mode installed but this copy was started from the desktop (see kiosk.shell_mode)."""
@@ -2729,7 +2800,8 @@ class Backend(QObject):
         rows.append({"kind": "bigpicture", "title": "Open Steam in Big Picture (full screen)",
                      "value": "ON" if self.cfg.steam_bigpicture else "OFF",
                      "detail": "The Steam tile opens Steam full screen with big buttons for a controller. Press Esc twice (or hold Guide and press B) "
-                               "to leave it and come back to Code - Steam keeps running. OFF = Steam opens in a normal window."})
+                               "to leave it and come back to Code - Steam keeps running. OFF = Steam opens in a normal window (Code-only mode always uses Big Picture). "
+                               "Steam's desktop dialogs (Properties) are not made for a TV: use Big Picture's own menus."})
         rows.append({"kind": "escexit", "title": "Esc twice returns to Code (Netflix, YouTube, Kodi...)",
                      "value": "ON" if self.cfg.esc_exit else "OFF",
                      "detail": "Press Esc twice quickly, or hold Esc for 1 second (or Ctrl+Esc; on a controller hold Guide and press B) "
@@ -3280,6 +3352,10 @@ class Backend(QObject):
             elif rid == "steamrescan":
                 self.rescanSteam()
                 return "refresh"
+            elif rid == "steamproton":
+                ok, msg = steamfix.set_default_proton(cfg_root=self.cfg.steam_root)
+                kiosk.log_event("steam: " + msg)
+                self.show_toast(msg, 9000)
             elif rid == "inputfix":
                 self.fixInputPermissions()
             return ""

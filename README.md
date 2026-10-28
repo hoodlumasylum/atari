@@ -31,6 +31,13 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
+## What's new in 0.4.4
+
+- **Steam always opens in Big Picture in Code-only mode, however it is started.** (1) The Steam tile always uses `-gamepadui` there (the "Open Steam in Big Picture" setting can no longer turn it off in Code-only mode). (2) Steam's own setting "Start Steam in Big Picture Mode" is switched on (`StartupMode = 1` in `~/.steam/registry.vdf`, written only while Steam is closed, with a backup `registry.vdf.code-backup`). (3) A `steam` wrapper is put first in Code's PATH, so a plain `steam` started by anything Code launches gets `-gamepadui` (or opens Big Picture in an already-running Steam). (4) While Code runs, a Steam client that Code did not start (an autostart entry, a desktop menu, a terminal) is told, 12 s and again 35 s after it appears, to open Big Picture (`steam://open/bigpicture`, harmless if Big Picture is already open).
+- **Steam's desktop dialogs (game Properties, Settings) no longer vanish.** They were opening behind (or off the edge of) Code's full-screen window in a session without a window manager. Now: Code hides itself while Steam runs (Code-only mode), the Code-only page has **Install the window manager (openbox)** (one password; the session already starts openbox when it is installed, so windows stack and focus properly after a restart), and the Steam page and the Big Picture setting say to use Big Picture's own menus for Properties and Settings.
+- **Steam Play (Proton) for all games by default** (Code-only mode): `CompatToolMapping > "0"` in Steam's `config/config.vdf` is set to `proton-experimental` when no tool was chosen yet (never overwrites your choice; per-game choices kept; Steam closed; backup `config.vdf.code-backup`). Off switch: `proton_default = false` in `[steam]` of config.toml. A button on the Steam page does it on demand.
+- **BandLab tile (web music studio).** A **BandLab (music studio)** tile in the Studio area, right next to the built-in Studio. It opens bandlab.com/studio in its own browser window (own private profile, so you sign in once and it remembers you), **Esc twice** (or Guide + B) returns to Code, and the microphone is allowed for recording (Chrome / Chromium / Brave get `--use-fake-ui-for-media-stream` for this window only; Firefox gets a `user.js` pref in its BandLab profile) - choose the input device in BandLab's own audio settings. The icon is fetched at runtime (coloured initial until then); nothing of BandLab is bundled.
+
 ## What's new in 0.4.3
 
 - **Power menu.** Options (F10 / Menu / the controller's Start button) > **Power: restart Code, restart device, shut down** (the last entry; it replaces "Quit Code" / "Restart Code", which are now inside it). **Restart Code** relaunches the app (in Code-only mode it ends Code and the session program starts it again), **Quit Code** (desktop only), **Restart device**, **Shut down** and **Sleep**. Restart and shut down ask first, and the highlight starts on **"No, go back"**, so a stray Enter / A cancels. It runs `systemctl reboot` / `systemctl poweroff` / `systemctl suspend` (normally no password for the person at the computer), and if the system refuses it asks for the password with `pkexec systemctl ...`; if that fails too, the reason and the plain command are shown. Works the same in Code-only mode.
@@ -64,7 +71,7 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 - **If the in-app updater cannot be trusted on your connection, one command does the same by hand** (resumes if it drops, checks the SHA256 against the release's own list, keeps your settings and games):
 
   ```bash
-  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.4.3.tar.gz https://github.com/hoodlumasylum/atari/releases/download/v0.4.3/atari-0.4.3.tar.gz && curl -fsSL https://github.com/hoodlumasylum/atari/releases/download/v0.4.3/SHA256SUMS.txt | grep ' atari-0.4.3.tar.gz$' | sha256sum -c - && tar xzf atari-0.4.3.tar.gz && cd atari-0.4.3 && ./install.sh --yes
+  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.4.4.tar.gz https://github.com/hoodlumasylum/atari/releases/download/v0.4.4/atari-0.4.4.tar.gz && curl -fsSL https://github.com/hoodlumasylum/atari/releases/download/v0.4.4/SHA256SUMS.txt | grep ' atari-0.4.4.tar.gz$' | sha256sum -c - && tar xzf atari-0.4.4.tar.gz && cd atari-0.4.4 && ./install.sh --yes
   ```
 
 ## What's new in 0.4.1
@@ -286,13 +293,13 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.4.3.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
+1. Download **`atari-0.4.4.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
 2. Open a **Terminal** and type:
 
    ```bash
    cd ~/Downloads
-   tar xzf atari-0.4.3.tar.gz
-   cd atari-0.4.3
+   tar xzf atari-0.4.4.tar.gz
+   cd atari-0.4.4
    ./install.sh
    ```
 

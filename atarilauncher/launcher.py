@@ -71,9 +71,9 @@ def controls_hint(cfg: Config, game: Game) -> str:
     """One line of keyboard keys for the emulator that would run this game ('' for Steam / unknown)."""
     if game.platform == "steam":
         return ""
-    if game.gid == "app:steam" and getattr(cfg, "steam_bigpicture", True):
+    if game.gid == "app:steam" and big_picture_wanted(cfg):
         return exit_hint(cfg)
-    if game.platform == webapps.STREAMING:            # Netflix, YouTube, ... and Kodi: how to get back to Code
+    if game.platform == webapps.STREAMING or game.gid.startswith("web:"):            # Netflix, YouTube, ... and Kodi: how to get back to Code
         return exit_hint(cfg)
     system = cfg.systems.get(game.platform)
     if system is None or system.command.strip():
@@ -259,7 +259,7 @@ def _run_app(cfg: Config, game: Game, on_started):
         raise LaunchError(apps.install_hint(app) if app else "That app is not available.")
     _check_executable(cmd, app.title)
     _log("launch: " + shlex.join(cmd))
-    if app.id == "steam" and not game.launch and getattr(cfg, "steam_bigpicture", True):
+    if app.id == "steam" and not game.launch and big_picture_wanted(cfg):
         return _run_steam_bigpicture(cfg, game, cmd, on_started)
     if app.id == "steam" and not game.launch:      # Steam stays open on its own: start it and come straight back
         try:
@@ -339,6 +339,12 @@ def _roblox_recover(cmd, started: float, logfh):
         checks = sober.service_checks()
     _log("roblox: still needs the bundle; " + sober.explain(checks))
     return 0.0, INFO + sober.recovery_note(retried, checks)
+
+
+def big_picture_wanted(cfg: Config) -> bool:
+    """The Steam tile opens Big Picture when the setting is on - and ALWAYS in Code-only mode (nobody there has a desktop to use)."""
+    from . import kiosk
+    return bool(getattr(cfg, "steam_bigpicture", True)) or kiosk.shell_mode()
 
 
 def bigpicture_command(cfg: Config, base: list[str], running: bool) -> list[str]:
@@ -564,6 +570,7 @@ def _run_web(cfg: Config, game: Game, on_started):
         (webapps.profile_root() / wa.id).mkdir(parents=True, exist_ok=True)
     except OSError:
         pass
+    webapps.prepare_profile(wa, webapps.profile_root() / wa.id)
     _check_executable(cmd, name)
     _log(f"launch (web, {name}): " + shlex.join(cmd))
     try:

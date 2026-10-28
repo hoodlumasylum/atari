@@ -40,6 +40,7 @@ class Config:
     steam_root: str = ""  # empty = auto-detect
     steam_extra_libraries: list[str] = field(default_factory=list)
     steam_command: str = ""  # empty = auto ("steam" or Flatpak)
+    steam_proton_default: bool = True  # Code-only mode: Steam Play (proton-experimental) for all games unless a tool was already chosen
     retroarch_command: str = ""  # empty = auto ("retroarch" or Flatpak)
     cores_dir: str = ""  # empty = auto
     emulator_commands: dict[str, str] = field(default_factory=dict)  # e.g. {"rpcs3": "flatpak run net.rpcs3.RPCS3"}
@@ -99,6 +100,7 @@ def load_config(path: Path | None = None) -> Config:
     cfg.steam_root = str(s.get("root", ""))
     cfg.steam_extra_libraries = _as_list(s.get("extra_libraries", []))
     cfg.steam_command = str(s.get("command", ""))
+    cfg.steam_proton_default = bool(s.get("proton_default", True))
     cv = data.get("covers", {})
     if isinstance(cv, dict):
         cfg.covers_auto = bool(cv.get("auto", True))
@@ -174,6 +176,8 @@ def dump_config(cfg: Config) -> str:
         "extra_libraries = " + _ql(cfg.steam_extra_libraries),
         '# command = ""  means: use `steam`, or the Flatpak version if that is what you have.',
         "command = " + _q(cfg.steam_command),
+        "# Code-only mode: turn on Steam Play (Proton) for all games by default, only if you have not chosen a tool yourself.",
+        "proton_default = " + ("true" if cfg.steam_proton_default else "false"),
         "",
         "[covers]",
         "# Download missing box art from the internet in the background after a scan (Settings > Covers).",
