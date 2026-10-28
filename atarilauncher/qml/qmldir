@@ -1,0 +1,5 @@
+singleton Theme 1.0 Theme.qml
+StripeBar 1.0 StripeBar.qml
+WoodPanel 1.0 WoodPanel.qml
+GameTile 1.0 GameTile.qml
+MenuList 1.0 MenuList.qml
