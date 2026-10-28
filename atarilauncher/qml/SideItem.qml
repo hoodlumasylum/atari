@@ -22,6 +22,8 @@ Rectangle {
         name: si.icon
         size: 24 * si.u
         color: si.active ? Theme.redBright : "#c4c8da"
+        scale: si.focused || si.active ? 1.15 : 1.0
+        Behavior on scale { enabled: Theme.anim; NumberAnimation { duration: 140; easing.type: Easing.OutBack } }
     }
     Text {
         anchors.left: ic.right

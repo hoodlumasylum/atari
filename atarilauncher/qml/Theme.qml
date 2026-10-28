@@ -2,6 +2,7 @@ pragma Singleton
 import QtQuick
 
 QtObject {
+    property bool anim: true            // false = "Reduce animations": nothing moves on its own (set from Main.qml)
     readonly property color bg: "#08090e"
     readonly property color panel: "#0f111a"
     readonly property color card: "#151826"

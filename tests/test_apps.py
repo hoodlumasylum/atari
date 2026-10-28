@@ -11,6 +11,7 @@ VERIFIED_FLATHUB_IDS = {   # checked against flathub.org on 2026-10-28
     "roblox": "org.vinegarhq.Sober", "heroic": "com.heroicgameslauncher.hgl", "lutris": "net.lutris.Lutris",
     "bottles": "com.usebottles.bottles", "itch": "io.itch.itch", "prism": "org.prismlauncher.PrismLauncher",
     "minecraft": "com.mojang.Minecraft", "moonlight": "com.moonlight_stream.Moonlight",
+    "protonup": "net.davidotek.pupgui2", "kodi": "tv.kodi.Kodi",
 }
 
 
@@ -42,12 +43,12 @@ def test_library_always_lists_the_apps_but_all_games_stays_games_only(tmp_path):
     cfg.steam_enabled = False
     res = library.build_library(cfg, home=tmp_path, metadata={})
     titles = [g.title for g in res.games if g.platform == apps.APPS]
-    assert "Roblox" in titles and "Heroic Games Launcher" in titles and len(titles) == len(apps.APP_DEFS)
+    assert "Roblox" in titles and "Heroic Games Launcher" in titles and len(titles) == len([a for a in apps.APP_DEFS if a.group == "apps"])
     from atarilauncher.model import filter_games
     from atarilauncher.store import Store
     st = Store(tmp_path / "s.json")
     assert filter_games(res.games, st, "all", "") == []
-    assert len(filter_games(res.games, st, apps.APPS, "")) == len(apps.APP_DEFS)
+    assert len(filter_games(res.games, st, apps.APPS, "")) == len([a for a in apps.APP_DEFS if a.group == "apps"])
     assert [g.title for g in filter_games(res.games, st, "all", "roblox")] == ["Roblox"]    # search still finds it
 
 

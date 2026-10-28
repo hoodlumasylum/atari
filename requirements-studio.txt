@@ -1,0 +1,2 @@
+# Optional: the music Studio (Atari > Studio). Atari works without it; the Studio screen then says how to add it.
+numpy>=1.24

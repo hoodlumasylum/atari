@@ -5,6 +5,9 @@ import QtQuick
 Item {
     id: ml
     property real u: 1
+    property color accent: Theme.redBright       // the selection border (the Studio uses gold)
+    property color selColor: "#2a0b10"
+    property color valueColor: Theme.redBright
     property alias model: lv.model
     property alias currentIndex: lv.currentIndex
     property alias count: lv.count
@@ -35,6 +38,7 @@ Item {
         spacing: 8 * ml.u
         highlightMoveDuration: 80
         keyNavigationEnabled: false
+        onCurrentIndexChanged: positionViewAtIndex(currentIndex, ListView.Contain)
         delegate: Rectangle {
             id: row
             required property var modelData
@@ -47,9 +51,9 @@ Item {
             height: isInfo ? Math.max(34 * ml.u, infoText.implicitHeight + 12 * ml.u)
                            : (two ? 56 * ml.u + detailText.implicitHeight : 62 * ml.u)
             radius: 10 * ml.u
-            color: primary ? (sel ? "#d8222c" : "#a8121b") : (sel ? "#2a0b10" : (isInfo ? "transparent" : "#121420"))
+            color: primary ? (sel ? "#d8222c" : "#a8121b") : (sel ? ml.selColor : (isInfo ? "transparent" : "#121420"))
             border.width: sel ? 3 * ml.u : (isInfo ? 0 : 1.5 * ml.u)
-            border.color: sel ? (primary ? "white" : Theme.redBright) : (primary ? "#ff5a62" : "#262a3c")
+            border.color: sel ? (primary ? "white" : ml.accent) : (primary ? "#ff5a62" : "#262a3c")
             Text {
                 id: infoText
                 visible: row.isInfo
@@ -90,7 +94,8 @@ Item {
                 height: row.two ? 36 * ml.u : parent.height
                 verticalAlignment: Text.AlignVCenter
                 text: modelData.value ? modelData.value : ""
-                color: (modelData.value === "Not installed" || modelData.value === "Needs BIOS") ? Theme.yellow : (modelData.value === "Ready" ? Theme.green : Theme.redBright)
+                color: modelData.tone === "ok" ? Theme.green : modelData.tone === "warn" ? Theme.yellow : modelData.tone === "bad" ? Theme.redBright
+                       : (modelData.value === "Not installed" || modelData.value === "Needs BIOS") ? Theme.yellow : (modelData.value === "Ready" ? Theme.green : ml.valueColor)
                 font.pixelSize: 20 * ml.u
                 font.bold: true
             }

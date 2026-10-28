@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from . import apps, controls, emulators, paths
+from . import apps, controls, emulators, freegames, paths, webapps, windows
 from .config import Config, SystemConfig
 from .library import Game
 
@@ -133,7 +133,13 @@ def run_game(cfg: Config, game: Game, on_started: Callable[[], None],
     """
     if game.platform == "steam":
         return _run_steam(cfg, game, on_started, poll, steam_start_timeout)
-    if game.platform == apps.APPS or game.launch:
+    if game.platform == windows.PLATFORM:
+        return _run_windows(cfg, game, on_started)
+    if game.gid.startswith("free:"):
+        return _run_free(cfg, game, on_started)
+    if game.gid.startswith("web:"):
+        return _run_web(cfg, game, on_started)
+    if game.platform in apps.NON_GAME or game.launch:
         return _run_app(cfg, game, on_started)
     system = cfg.systems.get(game.platform)
     if system is None:
@@ -211,6 +217,133 @@ def _run_app(cfg: Config, game: Game, on_started):
         extra = (" Sober is unofficial and can break after a Roblox update: reinstall it with Settings > Emulators "
                  "> Install emulators and apps." if app.id == "roblox" else "")
         return 0.0, (f"{app.title} closed right away (code {code}).{extra} Details: {paths.log_file()}")
+    return elapsed, ""
+
+
+INFO = "\u2139 "     # a message that is advice, not an error (no error sound, no "Fix my game" hint)
+
+
+def _run_free(cfg: Config, game: Game, on_started):
+    """A game from the Free Games list: through Steam, through a Flatpak, or just an honest explanation."""
+    fg = freegames.BY_ID.get(game.gid.split(":", 1)[-1])
+    if fg is None:
+        raise LaunchError(f"Unknown game '{game.title}'.")
+    if fg.kind == "info":
+        raise LaunchError(INFO + fg.why)
+    if fg.kind == "steam":
+        installed = False
+        try:
+            from . import steam as steam_mod
+            scan = steam_mod.scan_steam(None, cfg.steam_root, cfg.steam_extra_libraries)
+            installed = any(g.appid == fg.ref for g in scan.games)
+        except Exception:
+            pass
+        cmd = steam_base_command(cfg) + [freegames.steam_command_for(fg, installed)]
+        _check_executable(cmd, "Steam")
+        _log("launch (free, steam): " + shlex.join(cmd))
+        try:
+            subprocess.Popen(cmd, env=clean_env(), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+        except OSError as exc:
+            raise LaunchError(f"Could not start Steam: {exc}")
+        on_started()
+        if installed:
+            return _wait_for_steam_game(fg.ref, game.title)
+        raise LaunchError(INFO + f"Steam is opening the free install page for {fg.title}. Press Install there; "
+                          "when it is done, come back and press Play again.")
+    # Flatpak
+    if emulators.flatpak_installed(fg.ref):
+        cmd = ["flatpak", "run", fg.ref]
+        _check_executable(cmd, "Flatpak")
+        _log("launch (free, flatpak): " + shlex.join(cmd))
+        started = time.time()
+        try:
+            proc = subprocess.Popen(cmd, env=clean_env(), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL)
+        except OSError as exc:
+            raise LaunchError(f"Could not start {fg.title}: {exc}")
+        on_started()
+        code = proc.wait()
+        elapsed = time.time() - started
+        if code != 0 and elapsed < 5:
+            return 0.0, f"{fg.title} closed right away (code {code})."
+        return elapsed, ""
+    from . import installer
+    script = f"flatpak install --user -y flathub {fg.ref}; echo; read -r -p 'Done. Press Enter to close this window.' _"
+    ok, msg = installer.open_in_terminal(["bash", "-c", script])
+    raise LaunchError(INFO + (f"Installing {fg.title} (free) in a new window. When it finishes, press Play again." if ok else msg))
+
+
+def _wait_for_steam_game(appid: str, title: str):
+    """Steam starts the game itself: wait until its process shows up, then until it ends (as for any Steam game)."""
+    t0 = time.time()
+    while time.time() - t0 < 90 and not find_steam_pids(appid):
+        time.sleep(2.0)
+    started = time.time()
+    while find_steam_pids(appid):
+        time.sleep(2.0)
+    return (time.time() - started if time.time() - started > 5 else 0.0), ""
+
+
+def _run_web(cfg: Config, game: Game, on_started):
+    """A web app (YouTube, Netflix, ...) in a full-screen browser window with its own profile. Blocks until it closes."""
+    wa = webapps.BY_ID.get(game.gid.split(":", 1)[-1])
+    if wa is None:
+        raise LaunchError(f"Unknown web app '{game.title}'.")
+    cmd, name = webapps.build_command(cfg, wa)
+    if not cmd:
+        raise LaunchError(webapps.HELP_TEXT)
+    try:
+        (webapps.profile_root() / wa.id).mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    _check_executable(cmd, name)
+    _log(f"launch (web, {name}): " + shlex.join(cmd))
+    try:
+        paths.data_dir().mkdir(parents=True, exist_ok=True)
+        logfh = open(paths.log_file(), "ab")
+    except OSError:
+        logfh = subprocess.DEVNULL
+    started = time.time()
+    try:
+        proc = subprocess.Popen(cmd, env=clean_env(), stdout=logfh, stderr=logfh, stdin=subprocess.DEVNULL)
+    except OSError as exc:
+        raise LaunchError(f"Could not start {name}: {exc}")
+    on_started()
+    code = proc.wait()
+    elapsed = time.time() - started
+    if code != 0 and elapsed < 5:
+        return 0.0, f"{name} closed right away (code {code}). Details: {paths.log_file()}"
+    return elapsed, ""
+
+
+def _run_windows(cfg: Config, game: Game, on_started):
+    """A Windows game through umu / Proton / Wine, in its own prefix. Blocks until it closes."""
+    wg = windows.WinGame(game.gid.split(":", 1)[-1], game.title, game.rom_path, game.cover)
+    try:
+        cmd, extra, cwd, label = windows.build_launch(cfg, wg)
+    except windows.WinError as exc:
+        raise LaunchError(str(exc))
+    env = clean_env()
+    env.update(extra)
+    _log(f"launch (windows, {label}): " + shlex.join(cmd))
+    try:
+        paths.data_dir().mkdir(parents=True, exist_ok=True)
+        logfh = open(paths.log_file(), "ab")
+    except OSError:
+        logfh = subprocess.DEVNULL
+    started = time.time()
+    try:
+        proc = subprocess.Popen(cmd, env=env, stdout=logfh, stderr=logfh, stdin=subprocess.DEVNULL, cwd=str(cwd))
+    except OSError as exc:
+        raise LaunchError(f"Could not start the Windows helper ({label}): {exc}")
+    on_started()
+    code = proc.wait()
+    elapsed = time.time() - started
+    if code != 0 and elapsed < 8:
+        return 0.0, (f"The game closed right away (code {code}). The first start with {label} can take a few minutes "
+                     f"(it sets up the game's own Windows folder) - try again. Options > Fix my game can check the "
+                     f"rest. Details: {paths.log_file()}")
     return elapsed, ""
 
 

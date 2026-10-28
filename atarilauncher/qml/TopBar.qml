@@ -65,7 +65,8 @@ Item {
                     id: tabRowInner
                     anchors.centerIn: parent
                     spacing: 9 * tb.u
-                    Icon { name: tab.modelData.icon; size: 22 * tb.u; color: tab.active ? "white" : "#d6d9e6"
+                    Icon { scale: tab.hot ? 1.2 : 1.0; Behavior on scale { enabled: Theme.anim; NumberAnimation { duration: 140; easing.type: Easing.OutBack } }
+                           name: tab.modelData.icon; size: 22 * tb.u; color: tab.active ? "white" : "#d6d9e6"
                            anchors.verticalCenter: parent.verticalCenter }
                     Text {
                         anchors.verticalCenter: parent.verticalCenter

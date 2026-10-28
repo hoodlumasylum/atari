@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import apps, covers as covers_mod, emulators, paths, roms, steam
+from . import apps, covers as covers_mod, emulators, freegames, paths, roms, steam, webapps, windows
 from .config import Config
 
 STEAM = "steam"
@@ -148,8 +148,36 @@ def build_library(cfg: Config, home: Path | None = None, covers_root: Path | Non
     # "PC Apps / Stores": one always-visible entry per app (Roblox, Heroic, Lutris, ...)
     for app in apps.APP_DEFS:
         ready, _text = apps.app_status(cfg, app, home)
-        res.games.append(Game(gid=app.gid, title=app.title, platform=apps.APPS, platform_name=apps.APPS_NAME,
+        plat, pname = ((webapps.STREAMING, webapps.STREAMING_NAME) if app.group == "streaming"
+                       else (apps.APPS, apps.APPS_NAME))
+        res.games.append(Game(gid=app.gid, title=app.title, platform=plat, platform_name=pname,
                               note=app.note if ready else apps.install_hint(app)))
+    # the music Studio: one tile that opens the Studio screen
+    res.games.append(Game(gid="studio:open", title="Hoodlum Asylum Studio", platform="studio", platform_name="Studio",
+                          note="Make a beat, record your voice and share it. Press Play to open the Studio."))
+    # "Free Games": hand-checked free-to-play games that run on Linux
+    inst = {g.steam_appid for g in res.games if g.platform == STEAM and g.steam_appid}
+    for fg in freegames.GAMES:
+        have = (fg.kind == "steam" and fg.ref in inst) or (fg.kind == "flatpak" and emulators.flatpak_installed(fg.ref, home))
+        art = fg.kind == "steam"
+        cv = (steam.find_art(res.steam_scan.root, fg.ref) or covers_mod.find_downloaded_steam_art(fg.ref, "cover", covers_root)) if art else ""
+        hd = (steam.find_header(res.steam_scan.root, fg.ref) or covers_mod.find_downloaded_steam_art(fg.ref, "header", covers_root)) if art else ""
+        res.games.append(Game(gid=fg.gid, title=fg.title, platform=freegames.FREE, platform_name=freegames.FREE_NAME,
+                              steam_appid=fg.ref if art else "", cover=cv, header=hd,
+                              note=f"{fg.badge}. {fg.why}" + ("  Installed - press Play." if have else
+                                    ("  Press Play to install it (free)." if fg.kind != "info" else "")),
+                              meta={"genre": fg.genre} if fg.genre else {}))
+    # "Streaming & Social": web apps that open in a browser window
+    for wa in webapps.WEBAPPS:
+        ready, text = webapps.status(cfg, wa, home)
+        res.games.append(Game(gid=wa.gid, title=wa.title, platform=webapps.STREAMING, platform_name=webapps.STREAMING_NAME,
+                              note=(wa.note + " " + text).strip() if ready else text))
+    # Windows games you added with "Add Windows game"
+    for wg in windows.load_games():
+        cover = wg.cover if wg.cover and Path(wg.cover).is_file() else ""
+        res.games.append(Game(gid=wg.gid, title=wg.name, platform=windows.PLATFORM, platform_name=windows.PLATFORM_NAME,
+                              cover=cover, header=cover, rom_path=wg.exe,
+                              added=_mtime(wg.exe)))
     # games you installed through Heroic and Lutris (read from their own files, never changed)
     for finder in (apps.heroic_games, apps.lutris_games):
         try:
@@ -161,6 +189,13 @@ def build_library(cfg: Config, home: Path | None = None, covers_root: Path | Non
             res.games.append(Game(gid=sg.gid, title=sg.title, platform=sg.store, platform_name=sg.store_name,
                                   launch=sg.uri, added=sg.played))
     return res
+
+
+def _mtime(path: str) -> float:
+    try:
+        return os.stat(path).st_mtime
+    except OSError:
+        return 0.0
 
 
 def demo_library() -> LibraryResult:

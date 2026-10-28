@@ -319,7 +319,7 @@ def jobs_for_games(games, covers_root: Path | None = None) -> list[Job]:
     root = covers_root or paths.user_covers_dir()
     out: list[Job] = []
     for g in games:
-        if g.platform == "steam":
+        if g.platform == "steam" or (g.platform == "free" and g.steam_appid):
             if not g.steam_appid:
                 continue
             if not g.cover:

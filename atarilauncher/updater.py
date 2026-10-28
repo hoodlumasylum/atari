@@ -32,7 +32,7 @@ USER_AGENT = f"Atari-Launcher/{__version__} (+https://github.com/{REPO}; update 
 CHECK_EVERY = 24 * 3600
 MAX_DOWNLOAD = 600 * 1024 * 1024
 KEEP = ("atarilauncher", "scripts", "packaging", "run.sh", "install.sh", "uninstall.sh", "requirements.txt",
-        "requirements-gamepad.txt", "pyproject.toml", "README.md", "LICENSE")
+        "requirements-gamepad.txt", "requirements-studio.txt", "pyproject.toml", "README.md", "LICENSE")
 
 
 class UpdateError(Exception):

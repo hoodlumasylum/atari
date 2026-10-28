@@ -8,18 +8,20 @@
 #   ./install.sh --autostart     also start Atari automatically when you log in
 #   ./install.sh --yes           don't ask questions (install missing system libraries automatically)
 #   ./install.sh --no-gamepad    skip the controller library
+#   ./install.sh --no-studio     skip numpy (only needed by the music Studio)
 #   ./install.sh --no-system-packages   never use sudo / the package manager (used by Atari's own updater)
 set -euo pipefail
 
 SRC_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 APP_DIR="${ATARI_INSTALL_DIR:-$DATA_HOME/atari-launcher}"
-AUTOSTART=0; ASSUME_YES=0; GAMEPAD=1; SYSPKGS=1
+AUTOSTART=0; ASSUME_YES=0; GAMEPAD=1; SYSPKGS=1; STUDIO=1
 for arg in "$@"; do
     case "$arg" in
         --autostart) AUTOSTART=1 ;;
         --yes|-y) ASSUME_YES=1 ;;
         --no-gamepad) GAMEPAD=0 ;;
+        --no-studio) STUDIO=0 ;;
         --no-system-packages) SYSPKGS=0 ;;
         -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
         *) echo "Unknown option: $arg" >&2; exit 2 ;;
@@ -82,7 +84,7 @@ if [ "$SRC_DIR" != "$APP_DIR" ]; then
     else say "Installing Atari ${VERSION:-} into $APP_DIR"; fi
     mkdir -p "$APP_DIR"
     rm -rf "$APP_DIR/atarilauncher" "$APP_DIR/scripts" "$APP_DIR/packaging"
-    for item in atarilauncher scripts packaging run.sh install.sh uninstall.sh requirements.txt requirements-gamepad.txt pyproject.toml README.md LICENSE; do
+    for item in atarilauncher scripts packaging run.sh install.sh uninstall.sh requirements.txt requirements-gamepad.txt requirements-studio.txt pyproject.toml README.md LICENSE; do
         [ -e "$SRC_DIR/$item" ] && cp -a "$SRC_DIR/$item" "$APP_DIR/"
     done
     find "$APP_DIR" -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null || true
@@ -105,6 +107,12 @@ if [ "$GAMEPAD" = 1 ]; then
     say "Installing controller support"
     "$APP_DIR/.venv/bin/python" -m pip install -r "$APP_DIR/requirements-gamepad.txt" \
         || warn "Controller support could not be installed. Atari still works with the keyboard."
+fi
+
+if [ "$STUDIO" = 1 ]; then
+    say "Installing music Studio support (numpy, about 20 MB)"
+    "$APP_DIR/.venv/bin/python" -m pip install -r "$APP_DIR/requirements-studio.txt" \
+        || warn "Studio support could not be installed. Everything else works; the Studio will say how to add it."
 fi
 
 say "Testing that the app can start"

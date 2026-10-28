@@ -12,6 +12,10 @@ import hashlib
 SYSTEM_LOOK = {
     "steam": ("Steam", "monitor", "#1c4f7a", "#0b1a30"),
     "apps": ("PC Apps", "monitor", "#2d6a4a", "#0b2016"),
+    "streaming": ("Streaming", "monitor", "#7a5a10", "#241a05"),
+    "studio": ("Studio", "bars", "#7a5a10", "#12200a"),
+    "free": ("Free Games", "pad", "#2d7a3a", "#0b2410"),
+    "windows": ("Windows", "monitor", "#1f5fa8", "#0a1a30"),
     "heroic": ("Heroic", "pad", "#1f3f7a", "#0a1530"),
     "lutris": ("Lutris", "pad", "#8a5a1c", "#2a1a08"),
     "atari2600": ("Atari 2600", "bars", "#9b1b22", "#2a0609"),

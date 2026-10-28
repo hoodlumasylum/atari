@@ -46,6 +46,10 @@ class Config:
     systems: dict[str, SystemConfig] = field(default_factory=dict)
     update_check: bool = True  # look for a newer Atari release at most once a day (Settings)
     covers_auto: bool = True  # download missing cover art in the background after a scan (Settings)
+    sound_effects: bool = True  # little UI sounds (Settings > Sound effects)
+    music: bool = False         # soft ambient loop (Settings > Music), off unless asked for
+    volume: float = 0.6         # 0.0 - 1.0 for sounds and music
+    reduce_animations: bool = False  # Settings > Reduce animations: no moving background, bobbing or fades
     first_run: bool = False
     path: Path | None = None
 
@@ -90,6 +94,15 @@ def load_config(path: Path | None = None) -> Config:
     up = data.get("updates", {})
     if isinstance(up, dict):
         cfg.update_check = bool(up.get("check", True))
+    ui = data.get("ui", {})
+    if isinstance(ui, dict):
+        cfg.sound_effects = bool(ui.get("sound_effects", True))
+        cfg.music = bool(ui.get("music", False))
+        try:
+            cfg.volume = max(0.0, min(1.0, float(ui.get("volume", 0.6))))
+        except (TypeError, ValueError):
+            cfg.volume = 0.6
+        cfg.reduce_animations = bool(ui.get("reduce_animations", False))
     r = data.get("retroarch", {})
     cfg.retroarch_command = str(r.get("command", ""))
     cfg.cores_dir = str(r.get("cores_dir", ""))
@@ -145,6 +158,13 @@ def dump_config(cfg: Config) -> str:
         "[updates]",
         "# Look for a newer Atari release (once a day, quietly) and show a badge (Settings > Updates).",
         "check = " + ("true" if cfg.update_check else "false"),
+        "",
+        "[ui]",
+        "# Sounds and animations (Settings). Volume is 0.0 - 1.0. Turn animations off on a slow computer.",
+        "sound_effects = " + ("true" if cfg.sound_effects else "false"),
+        "music = " + ("true" if cfg.music else "false"),
+        "volume = " + f"{cfg.volume:.2f}",
+        "reduce_animations = " + ("true" if cfg.reduce_animations else "false"),
         "",
         "[retroarch]",
         '# Leave empty to auto-detect. Example: command = "flatpak run org.libretro.RetroArch"',

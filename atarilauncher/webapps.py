@@ -1,0 +1,124 @@
+"""Streaming & Social: web apps (YouTube, Netflix, Instagram, ...) shown as tiles and started in a full-screen "app" window
+of a browser on this PC, each with its own private profile folder so you sign in once per app.
+
+Atari uses no company logos: the tiles are plain text/colour tiles. Nothing is downloaded or bundled here.
+Order of browsers: Google Chrome, Chromium, Brave, ungoogled-Chromium (as `--app=URL --start-fullscreen`), then Firefox
+(`--kiosk`). Netflix, Prime Video and Disney+ need Widevine DRM: Google Chrome has it built in, Firefox downloads it after you
+accept its prompt; on Linux those services stream at about 720p (Widevine "L3"), never 4K/HDR.
+"""
+from __future__ import annotations
+
+import shlex
+import shutil
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable
+
+from . import emulators, paths
+
+STREAMING = "streaming"
+STREAMING_NAME = "Streaming & Social"
+
+
+@dataclass(frozen=True)
+class WebApp:
+    id: str
+    title: str
+    url: str
+    drm: bool = False
+    note: str = ""
+
+    @property
+    def gid(self) -> str:
+        return f"web:{self.id}"
+
+
+DRM_NOTE = ("Needs Widevine DRM (Google Chrome has it; in Firefox accept its \"Play DRM content\" prompt). "
+            "On Linux this streams at about 720p, not 4K.")
+WEBAPPS: list[WebApp] = [
+    WebApp("youtube", "YouTube", "https://www.youtube.com/tv",
+           note="The TV layout of YouTube - big buttons, works with arrow keys and Enter. Sign in once."),
+    WebApp("netflix", "Netflix", "https://www.netflix.com", True, DRM_NOTE),
+    WebApp("disney", "Disney+", "https://www.disneyplus.com", True, DRM_NOTE),
+    WebApp("prime", "Prime Video", "https://www.primevideo.com", True, DRM_NOTE),
+    WebApp("twitch", "Twitch", "https://www.twitch.tv", note="Live streams. A mouse or touch screen helps."),
+    WebApp("instagram", "Instagram", "https://www.instagram.com", note="Made for phones: a mouse or touch screen helps."),
+    WebApp("facebook", "Facebook", "https://www.facebook.com", note="A mouse or touch screen helps."),
+    WebApp("tiktok", "TikTok", "https://www.tiktok.com", note="A mouse or touch screen helps."),
+]
+BY_ID = {w.id: w for w in WEBAPPS}
+
+
+@dataclass(frozen=True)
+class Browser:
+    id: str
+    name: str
+    exes: tuple
+    flatpak: str
+    kind: str             # chromium | firefox
+    drm: bool             # plays Netflix & co. without extra steps
+
+
+BROWSERS: list[Browser] = [
+    Browser("chrome", "Google Chrome", ("google-chrome-stable", "google-chrome"), "com.google.Chrome", "chromium", True),
+    Browser("chromium", "Chromium", ("chromium", "chromium-browser"), "org.chromium.Chromium", "chromium", False),
+    Browser("brave", "Brave", ("brave-browser", "brave"), "com.brave.Browser", "chromium", True),
+    Browser("ungoogled", "ungoogled-Chromium", (), "io.github.ungoogled_software.ungoogled_chromium", "chromium", False),
+    Browser("firefox", "Firefox", ("firefox",), "org.mozilla.firefox", "firefox", True),
+]
+HELP_TEXT = ("Streaming apps open in a web browser window. Install one with Settings > Emulators > Install emulators and apps "
+             "(it adds Google Chrome), or install Chrome / Chromium / Firefox yourself.")
+
+
+def profile_root() -> Path:
+    return paths.data_dir() / "webapps"
+
+
+def find_browser(cfg=None, home: Path | None = None, which: Callable = shutil.which,
+                 drm: bool = False) -> tuple[Browser | None, str]:
+    """(browser, how) with how = 'native' | 'flatpak'. Browsers that handle DRM come first for DRM apps."""
+    order = sorted(BROWSERS, key=lambda b: (not b.drm,) if drm else (0,))   # stable: keeps the table order otherwise
+    for b in order:
+        for exe in b.exes:
+            if which(exe):
+                return b, "native"
+        if emulators.flatpak_installed(b.flatpak, home):
+            return b, "flatpak"
+    return None, ""
+
+
+def build_command(cfg, app: WebApp, home: Path | None = None, which: Callable = shutil.which,
+                  root: Path | None = None) -> tuple[list[str], str]:
+    """(command, browser name). A command in config ([emulators] browser = "...") replaces the browser:
+    Atari adds --app=<url> --start-fullscreen --user-data-dir=<profile> to it. Returns ([], '') when no browser exists."""
+    root = root or profile_root()
+    prof = root / app.id
+    custom = (cfg.emulator_commands.get("browser") or "").strip() if cfg is not None else ""
+    if custom:
+        return shlex.split(custom) + chromium_flags(app, prof), "your browser"
+    b, how = find_browser(cfg, home, which, app.drm)
+    if b is None:
+        return [], ""
+    if how == "flatpak":
+        base = ["flatpak", "run", f"--filesystem={root}", b.flatpak]
+    else:
+        base = [next(e for e in b.exes if which(e))]
+    flags = chromium_flags(app, prof) if b.kind == "chromium" else [
+        "--no-remote", "--profile", str(prof), "--kiosk", app.url]
+    return base + flags, b.name
+
+
+def chromium_flags(app: WebApp, prof: Path) -> list[str]:
+    return [f"--app={app.url}", "--start-fullscreen", f"--user-data-dir={prof}", "--no-first-run",
+            "--no-default-browser-check"]
+
+
+def status(cfg, app: WebApp, home: Path | None = None, which: Callable = shutil.which) -> tuple[bool, str]:
+    cmd, name = build_command(cfg, app, home, which)
+    if not cmd:
+        return False, HELP_TEXT
+    b, _ = find_browser(cfg, home, which, app.drm)
+    extra = ""
+    if app.drm and b is not None and not b.drm:
+        extra = f" {b.name} may not play DRM video (Netflix etc.) - Google Chrome does."
+    return True, f"Opens in {name}." + extra

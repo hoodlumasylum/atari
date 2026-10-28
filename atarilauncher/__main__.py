@@ -70,6 +70,7 @@ def main(argv=None) -> int:
         except ValueError:
             pass
     app.aboutToQuit.connect(backend.stop_gamepad)
+    app.aboutToQuit.connect(backend.stop_sound)
 
     if args.selftest or args.screenshot:
         def finish():

@@ -9,6 +9,15 @@ Item {
     property bool focused: false     // the tile row has the focus
     signal clicked()
 
+    property real bob: 0             // -1..1, moves the icon of the chosen tile up and down a little
+    SequentialAnimation on bob {
+        loops: Animation.Infinite
+        running: Theme.anim && st.selected && st.focused
+        NumberAnimation { from: -1; to: 1; duration: 1100; easing.type: Easing.InOutSine }
+        NumberAnimation { from: 1; to: -1; duration: 1100; easing.type: Easing.InOutSine }
+    }
+    onSelectedChanged: if (!selected) bob = 0
+    onFocusedChanged: if (!focused) bob = 0
     readonly property bool special: info.key === "__add" || info.key === "__more"
 
     Item {
@@ -25,6 +34,7 @@ Item {
             color: "transparent"
             border.width: 5 * st.u
             border.color: st.focused ? "#40e0202a" : "#26e0202a"
+            opacity: Theme.anim && st.focused ? 0.75 + 0.25 * (st.bob + 1) / 2 : 1.0
         }
         Rectangle {
             visible: st.selected
@@ -63,7 +73,7 @@ Item {
             }
             Icon {
                 anchors.horizontalCenter: parent.horizontalCenter
-                y: parent.height * 0.12
+                y: parent.height * 0.12 + st.bob * 4 * st.u
                 name: st.info.glyph ? st.info.glyph : "pad"
                 color: "#f3f4f8"
                 size: parent.height * 0.46

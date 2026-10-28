@@ -47,7 +47,7 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 * **Keyboard works in emulators.** Atari now writes sane default keyboard bindings the first time it starts **Flycast** (arrows = D-pad, Z/X/C/V = A/B/X/Y,
   Enter = Start, WASD = stick, Q/E = triggers) — only when Flycast has no keyboard mapping yet, never overwriting yours — and **steps aside while a game
   runs** (its full-screen window is minimised and restored, raised and focused when the game quits) so the emulator gets the keyboard.
-  A new **Controls** screen (Options → Controls, or Settings → Emulators) lists the keys for each emulator, and the main keys are shown briefly when a game starts.
+  A new **Controls** screen (Options → Help & getting started → Controls, or Settings → Emulators) lists the keys for each emulator, and the main keys are shown briefly when a game starts.
 * **PC Apps / Stores.** One tile with Roblox (through **Sober**, an *unofficial* community runner — it may break after Roblox updates and you sign in to your own
   Roblox account), Heroic Games Launcher, Lutris, Bottles, itch.io, Prism Launcher, Minecraft Launcher and Moonlight. Each is detected automatically
   (Flatpak or installed program), shows an install hint if missing, and its command can be overridden under `[emulators]` in the config file
@@ -57,6 +57,57 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
   turn it off in Settings), shows the release notes, downloads the new version, **verifies its SHA256** against the release's `SHA256SUMS.txt`, installs it
   (your settings, favourites and history are never touched; the old files are put back if anything fails) and offers to restart. No terminal needed.
   *0.3.0 is the first version that has this, so install 0.3.0 by hand once (steps below); later versions can update themselves.*
+* **Add a Windows game** (Options → *Add Windows game*, or Help). Pick a `.exe`, or a `.zip` / `.7z` that has one inside; give it a name and (optionally) a cover
+  picture. Archives are unpacked to `~/Games/Atari/windows/<name>/` and Atari finds the main `.exe` for you (a pick-list if there are several).
+  The game shows up under **Windows / PC**. It starts through, in this order: **umu-launcher** (`umu-run`), a **Proton** found on your PC (GE-Proton from
+  ProtonUp-Qt, else Steam's own `steamapps/common/Proton*`), then **Wine**. Each game gets its own private Wine folder in
+  `~/.local/share/atari/prefixes/<name>/`. The install-everything script installs umu-launcher (official GitHub release, SHA256-checked), Wine and ProtonUp-Qt
+  (`net.davidotek.pupgui2`). The first start of a game downloads Proton once (a few minutes). Override the runner with `windows = "mycommand {exe}"` under `[emulators]`.
+  Works with keyboard and gamepad (the file picker, name keyboard and pick-list are all D-pad friendly). Atari downloads no games.
+  *Example — the free fan game **Dreams of Saturn** (a Shenmue fan game; a Unity `.exe` inside a `.zip`; it needs a gamepad):* download the `.zip` yourself from the
+  author's page, then Options → Add Windows game → choose the `.zip` → it finds the `.exe` → Add this game. Plug in a controller first.
+* **Made for beginners.** *Options → Help & getting started* has a four-step checklist (1 install emulators, 2 add games from USB, 3 add BIOS files, 4 download covers —
+  each one press), a short FAQ, **Copy log** (puts Atari's recent messages and setup on the clipboard to send to a helper) and **Safe mode: reset my settings**
+  (press twice; the old settings are saved next to the new ones, and your games, favourites and play time stay). *Options → Fix my game* checks the highlighted game
+  (game file there? emulator installed? BIOS present? controller found?) and says in plain English what to do. Errors are written to `~/.local/share/atari/launch.log`
+  and shown with a hint; the Controls screen shows whether a controller was found.
+* **Console-menu polish (PSP-style).** The selected system tile gently bobs and glows, icons in the tab bar and sidebar pop when selected, screens and game lists fade in,
+  and two soft neon waves drift behind the library (two pictures slid sideways by the GPU — no shaders, nothing redrawn per frame; they pause while a game runs).
+  **Settings → Reduce animations: ON** turns all of that off for a slow computer.
+* **Sounds.** Original, synthesised UI sounds (made by `scripts/make_sounds.py` from plain sine waves and noise — no samples, nothing from anyone else): a navigate tick,
+  select, back, favourite sparkle, a launch whoosh, a soft error tone and a startup chime. Gamepad presses make the same sounds as keys. **Settings** has *Sound effects*
+  (on), *Music* (a quiet ambient loop, **off** by default, silent while a game runs), *Volume* (20–100 %). Sounds are played by a small helper process using `pygame`'s mixer
+  (installed with the gamepad support) or, failing that, `paplay` / `pw-play` / `aplay`; if neither exists Atari is simply silent. Config: `[ui]` in `config.toml`.
+* **Streaming & Social** (its own tile): **Kodi** (`tv.kodi.Kodi`) plus web-app tiles for **YouTube** (the TV layout, `youtube.com/tv`), **Netflix**, **Disney+**, **Prime Video**,
+  **Twitch**, **Instagram**, **Facebook** and **TikTok**. Each opens in a full-screen "app" window of a browser found on your PC — Google Chrome, Chromium, Brave or
+  ungoogled-Chromium (`--app=URL --start-fullscreen`), else Firefox (`--kiosk`) — with **its own profile folder** (`~/.local/share/atari/webapps/<name>`), so you **sign in once per
+  app** and it remembers you. The install-everything script adds **Google Chrome** (Flathub `com.google.Chrome`, includes Widevine) and the optional **AntiMicroX**
+  (`io.github.antimicrox.antimicrox`, lets a controller move the mouse). Honest limits: Netflix, Prime Video and Disney+ need Widevine DRM (Chrome has it; Chromium/ungoogled may not play them;
+  in Firefox accept its DRM prompt) and on Linux they stream at about **720p**, no 4K/HDR. Web pages are made for a mouse or touch screen: arrow keys + Enter work in YouTube TV, elsewhere
+  use a mouse, touch, or AntiMicroX. The tiles are plain text tiles (no company logos). Use another browser with `browser = "mybrowser"` under `[emulators]` (Chromium-style flags are added).
+* **Free Games** (its own tile): a short, hand-checked list of free-to-play games that run on Linux, each with a **Works on Linux** badge and the evidence. Steam games
+  (Counter-Strike 2, Dota 2, Team Fortress 2, Path of Exile, Warframe, Marvel Rivals, THE FINALS, Brawlhalla — all ProtonDB gold, checked 2026-10-28) open Steam's free install page
+  (`steam://install/<id>`) or start the game if you have it; open-source games (SuperTuxKart, 0 A.D., Xonotic, OpenArena, Luanti, Battle for Wesnoth, Warzone 2100, OpenTTD, Armagetron Advanced —
+  all Flathub IDs verified) install through Flatpak on first Play. **Fortnite and Call of Duty / Warzone do NOT work on Linux** (their anti-cheat blocks it and Epic / Activision do not
+  support it); Atari shows an explanation instead of a fake launcher. Apex Legends, Destiny 2, Rainbow Six Siege and PUBG were also left out for the same reason. **Minecraft (Java)**
+  works through **Prism Launcher** in PC Apps and needs your own Minecraft licence (Atari includes nothing from Minecraft). Free Epic / GOG games: install **Heroic** (PC Apps); games
+  you claim there appear in Atari automatically. (Atari does not read Epic's weekly free list itself.)
+* **Hoodlum Asylum Studio** (Options → *Studio*, or the **Studio** tile): a small music studio in dark, gold and green, simpler than a full DAW, made for keyboard, gamepad and touch
+  (big buttons; every screen also has on-screen ◀ ▶ ENTER BACK buttons). Screenshots: `docs/screenshot-studio-home.png`, `docs/screenshot-studio-beat.png`. Three big buttons:
+  1. **Make a beat** — pick a style (**Trap, Drill, R&B, Afrobeats, Boom bap, Lo-fi, House**), then change speed (BPM), key, major/minor and a Chill↔Hard **vibe** slider, or press
+     **Surprise me**. Atari writes drums, 808 bass, chords and a tune and shows them in a **step-sequencer grid** with a moving playhead; **Play** previews it. All sounds are
+     synthesised by Atari itself with numpy (sine waves, noise, filters — no samples, nothing from anybody else).
+  2. **Record your voice** — pick the microphone, optional 4-click **count-in**, record over the beat (it stops by itself at the end), keep **several takes**, play them back, trim the start/end
+     (or **Auto-trim silence**; the count-in and the microphone's delay are cut off automatically so your voice lines up). Optional **headphone monitor** (hear yourself; use headphones).
+  3. **Mix & share** — per-track **volume, pan, mute** and a one-press **effect** (*Vocal clean*, *Reverb*, *Echo*, *Vocal clean + reverb*), a **master loudness** (Quiet/Normal/Loud, with a limiter so it never clips),
+     then **Save as WAV** or **MP3** (needs `ffmpeg` or `lame`; `sudo apt install ffmpeg`). Turn on **Advanced** to get a 3-band **EQ** and a **compressor** per track.
+
+  Projects (beat, takes, mixer settings) are saved in `~/Music/Atari Studio/<project name>/` (`project.json`, `takes/*.wav`, the exported `.wav` / `.mp3`) — plain files you can copy anywhere.
+  **Needs numpy**: `install.sh` installs it (about 20 MB); `./install.sh --no-studio` skips it and the Studio then explains how to add it.
+  The beat maker sits behind a tiny interface (`atarilauncher/studio/beatgen.py`: a `name` and `generate(BeatRequest) -> Pattern`, plus `register_generator()`), so a real AI music model — local or
+  an API — can be plugged in later without touching the screens, mixer or exports. *What it honestly is:* the built-in generator is **rule-based** (genre templates + a random seed), not AI, and the sounds are
+  simple; it makes useful sketches, not finished records. *Limits:* recording uses `parecord` / `arecord` / `ffmpeg` and was only tested with **stand-in programs, not a real microphone**; the headphone monitor
+  and the latency correction (a fixed 90 ms) are approximate; there is no auto-tune, no sample import, no piano-roll editing and no real-time effects while recording. The preview plays through the same small sound helper as the menu sounds.
 * Upgrading from 0.2.x is safe: config and state are kept and new settings have defaults.
 
 ## What's new in 0.2.1
@@ -194,7 +245,7 @@ You must install RPCS3's **firmware** and supply your own games; PS3 emulation i
 copies them from a USB stick for you, from consoles you own. Atari never downloads them.
 
 ### Keyboard keys in emulators
-Atari steps aside while a game runs. **Options → Controls** shows each emulator's keys. Flycast gets default keyboard bindings the first time (only if it has none).
+Atari steps aside while a game runs. **Help & getting started → Controls** (or Settings → Emulators) shows each emulator's keys. Flycast gets default keyboard bindings the first time (only if it has none).
 RetroArch, DuckStation, PPSSPP, mGBA and PCSX2 use their own built-in keyboard defaults (listed on the Controls screen; change them inside the emulator).
 Dolphin, melonDS and Switch emulators need a one-time setup inside the emulator.
 
@@ -293,6 +344,10 @@ check [protondb.com](https://www.protondb.com) for each game; and big Windows up
 * Controller input only works while Atari is the focused window (so it never steals input from a game).
 * Wayland/X11 are both supported by Qt, but only headless (offscreen) testing was done. Full screen on some Wayland setups may need `F11`.
 * Animations are kept light (no GPU effects) for integrated graphics, but performance was not measured on real hardware.
+* Windows games: umu / Proton / Wine behaviour, anti-cheat/online games, and per-game quirks were **not tested on real hardware** (a stub runner was used in tests).
+  Many Windows games need extra Wine components; Bottles/Lutris are better for those (games installed in Lutris/Heroic appear in Atari).
+* The `.rar` and `.7z` formats need the `7z` program (`sudo apt install p7zip-full`, which the install-everything script also does).
+* The Studio: see its entry above — rule-based beats (no AI model yet), recording not tested on a real microphone, MP3 export needs ffmpeg or lame.
 * There is **no AppImage**; the tarball + `install.sh` is the supported way.
 
 ## Testing

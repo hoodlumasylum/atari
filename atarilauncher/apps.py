@@ -19,6 +19,7 @@ from typing import Callable
 from . import emulators
 
 APPS = "apps"                       # platform id of the "PC Apps / Stores" section
+NON_GAME = ("apps", "streaming", "free", "studio")    # tiles that are not games: hidden from "All Games" and the game counts
 APPS_NAME = "PC Apps / Stores"
 HEROIC = "heroic"
 LUTRIS = "lutris"
@@ -31,7 +32,8 @@ class AppDef:
     flatpak: str                    # Flathub application id (verified on flathub.org)
     exes: tuple = ()                # program names when installed natively
     note: str = ""                  # shown on the tile / Emulators page
-    apt: str = ""                   # (none of these have a reliable apt package, so Flatpak only)
+    apt: str = ""                   # apt package name when there is one
+    group: str = "apps"             # which tile it lives on: "apps" (PC Apps) or "streaming" (Streaming & Social)
 
     @property
     def name(self) -> str:          # lets the installer treat apps like emulators
@@ -58,10 +60,27 @@ APP_DEFS: list[AppDef] = [
            "Minecraft launcher. Add your own Microsoft account (you need to own Minecraft) inside Prism."),
     AppDef("minecraft", "Minecraft Launcher", "com.mojang.Minecraft", ("minecraft-launcher",),
            "Unofficial Flatpak of Mojang's own launcher. Sign in with your own Microsoft account."),
+    AppDef("protonup", "ProtonUp-Qt (Proton manager)", "net.davidotek.pupgui2", ("protonup-qt",),
+           "Installs and updates Proton-GE / Wine versions, which Windows games run on."),
+    AppDef("kodi", "Kodi (media centre)", "tv.kodi.Kodi", ("kodi",),
+           "Plays your own videos, music and photos; add-ons are up to you.", apt="kodi", group="streaming"),
     AppDef("moonlight", "Moonlight (game streaming)", "com.moonlight_stream.Moonlight", ("moonlight", "moonlight-qt"),
            "Streams games from another PC running Sunshine or GeForce Experience."),
 ]
 BY_ID = {a.id: a for a in APP_DEFS}
+# installed by the install-everything script, but not shown as tiles
+HELPERS: list[AppDef] = [
+    AppDef("wine", "Wine (Windows compatibility)", "", ("wine",), "Runs Windows programs (fallback for Windows games).",
+           apt="wine"),
+    AppDef("chrome", "Google Chrome (for YouTube, Netflix and other web apps)", "com.google.Chrome",
+           ("google-chrome-stable", "google-chrome"), "Streaming web apps open in it. Has Widevine for Netflix & co."),
+    AppDef("antimicrox", "AntiMicroX (optional: gamepad as mouse)", "io.github.antimicrox.antimicrox", ("antimicrox",),
+           "Lets a controller move the mouse inside web apps. Optional."),
+    AppDef("7zip", "7-Zip (opens .7z / .rar game archives)", "", ("7z", "7zz", "7za"), "Opens .7z and .rar archives.",
+           apt="p7zip-full"),
+    AppDef("umu", "umu-launcher (runs Windows games with Proton)", "", ("umu-run",),
+           "Atari's first choice for Windows games. Installed from its official GitHub release."),
+]
 
 
 def install_hint(app: AppDef) -> str:

@@ -35,7 +35,7 @@ def filter_games(games: list[Game], store: Store, key: str, query: str, sort: st
         return sort_games(pool, store, sort)
     if key == "all":
         # the PC Apps / Stores launchers (Roblox, Heroic, ...) have their own tile; "All Games" is games only
-        return sort_games([g for g in games if g.platform != "apps"], store, sort)
+        return sort_games([g for g in games if g.platform not in ("apps", "streaming", "free", "studio")], store, sort)
     if key == "favorites":
         return sort_games([g for g in games if store.is_favorite(g.gid)], store, sort)
     if key == "recent":

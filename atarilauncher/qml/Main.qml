@@ -11,6 +11,7 @@ Window {
     visibility: backend.fullscreen ? Window.FullScreen : Window.Windowed
 
     // everything is drawn in "units" that scale with the window (1 unit = 1 pixel at 1920x1080)
+    Binding { target: Theme; property: "anim"; value: backend.animations }
     readonly property real u: Math.max(0.4, Math.min(width / 1920, height / 1080))
 
     // library | search | menu | sort | setup | browse | emulators | controls | update | import
@@ -33,6 +34,8 @@ Window {
     property string emuBack: "library"       // where Back from the Emulators page goes, while an import started there
     property string updBack: "library"       // where Back from the Update screen goes: library | setup
     property string ctlBack: "library"       // where Back from the Controls page goes: library | emulators
+    property string pageName: "help"          // help | fix | winform | winchoose | winwork (the generic list page)
+    property string oskPurpose: "search"      // search | winname (the on-screen keyboard is shared)
     property var browseTarget: ({})
     property var browseData: ({ path: "", parent: "", dirs: [] })
 
@@ -119,6 +122,7 @@ Window {
     }
     function launchCurrent() { if (grid.count > 0) backend.launch(grid.currentIndex) }
 
+    function openStudio() { studioScreen.open(); mode = "studio" }
     function openOptions() { menuList.model = menuItems(); menuList.currentIndex = 0; mode = "menu" }
     function menuItems() {
         return [
@@ -126,9 +130,12 @@ Window {
             { kind: "item", id: "sort", title: "Sort: " + backend.sortLabel + "  (change)" },
             { kind: "item", id: "add", title: "Add Games (USB stick or folder)" },
             { kind: "item", id: "bios", title: "Add BIOS files (USB stick or folder)" },
+            { kind: "item", id: "studio", title: "Studio: make music (beats, voice, mix)" },
+            { kind: "item", id: "winadd", title: "Add Windows game (.exe or .zip)" },
+            { kind: "item", id: "fix", title: "Fix my game (checks the highlighted game)" },
+            { kind: "item", id: "help", title: "Help & getting started" },
             { kind: "item", id: "rescan", title: "Rescan library" },
             { kind: "item", id: "emus", title: "Emulators" },
-            { kind: "item", id: "controls", title: "Controls (keyboard keys)" },
             { kind: "item", id: "update", title: backend.updateAvailable ? "Update Atari  (" + backend.updateVersion + " is ready)" : "Update Atari" },
             { kind: "item", id: "settings", title: "Settings (Steam & ROM folders)" },
             { kind: "item", id: "full", title: "Toggle full screen" },
@@ -141,14 +148,26 @@ Window {
         sortList.currentIndex = at
         mode = "sort"
     }
+    function openOsk(purpose) {
+        oskPurpose = purpose
+        searchText = backend.winName()
+        typedSearch = false
+        oskRow = 0; oskCol = 0
+        mode = "search"
+    }
     function openSearch() {
+        oskPurpose = "search"
         searchText = backend.query
         typedSearch = false
         oskRow = 0; oskCol = 0
         mode = "search"
     }
-    function closeSearch() { mode = "library"; area = grid.count > 0 ? "grid" : "tiles" }
+    function closeSearch() {
+        if (oskPurpose === "winname") { oskPurpose = "search"; openPage("winform"); return }
+        mode = "library"; area = grid.count > 0 ? "grid" : "tiles"
+    }
     function setSearch(t) {
+        if (oskPurpose === "winname") { searchText = t; backend.winSetName(t); return }
         searchText = t
         backend.setQuery(t)
         grid.currentIndex = 0
@@ -174,6 +193,51 @@ Window {
         emuList.model = backend.emulatorRows()
         if (keep) emuList.currentIndex = Math.min(idx, emuList.count - 1)
         else emuList.firstSelectable()
+    }
+    // ---- generic list pages: help, fix my game, add a Windows game
+    function openPage(name) {
+        pageName = name
+        pageList.model = backend.pageRows(name)
+        pageList.firstSelectable()
+        mode = "page"
+    }
+    function refreshPage(keep) {
+        var idx = pageList.currentIndex
+        pageList.model = backend.pageRows(pageName)
+        if (keep) pageList.currentIndex = Math.min(idx, pageList.count - 1)
+        var r = pageList.model[pageList.currentIndex]
+        if (!r || r.kind === "info") pageList.firstSelectable()
+    }
+    function leavePage() {
+        if (pageName === "winwork") backend.pageActivate("winwork", "cancel")
+        mode = "library"
+        buildLists()
+        area = grid.count > 0 ? "grid" : "tiles"
+    }
+    function handleAction(a) {
+        if (a === "" || a === undefined) return
+        if (a === "refresh") refreshPage(true)
+        else if (a === "back" || a === "close") leavePage()
+        else if (a === "browse:winfile") openBrowser({ kind: "winfile", files: "exe" }, backend.winBrowseStart())
+        else if (a === "browse:wincover") openBrowser({ kind: "wincover", files: "image" }, backend.winBrowseStart())
+        else if (a === "osk:winname") openOsk("winname")
+        else if (a === "import:games") openImport("page", "games")
+        else if (a === "import:bios") openImport("page", "bios")
+        else if (a === "controls") openControls("page")
+        else if (a.indexOf("page:") === 0) openPage(a.substring(5))
+        else openPage(a)
+    }
+    function pageActivateRow(i) {
+        var r = pageList.model[i]
+        if (!r || !r.id) return
+        handleAction(backend.pageActivate(pageName, r.id))
+    }
+    function pageKey(e) {
+        var k = e.key
+        if (k === Qt.Key_Escape || k === Qt.Key_B) { leavePage(); return }
+        if (k === Qt.Key_Up) pageList.move(-1)
+        else if (k === Qt.Key_Down) pageList.move(1)
+        else if (isEnter(k) || k === Qt.Key_Space) pageActivateRow(pageList.currentIndex)
     }
     function openEmulators() { refreshEmus(false); mode = "emulators" }
     function openImport(ret, kind) {
@@ -216,7 +280,11 @@ Window {
         else if (k === Qt.Key_Down) updNotes.contentY = Math.max(0, Math.min(updNotes.contentHeight - updNotes.height, updNotes.contentY + 60 * win.u))
         else if (isEnter(k) || k === Qt.Key_Space) updPrimary()
     }
-    function leaveControls() { if (ctlBack === "emulators") { refreshEmus(true); mode = "emulators" } else mode = "library" }
+    function leaveControls() {
+        if (ctlBack === "emulators") { refreshEmus(true); mode = "emulators" }
+        else if (ctlBack === "page") { refreshPage(true); mode = "page" }
+        else mode = "library"
+    }
     function ctlKey(e) {
         var k = e.key
         if (k === Qt.Key_Escape || k === Qt.Key_B) { leaveControls(); return }
@@ -232,6 +300,7 @@ Window {
     function closeImport() {
         if (importReturn === "emus") { importReturn = emuBack; refreshEmus(true); mode = "emulators" }
         else if (importReturn === "setup") { refreshSetup(true); mode = "setup" }
+        else if (importReturn === "page") { refreshPage(true); mode = "page" }
         else { mode = "library"; buildLists(); area = grid.count > 0 ? "grid" : "tiles" }
     }
     function openBrowser(target, startPath) {
@@ -240,19 +309,37 @@ Window {
         mode = "browse"
     }
     function loadDir(path) {
-        browseData = backend.listDir(path)
+        var picking = !!browseTarget.files
+        browseData = picking ? backend.listFiles(path, browseTarget.files) : backend.listDir(path)
         var rows = []
-        if (browseData.path !== "")
+        if (browseData.path !== "" && !picking)
             rows.push({ kind: "use", title: "Use this folder", detail: browseData.path })
+        if (browseTarget.kind === "wincover")
+            rows.push({ kind: "nocover", title: "No cover picture", detail: "" })
         if (browseData.path !== "")
             rows.push({ kind: "up", title: ".. (go up)", detail: "" })
         for (var i = 0; i < browseData.dirs.length; i++)
             rows.push({ kind: "dir", title: browseData.dirs[i].name, detail: "", path: browseData.dirs[i].path })
+        if (picking && browseData.files)
+            for (var j = 0; j < browseData.files.length; j++)
+                rows.push({ kind: "file", title: browseData.files[j].name, detail: "", path: browseData.files[j].path })
         browseList.model = rows
         browseList.currentIndex = 0
     }
 
     // ------------------------------------------------------------ key handling
+    // The little sound for a key press (gamepad buttons arrive here as key presses too).
+    function keySound(e) {
+        var k = e.key
+        if (k === Qt.Key_Up || k === Qt.Key_Down || k === Qt.Key_Left || k === Qt.Key_Right || k === Qt.Key_Tab
+                || k === Qt.Key_Backtab || k === Qt.Key_Q || k === Qt.Key_E) {
+            if (mode === "search" && (k === Qt.Key_Q || k === Qt.Key_E) ) return ""
+            return "tick"
+        }
+        if (k === Qt.Key_Escape || (k === Qt.Key_B && mode !== "search")) return "back"
+        if (k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_F10) return "select"
+        return ""
+    }
     function isEnter(k) { return k === Qt.Key_Return || k === Qt.Key_Enter }
 
     function goBack() {
@@ -368,7 +455,10 @@ Window {
         else if (id === "sort") openSort()
         else if (id === "add") openImport("library")
         else if (id === "bios") openImport("library", "bios")
-        else if (id === "controls") openControls("library")
+        else if (id === "studio") openStudio()
+        else if (id === "winadd") openBrowser({ kind: "winfile", files: "exe" }, backend.winBrowseStart())
+        else if (id === "fix") { backend.openFix(grid.count > 0 ? grid.currentIndex : -1); openPage("fix") }
+        else if (id === "help") openPage("help")
         else if (id === "update") openUpdate("library")
         else if (id === "rescan") { backend.rescan(); buildLists(); mode = "library" }
         else if (id === "emus") { importReturn = "library"; openEmulators() }
@@ -410,6 +500,10 @@ Window {
         else if (r.kind === "bios") openImport("setup", "bios")
         else if (r.kind === "update") openUpdate("setup")
         else if (r.kind === "updateauto") { backend.toggleUpdateCheck(); refreshSetup(true) }
+        else if (r.kind === "sfx") { backend.toggleSoundEffects(); refreshSetup(true) }
+        else if (r.kind === "music") { backend.toggleMusic(); refreshSetup(true) }
+        else if (r.kind === "volume") { backend.cycleVolume(); refreshSetup(true) }
+        else if (r.kind === "anim") { backend.toggleAnimations(); refreshSetup(true) }
         else if (r.kind === "covers") { backend.downloadCoversNow(); refreshSetup(true) }
         else if (r.kind === "coversauto") { backend.toggleCoversAuto(); refreshSetup(true) }
         else if (r.kind === "emulators") { importReturn = "setup"; openEmulators() }
@@ -423,7 +517,8 @@ Window {
     // the on-screen button next to the title of Settings / Folder picker / Emulators (same as Esc / B)
     function overlayBack() {
         if (mode === "setup") leaveSetup()
-        else if (mode === "browse") mode = browseTarget.kind === "import" ? "import" : "setup"
+        else if (mode === "browse") browseCancel()
+        else if (mode === "page") leavePage()
         else if (mode === "emulators") leaveEmus()
         else if (mode === "controls") leaveControls()
     }
@@ -445,9 +540,15 @@ Window {
         else if (r.kind === "back") leaveEmus()
     }
 
+    function browseCancel() {
+        if (browseTarget.kind === "import") mode = "import"
+        else if (browseTarget.kind === "winfile") { mode = "library"; buildLists() }
+        else if (browseTarget.kind === "wincover") openPage("winform")
+        else mode = "setup"
+    }
     function browseKey(e) {
         var k = e.key
-        if (k === Qt.Key_Escape || k === Qt.Key_B) { mode = browseTarget.kind === "import" ? "import" : "setup"; return }
+        if (k === Qt.Key_Escape || k === Qt.Key_B) { browseCancel(); return }
         if (k === Qt.Key_Up) browseList.move(-1)
         else if (k === Qt.Key_Down) browseList.move(1)
         else if (k === Qt.Key_Left || k === Qt.Key_Backspace) {
@@ -460,6 +561,11 @@ Window {
         if (!r) return
         if (r.kind === "dir") loadDir(r.path)
         else if (r.kind === "up") loadDir(browseData.parent)
+        else if (r.kind === "file" && enter) {
+            if (browseTarget.kind === "winfile") handleAction(backend.winPicked(r.path))
+            else handleAction(backend.winPickedCover(r.path))
+        }
+        else if (r.kind === "nocover" && enter) handleAction(backend.winPickedCover(""))
         else if (r.kind === "use" && enter) {
             if (browseTarget.kind === "import") { backend.startImportScan(browseData.path); mode = "import" }
             else {
@@ -480,6 +586,7 @@ Window {
             if (e.key === Qt.Key_F11) { backend.toggleFullscreen(); return }
             if (e.key === Qt.Key_Q && (e.modifiers & Qt.ControlModifier)) { backend.quit(); return }
             if (backend.running) return
+            var snd = win.keySound(e)
             if (win.mode === "library") libraryKey(e)
             else if (win.mode === "search") searchKey(e)
             else if (win.mode === "menu") menuKey(e)
@@ -489,7 +596,16 @@ Window {
             else if (win.mode === "controls") ctlKey(e)
             else if (win.mode === "update") updKey(e)
             else if (win.mode === "browse") browseKey(e)
+            else if (win.mode === "page") pageKey(e)
             else if (win.mode === "import") importScreen.handleKey(e)
+            else if (win.mode === "studio") studioScreen.handleKey(e)
+            if (snd !== "" && !backend.running) backend.playSound(snd)
+        }
+
+        WaveBackground {
+            anchors.fill: parent
+            active: !backend.running && win.visibility !== Window.Minimized
+                    && (win.mode === "library" || win.mode === "search" || win.mode === "menu" || win.mode === "sort")
         }
 
         // ------------------------------------------------------------ banner + tabs
@@ -855,13 +971,14 @@ Window {
             anchors.fill: parent
             color: "#e606070b"
             visible: win.mode === "search"
+            FadeOnShow { target: parent }
             MouseArea { anchors.fill: parent }
             Column {
                 anchors.centerIn: parent
                 spacing: 18 * win.u
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    text: "SEARCH"
+                    text: win.oskPurpose === "winname" ? "NAME THE GAME" : "SEARCH"
                     color: Theme.redBright
                     font.pixelSize: 40 * win.u
                     font.bold: true
@@ -882,13 +999,14 @@ Window {
                         anchors.leftMargin: 16 * win.u
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
-                        text: win.searchText === "" ? "Type to filter games..." : win.searchText + "\u258c"
+                        text: win.searchText === "" ? (win.oskPurpose === "winname" ? "Type the game's name..." : "Type to filter games...") : win.searchText + "\u258c"
                         color: win.searchText === "" ? Theme.faint : Theme.text
                         font.pixelSize: 40 * win.u
                     }
                 }
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
+                    visible: win.oskPurpose === "search"
                     text: grid.count + (grid.count === 1 ? " match" : " matches")
                     color: Theme.dim
                     font.pixelSize: 24 * win.u
@@ -951,6 +1069,7 @@ Window {
             anchors.fill: parent
             color: Theme.overlay
             visible: win.mode === "menu"
+            FadeOnShow { target: parent }
             MouseArea { anchors.fill: parent; onClicked: win.mode = "library" }
             Column {
                 anchors.centerIn: parent
@@ -979,6 +1098,7 @@ Window {
             anchors.fill: parent
             color: "#66000000"
             visible: win.mode === "sort"
+            FadeOnShow { target: parent }
             MouseArea { anchors.fill: parent; onClicked: win.mode = "library" }
             Rectangle {
                 x: Math.min(parent.width - width - 20 * win.u, main.x + centre.x + centre.width - width)
@@ -1012,6 +1132,7 @@ Window {
             anchors.fill: parent
             color: "#08090e"
             visible: win.mode === "setup" || win.mode === "browse" || win.mode === "emulators" || win.mode === "controls"
+            FadeOnShow { target: parent }
             MouseArea { anchors.fill: parent }
             Item {
                 id: setupHead
@@ -1034,7 +1155,7 @@ Window {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 6 * win.u
                     Text {
-                        text: win.mode === "emulators" ? "EMULATORS" : win.mode === "controls" ? "CONTROLS" : (backend.firstRun ? "WELCOME! LET'S SET UP YOUR GAMES" : "SETTINGS")
+                        text: win.mode === "emulators" ? "EMULATORS" : win.mode === "controls" ? "CONTROLS" : (win.mode === "browse" && win.browseTarget.files ? "CHOOSE A FILE" : backend.firstRun ? "WELCOME! LET'S SET UP YOUR GAMES" : "SETTINGS")
                         color: Theme.redBright
                         font.pixelSize: 42 * win.u
                         font.bold: true
@@ -1042,7 +1163,8 @@ Window {
                     }
                     Text {
                         text: win.mode === "browse"
-                              ? "Pick the folder, then choose \"Use this folder\".  Left = up, Esc / B = cancel."
+                              ? (win.browseTarget.files ? "Choose the file (folders open with Enter, Left = up).  Esc / B = cancel."
+                                 : "Pick the folder, then choose \"Use this folder\".  Left = up, Esc / B = cancel.")
                               : win.mode === "emulators"
                               ? "Enter / A switches the emulator for a console, or runs the action.  Esc / B = back."
                               : win.mode === "controls"
@@ -1170,6 +1292,18 @@ Window {
             }
         }
 
+        // ---------------------------------------------------- the music Studio
+        StudioScreen {
+            id: studioScreen
+            objectName: "studioScreen"
+            anchors.fill: parent
+            u: win.u
+            studio: backend.studio
+            visible: win.mode === "studio"
+            onClosed: { win.mode = "library"; win.buildLists() }
+        }
+        Connections { target: backend; function onStudioRequested() { win.openStudio() } }
+
         // ---------------------------------------------------- overlay: add games
         ImportScreen {
             id: importScreen
@@ -1180,12 +1314,85 @@ Window {
             onBrowseRequested: win.openBrowser({ kind: "import" }, backend.importBrowseStart())
         }
 
+        // ------------------------------------------------- overlay: help / fix my game / add Windows game
+        Rectangle {
+            anchors.fill: parent
+            color: "#08090e"
+            visible: win.mode === "page"
+            FadeOnShow { target: parent }
+            z: 20
+            MouseArea { anchors.fill: parent }
+            Item {
+                id: pageHead
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.right: parent.right
+                height: 128 * win.u
+                clip: true
+                Image { anchors.fill: parent; source: Qt.resolvedUrl("../assets/banner.jpg"); fillMode: Image.PreserveAspectCrop
+                        asynchronous: true; sourceSize.width: 1920 }
+                Rectangle { anchors.fill: parent; color: "#88000000" }
+                Column {
+                    anchors.left: parent.left
+                    anchors.leftMargin: 48 * win.u
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 6 * win.u
+                    Text { text: backend.pageTitle(win.pageName); color: Theme.redBright; font.pixelSize: 42 * win.u
+                           font.bold: true; font.letterSpacing: 4 * win.u }
+                    Text { text: backend.pageSub(win.pageName); color: "#e6e8f2"; font.pixelSize: 21 * win.u }
+                }
+            }
+            Rectangle {
+                z: 5
+                anchors.top: parent.top
+                anchors.topMargin: 34 * win.u
+                anchors.right: parent.right
+                anchors.rightMargin: 48 * win.u
+                width: 300 * win.u; height: 60 * win.u; radius: 10 * win.u
+                gradient: Gradient { GradientStop { position: 0; color: "#ee2a34" } GradientStop { position: 1; color: "#a8121b" } }
+                border.width: 2 * win.u; border.color: "white"
+                Text { anchors.centerIn: parent; text: win.pageName === "help" || win.pageName === "fix" ? "BACK" : "CANCEL"
+                       color: "white"; font.pixelSize: 21 * win.u; font.bold: true }
+                MouseArea { anchors.fill: parent; onClicked: win.leavePage() }
+            }
+            Rectangle { id: pageLine; anchors.top: pageHead.bottom; width: parent.width; height: 3 * win.u; color: Theme.red }
+            MenuList {
+                id: pageList
+                u: win.u
+                anchors.top: pageLine.bottom
+                anchors.topMargin: 16 * win.u
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 20 * win.u
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: Math.min(parent.width - 100 * win.u, 1500 * win.u)
+                model: []
+                onClicked: function (i) { win.pageActivateRow(i) }
+            }
+            Connections {
+                target: backend
+                function onPageChanged() { if (win.mode === "page") win.refreshPage(true) }
+                function onPageRequested(name) {
+                    if (name === "close") { if (win.mode === "page" || win.mode === "browse") win.leavePage() }
+                    else win.openPage(name)
+                }
+                function onCoversChanged() { if (win.mode === "page" && win.pageName === "help") win.refreshPage(true) }
+            }
+        }
+
+        FadeOnShow { target: importScreen }
+        Connections {   // the games list fades in when you switch system / tab
+            target: backend
+            function onCurrentFilterChanged() { if (Theme.anim) gridFade.restart() }
+        }
+        NumberAnimation { id: gridFade; target: grid; property: "opacity"; from: 0.2; to: 1.0; duration: 200; easing.type: Easing.OutQuad }
+
         // ------------------------------------------------- overlay: update Atari
         Rectangle {
             id: updScreen
             anchors.fill: parent
             color: "#08090e"
             visible: win.mode === "update"
+            FadeOnShow { target: parent }
             z: 20
             MouseArea { anchors.fill: parent }
             readonly property string st: backend.updateState

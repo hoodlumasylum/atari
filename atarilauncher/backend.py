@@ -11,7 +11,7 @@ from pathlib import Path
 from PySide6.QtCore import Property, QObject, QProcess, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QKeyEvent
 
-from . import apps, bios, controls, covers, emulators, importer, installer, launcher, paths, roms, updater
+from . import apps, bios, controls, covers, diagnose, emulators, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
 from . import __version__
 from .config import Config, load_config, save_config
 from .import_model import ImportModel
@@ -61,6 +61,11 @@ class Backend(QObject):
     updateChanged = Signal()
     updateEvent = Signal(str, str, float)       # state, text, fraction (from the worker thread)
     updateChecked = Signal(object, str, bool)   # release or None, error text, was it asked for by the user
+    uiPrefsChanged = Signal()
+    pageChanged = Signal()                      # the rows of the help / fix / Windows pages changed
+    studioRequested = Signal()                  # the Studio tile / menu entry: the screen opens the Studio
+    pageRequested = Signal(str)                 # a worker wants the screen to show this page ('close' = go to the library)
+    winEvent = Signal(str, str, object)         # Windows game archive progress (from the worker thread)
 
     def __init__(self, cfg: Config | None = None, store: Store | None = None, demo: bool = False,
                  enable_gamepad: bool = True):
@@ -117,6 +122,25 @@ class Backend(QObject):
         self.coversFinished.connect(self._on_covers_finished, Qt.QueuedConnection)
         self._cover_timer = QTimer(self, singleShot=True, interval=2500)
         self._cover_timer.timeout.connect(lambda: self.startCovers(auto=True))
+        # sounds (a helper process plays them) and animations
+        self._snd_proc = None
+        self._snd_dead = False
+        self._studio = None
+        self._sound_sink = None          # tests put a function here to see the commands instead of playing them
+        self._last_tick = 0.0
+        self._start_timer = QTimer(self, singleShot=True, interval=700)
+        self._start_timer.timeout.connect(lambda: self.playSound("start"))
+        if not self._demo:
+            self._start_timer.start()
+            if self.cfg.music:
+                QTimer.singleShot(1200, self._sync_music)
+        # pages (help / fix my game / add Windows game)
+        self._fix_gid = ""
+        self._reset_armed = False
+        self._remove_armed = False
+        self._win_cancel = threading.Event()
+        self._win_reset()
+        self.winEvent.connect(self._on_win_event, Qt.QueuedConnection)
         # self-update
         self._upd_state = "idle"
         self._upd_text = ""
@@ -231,7 +255,7 @@ class Backend(QObject):
 
     def _real_count(self) -> int:
         """Games from Steam / ROM folders (the always-present PC / Apps entry does not count)."""
-        return sum(1 for g in self._all if g.platform != apps.APPS)
+        return sum(1 for g in self._all if g.platform not in apps.NON_GAME)
 
     @Property(str, notify=statusChanged)
     def steamStatus(self):
@@ -406,14 +430,18 @@ class Backend(QObject):
             if self._demo:
                 return "Demo mode"
             return ("No games yet!\n\nChoose \"Add Games\" to copy games from a USB stick, or open Settings "
-                    "to add your Steam library and ROM folders.\n\n" + NTFS_NOTE)
+                    "to add your Steam library and ROM folders.\n\n"
+                    "Not sure where to start? Press the Options button (F10 / Start) and choose "
+                    "\"Help & getting started\".\n\n" + NTFS_NOTE)
         if self._filter == "favorites":
             return "No favourites yet.\n\nHighlight a game and press X (gamepad) or F (keyboard)."
         if self._filter == "recent":
             return "Nothing played yet.\n\nGames you play will show up here."
         if self._filter == STEAM:
             return self._lib.steam_note or "No Steam games found."
-        if self._filter == apps.APPS:
+        if self._filter == "free":
+            return ("No free games listed.\n\n" + freegames.MINECRAFT_NOTE)
+        if self._filter in apps.NON_GAME:
             return "No apps found."
         sc = self.cfg.systems.get(self._filter)
         if sc is not None:
@@ -435,6 +463,7 @@ class Backend(QObject):
             self._apply()
         else:
             self.model.row_changed(row)
+        self.playSound("fav")
         self.show_toast(("Added to favourites: " if now else "Removed from favourites: ") + g.title, 2500)
 
     @Slot(int)
@@ -442,9 +471,15 @@ class Backend(QObject):
         g = self.model.game_at(row)
         if g is None or self._running:
             return
+        if g.gid == "studio:open":
+            self.studioRequested.emit()
+            return
         if self._demo:
             self.show_toast("Demo mode: nothing to launch.")
             return
+        self.playSound("launch")
+        if self.cfg.music and self._snd_enabled():
+            self._snd_write("music off")        # the game gets the speakers
         self._running = True
         self._running_title = g.title
         self._running_is_rom = g.platform != "steam"
@@ -511,7 +546,17 @@ class Backend(QObject):
         self._rebuild_filters()
         self._apply()
         self._restore_window()
-        self.show_toast(err or f"Welcome back! You played {title} for {max(1, int(secs // 60))} min.", 8000)
+        self._sync_music()
+        if err and err.startswith(launcher.INFO):
+            self.playSound("select")
+        elif err:
+            self.playSound("error")
+            launcher._log("error: " + err)
+            if err.startswith(launcher.INFO):
+                err = err[len(launcher.INFO):]
+            elif "Fix my game" not in err:
+                err += "   (Options > Fix my game can check what is wrong.)"
+        self.show_toast(err or f"Welcome back! You played {title} for {max(1, int(secs // 60))} min.", 12000 if err else 8000)
 
     @Slot()
     def toggleFullscreen(self) -> None:
@@ -521,6 +566,7 @@ class Backend(QObject):
     @Slot()
     def quit(self) -> None:
         self.stop_gamepad()
+        self.stop_sound()
         QGuiApplication.quit()
 
     # ----- emulators page --------------------------------------------------
@@ -565,6 +611,13 @@ class Backend(QObject):
             ready, text = apps.app_status(self.cfg, app)
             rows.append({"kind": "app", "title": app.title + "  (PC Apps)", "value": "Ready" if ready else "Not installed",
                          "detail": app.note if ready else text})
+        b, how = webapps.find_browser(self.cfg)
+        rows.append({"kind": "app", "title": "Streaming web apps  (browser)", "value": "Ready" if b else "Not installed",
+                     "detail": (f"Open in {b.name}. " + ("Netflix & co. work." if b.drm else "Netflix & co. may not play (no Widevine) - use Chrome.")
+                                if b else webapps.HELP_TEXT)})
+        wok, wlabel = windows.runner_status(self.cfg)
+        rows.append({"kind": "app", "title": "Windows games  (umu / Proton / Wine)", "value": "Ready" if wok else "Not installed",
+                     "detail": ("Runs with " + wlabel + ".") if wok else wlabel})
         for name, text in emulators.NOTES:
             rows.append({"kind": "info", "title": f"{name}: {text}", "value": "", "detail": ""})
         rows.append({"kind": "back", "title": "Back to Settings", "value": "",
@@ -881,6 +934,129 @@ class Backend(QObject):
     def updateBusy(self):
         return self._upd_state in ("checking", "downloading", "verifying", "installing")
 
+    # ----- sounds and animations --------------------------------------------------
+    @Property(bool, notify=uiPrefsChanged)
+    def soundEffects(self):
+        return self.cfg.sound_effects
+
+    @Property(bool, notify=uiPrefsChanged)
+    def music(self):
+        return self.cfg.music
+
+    @Property(float, notify=uiPrefsChanged)
+    def volume(self):
+        return self.cfg.volume
+
+    @Property(bool, notify=uiPrefsChanged)
+    def animations(self):
+        return not self.cfg.reduce_animations
+
+    def _save_prefs(self) -> None:
+        if not self._demo and not self._first_run:
+            try:
+                save_config(self.cfg)
+            except OSError as exc:
+                self.show_toast(f"Could not save settings: {exc}", 8000)
+        self.uiPrefsChanged.emit()
+
+    @Slot()
+    def toggleSoundEffects(self) -> None:
+        self.cfg.sound_effects = not self.cfg.sound_effects
+        self._save_prefs()
+        if self.cfg.sound_effects:
+            self.playSound("select")
+
+    @Slot()
+    def toggleMusic(self) -> None:
+        self.cfg.music = not self.cfg.music
+        self._save_prefs()
+        self._sync_music()
+
+    @Slot()
+    def cycleVolume(self) -> None:
+        steps = [0.2, 0.4, 0.6, 0.8, 1.0]
+        nxt = next((s for s in steps if s > self.cfg.volume + 0.01), steps[0])
+        self.cfg.volume = nxt
+        self._save_prefs()
+        self._snd_write(f"volume {nxt:.2f}")
+        self.playSound("select")
+
+    @Slot()
+    def toggleAnimations(self) -> None:
+        self.cfg.reduce_animations = not self.cfg.reduce_animations
+        self._save_prefs()
+
+    @Property(QObject, constant=True)
+    def studio(self):
+        if self._studio is None:
+            from .studio_ui import StudioController
+            self._studio = StudioController(self, self)
+        return self._studio
+
+    def _snd_enabled(self) -> bool:
+        return self._sound_sink is not None or (not self._demo and not os.environ.get("ATARI_NO_SOUND"))
+
+    def _snd_write(self, line: str) -> None:
+        """One command to the sound helper (started the first time it is needed). Never raises."""
+        if self._sound_sink is not None:
+            self._sound_sink(line)
+            return
+        if os.environ.get("ATARI_NO_SOUND") or self._demo or self._snd_dead:
+            return
+        try:
+            if self._snd_proc is None:
+                proc = QProcess(self)
+                proc.setProgram(sys.executable)
+                proc.setArguments(["-m", "atarilauncher.sound_helper"])
+                from PySide6.QtCore import QProcessEnvironment
+                env = QProcessEnvironment.systemEnvironment()
+                env.insert("PYTHONPATH", str(Path(__file__).resolve().parent.parent) + os.pathsep
+                           + env.value("PYTHONPATH", ""))
+                proc.setProcessEnvironment(env)
+                proc.readyReadStandardOutput.connect(self._read_snd_status)
+                proc.finished.connect(lambda *a: setattr(self, "_snd_proc", None))
+                proc.start()
+                self._snd_proc = proc
+                proc.write(f"volume {self.cfg.volume:.2f}\n".encode())
+                if self.cfg.music:
+                    proc.write(b"music on\n")
+            self._snd_proc.write((line + "\n").encode())
+        except Exception:  # pragma: no cover - sound must never break the launcher
+            self._snd_dead = True
+
+    def _read_snd_status(self) -> None:
+        text = bytes(self._snd_proc.readAllStandardOutput()).decode(errors="replace") if self._snd_proc else ""
+        if "unavailable" in text:
+            self._snd_dead = True        # no audio library or player: stay quiet from now on
+            self._snd_proc = None
+
+    def _sync_music(self) -> None:
+        if self._snd_enabled():
+            self._snd_write("music on" if (self.cfg.music and not self._running) else "music off")
+
+    @Slot(str)
+    def playSound(self, name: str) -> None:
+        """tick | select | back | fav | launch | error | start. Silent when sound effects are off."""
+        if not self.cfg.sound_effects or not self._snd_enabled():
+            return
+        if name == "tick":
+            now = time.monotonic()
+            if now - self._last_tick < 0.03:
+                return
+            self._last_tick = now
+        self._snd_write(name)
+
+    def stop_sound(self) -> None:
+        proc, self._snd_proc = self._snd_proc, None
+        if proc is not None:
+            try:
+                proc.write(b"quit\n")
+                proc.waitForBytesWritten(300)
+                if not proc.waitForFinished(800):
+                    proc.kill()
+            except Exception:
+                pass
+
     @Property(bool, notify=updateChanged)
     def updateAuto(self):
         return self.cfg.update_check
@@ -1162,6 +1338,17 @@ class Backend(QObject):
         rows.append({"kind": "updateauto", "title": "Check for updates automatically",
                      "value": "ON" if self.cfg.update_check else "OFF",
                      "detail": "At most once a day, quietly, only when the internet is reachable."})
+        rows.append({"kind": "sfx", "title": "Sound effects",
+                     "value": "ON" if self.cfg.sound_effects else "OFF",
+                     "detail": "Small clicks and chimes when you move around, choose, go back or start a game."})
+        rows.append({"kind": "music", "title": "Music (soft background loop)",
+                     "value": "ON" if self.cfg.music else "OFF",
+                     "detail": "Quiet and off by default. It stops while a game is running."})
+        rows.append({"kind": "volume", "title": "Volume", "value": f"{int(round(self.cfg.volume * 100))}%",
+                     "detail": "Press Enter to step through 20 / 40 / 60 / 80 / 100 %."})
+        rows.append({"kind": "anim", "title": "Reduce animations",
+                     "value": "ON" if self.cfg.reduce_animations else "OFF",
+                     "detail": "Turns off the moving background, bobbing icons and fades. Choose ON on a slow computer."})
         rows.append({"kind": "emulators", "title": "Emulators", "value": "",
                         "detail": "See what is installed, install emulators, and which consoles still need BIOS files."})
         for sc in self.cfg.systems.values():
@@ -1258,6 +1445,375 @@ class Backend(QObject):
             pass
         parent = "" if str(p) == "/" else str(p.parent)
         return {"path": str(p), "parent": parent, "dirs": dirs}
+
+    # ----- help, "fix my game", Windows games: simple row-list pages -------------------
+    @Slot(str, result=str)
+    def pageTitle(self, name: str) -> str:
+        return {"help": "HELP & GETTING STARTED", "fix": "FIX MY GAME", "winform": "ADD A WINDOWS GAME",
+                "winchoose": "WHICH PROGRAM STARTS THE GAME?", "winwork": "OPENING THE ARCHIVE"}.get(name, name.upper())
+
+    @Slot(str, result=str)
+    def pageSub(self, name: str) -> str:
+        return {"help": "Up/Down to choose, Enter / A to press.  Esc / B = back.",
+                "fix": "Atari checked everything it can.  Esc / B = back.",
+                "winform": "Check the details, then choose \"Add this game\".  Esc / B = cancel.",
+                "winchoose": "Pick the main program (the biggest .exe is usually it).  Esc / B = cancel.",
+                "winwork": "Please wait - big games take a minute.  Esc / B = cancel."}.get(name, "")
+
+    @Slot(str, result="QVariantList")
+    def pageRows(self, name: str):
+        if name == "help":
+            return self._help_rows()
+        if name == "fix":
+            return self._fix_rows()
+        if name == "winform":
+            return self._winform_rows()
+        if name == "winchoose":
+            return self._winchoose_rows()
+        if name == "winwork":
+            return [{"kind": "info", "title": self._win_text or "Working..."},
+                    {"kind": "item", "id": "cancel", "title": "Cancel"}]
+        return []
+
+    def _info(self, text: str) -> dict:
+        return {"kind": "info", "title": text}
+
+    def _help_rows(self) -> list:
+        n_games = self._real_count()
+        rows = [self._info(diagnose.controller_text())]
+        rows.append(self._info("Getting started - press each step in order (you can skip steps you do not need):"))
+        for step in diagnose.checklist(self.cfg, n_games > 0):
+            done = step["done"] and not (step["id"] == "covers")
+            rows.append({"kind": "item", "id": "ck_" + step["id"], "title": step["title"],
+                         "value": "Done" if done else "", "tone": "ok" if done else "",
+                         "detail": step["detail"]})
+        rows += [
+            {"kind": "item", "id": "winadd", "title": "Add a Windows game (.exe or .zip)",
+             "detail": "For PC games you downloaded yourself. Runs through Proton / Wine."},
+            {"kind": "item", "id": "controls", "title": "Controls (keyboard keys)",
+             "detail": "Which keys to press inside each emulator."},
+            self._info("Q: Make music?  A: Options > Studio (or the Studio tile). Make a beat, record your voice over it, then mix and save a WAV or MP3 "
+                       "in ~/Music/Atari Studio. Use headphones when you record."),
+            self._info("Q: Netflix, YouTube, Instagram...?  A: open the Streaming tile (Systems row). Each opens in its own browser window - "
+                       "sign in once per app (it remembers you). You may need a mouse or touch screen inside web pages; "
+                       "AntiMicroX can make a controller act as a mouse. Netflix, Prime and Disney+ stream at about 720p on Linux."),
+            self._info("Q: Fortnite / Call of Duty / Warzone?  A: they do not work on Linux - their anti-cheat blocks it and the makers do not support it. "
+                       "The Free Games tile lists free games that do work (checked on ProtonDB). Minecraft Java: Prism Launcher in PC Apps (needs your own licence)."),
+            self._info("Q: A game does not start.  A: highlight it, press the Options button (F10 / Start), choose \"Fix my game\"."),
+            self._info("Q: The game has no picture.  A: step 4 above downloads covers (needs internet). Names must look like the real game title."),
+            self._info("Q: A console says it needs a BIOS.  A: those are files from your own console. Atari cannot download them - use step 3 with a USB stick or folder."),
+            self._info("Q: Where are my games?  A: ~/Games/Atari/<console>/ . Your favourites and play time are kept when you update Atari."),
+            self._info("Q: How do I quit a game?  A: use the emulator's own exit (see Controls). Atari comes back by itself."),
+            {"kind": "item", "id": "copylog", "title": "Copy log (to send to someone who is helping you)",
+             "detail": "Copies Atari's recent messages and your setup to the clipboard. It contains no passwords."},
+            {"kind": "item", "id": "reset",
+             "title": "Press again to reset my settings" if self._reset_armed else "Safe mode: reset my settings",
+             "detail": "Puts Atari's settings back to normal if something looks wrong. Your games, favourites and "
+                       "play time are kept, and the old settings are saved next to the new ones."},
+            {"kind": "item", "id": "back", "title": "Back"},
+        ]
+        return rows
+
+    def _fix_game(self):
+        return next((g for g in self._all if g.gid == self._fix_gid), None)
+
+    def _fix_rows(self) -> list:
+        g = self._fix_game()
+        if g is None:
+            return [self._info("Highlight a game first, then open Options > Fix my game."),
+                    {"kind": "item", "id": "back", "title": "Back"}]
+        checks = diagnose.check_game(self.cfg, g)
+        rows = [self._info(g.title + " - " + diagnose.summary(checks))]
+        for c in checks:
+            tone = {"ok": "ok", "bad": "bad", "note": "warn"}[c["state"]]
+            rows.append({"kind": "item", "id": "noop", "title": c["title"], "tone": tone,
+                         "value": {"ok": "OK", "bad": "Fix needed", "note": "Note"}[c["state"]],
+                         "detail": c["advice"]})
+        if any(c["state"] == "bad" for c in checks):
+            rows.append({"kind": "item", "id": "emus", "title": "Install emulators and apps",
+                         "detail": "Opens a window that installs what is missing (needs internet)."})
+        if g.platform != "steam" and not g.launch and g.platform not in apps.NON_GAME:
+            rows.append({"kind": "item", "id": "bios", "title": "Add BIOS files",
+                         "detail": "From your own console, via USB stick or folder."})
+        rows.append({"kind": "item", "id": "copylog", "title": "Copy log"})
+        if g.platform == windows.PLATFORM:
+            rows.append({"kind": "item", "id": "remove",
+                         "title": "Press again to remove this game from Atari" if self._remove_armed
+                         else "Remove this game from Atari",
+                         "detail": "Only Atari's entry goes - the game's files stay on your disk."})
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    @Slot(int, result=bool)
+    def openFix(self, row: int) -> bool:
+        g = self.model.game_at(row)
+        self._fix_gid = g.gid if g else ""
+        self._remove_armed = False
+        return g is not None
+
+    @Slot(result=str)
+    def controllerText(self) -> str:
+        return diagnose.controller_text()
+
+    @Slot(result=str)
+    def copyLog(self) -> str:
+        lines = []
+        try:
+            lines = Path(paths.log_file()).read_text(errors="replace").splitlines()[-150:]
+        except OSError:
+            pass
+        head = [f"Atari {__version__}  python {sys.version.split()[0]}  {os.environ.get('XDG_CURRENT_DESKTOP', '')}",
+                diagnose.controller_text(), ""]
+        text = "\n".join(head + (lines or ["(the log is empty)"]))
+        cb = QGuiApplication.clipboard()
+        if cb is not None:
+            cb.setText(text)
+        self.show_toast("Copied Atari's log to the clipboard - paste it into a message to whoever is helping you.", 7000)
+        return text
+
+    @Slot(result=str)
+    def resetSettings(self) -> str:
+        """Safe mode: settings back to normal. State (favourites, play time) and games stay; the old file is kept."""
+        cfgfile = paths.config_file()
+        kept = ""
+        try:
+            if cfgfile.is_file():
+                kept = str(cfgfile.with_name(cfgfile.name + ".before-reset-" + time.strftime("%Y%m%d-%H%M%S")))
+                cfgfile.replace(kept)
+        except OSError as exc:
+            self.show_toast(f"Could not reset settings: {exc}", 8000)
+            return ""
+        self.cfg = load_config()
+        self.cfg.first_run = False
+        self.cfg.fullscreen = True
+        try:
+            save_config(self.cfg)
+        except OSError:
+            pass
+        for key in ("sort", "show_all_systems"):
+            self.store.set_pref(key, {"sort": "az", "show_all_systems": False}[key])
+        self._sort, self._show_all = "az", False
+        self.rescan(toast=False)
+        self.show_toast("Settings are back to normal." + (" Your old settings were saved as " + Path(kept).name + "." if kept else ""), 9000)
+        return kept
+
+    @Slot(str, str, result=str)
+    def pageActivate(self, name: str, rid: str) -> str:
+        """Press a row. Returns what the screen should do next: '' | refresh | back | close | page:X | browse:X | osk:winname | import:games | import:bios | controls | emus"""
+        if rid in ("back", "noop"):
+            return "back" if rid == "back" else ""
+        if name == "help":
+            return self._help_activate(rid)
+        if name == "fix":
+            if rid == "emus":
+                self.installEmulators()
+                return ""
+            if rid == "bios":
+                return "import:bios"
+            if rid == "copylog":
+                self.copyLog()
+                return ""
+            if rid == "remove":
+                if not self._remove_armed:
+                    self._remove_armed = True
+                    return "refresh"
+                self._remove_armed = False
+                windows.remove_game(self._fix_gid)
+                self.rescan(toast=False)
+                self.show_toast("Removed from Atari. The game's files are still on your disk.")
+                return "close"
+        if name == "winform":
+            if rid == "name":
+                return "osk:winname"
+            if rid == "cover":
+                return "browse:wincover"
+            if rid == "add":
+                return self.winFinish()
+        if name == "winchoose" and rid.startswith("c"):
+            try:
+                self._win_exe = str(self._win_cands[int(rid[1:])].path)
+            except (ValueError, IndexError):
+                return ""
+            return "page:winform"
+        if name == "winwork" and rid == "cancel":
+            self._win_cancel.set()
+            return "back"
+        return ""
+
+    def _help_activate(self, rid: str) -> str:
+        if rid != "reset":
+            self._reset_armed = False
+        if rid == "ck_emus":
+            self.installEmulators()
+            return ""
+        if rid == "ck_games":
+            return "import:games"
+        if rid == "ck_bios":
+            return "import:bios"
+        if rid == "ck_covers":
+            self.show_toast("Looking for covers... (needs internet)", 4000)
+            self.startCovers(auto=False)
+            return ""
+        if rid == "winadd":
+            return "browse:winfile"
+        if rid == "controls":
+            return "controls"
+        if rid == "copylog":
+            self.copyLog()
+            return ""
+        if rid == "reset":
+            if not self._reset_armed:
+                self._reset_armed = True
+                return "refresh"
+            self._reset_armed = False
+            self.resetSettings()
+            return "refresh"
+        return ""
+
+    # ----- Windows games ------------------------------------------------------------
+    @Slot(result=str)
+    def winBrowseStart(self) -> str:
+        dl = Path.home() / "Downloads"
+        return str(dl if dl.is_dir() else Path.home())
+
+    @Slot(str, str, result="QVariantMap")
+    def listFiles(self, path: str, kind: str):
+        """Like listDir, plus the files of one kind: 'exe' (programs and archives) or 'image'."""
+        data = dict(self.listDir(path))
+        exts = {"exe": (".exe",) + windows.ARCHIVE_EXT, "image": windows.IMAGE_EXT}.get(kind, ())
+        files = []
+        if path and exts:
+            try:
+                for child in sorted(Path(path).iterdir(), key=lambda c: c.name.lower()):
+                    if (not child.name.startswith(".") and child.name.lower().endswith(exts) and child.is_file()):
+                        files.append({"name": child.name, "path": str(child)})
+            except OSError:
+                pass
+        data["files"] = files
+        return data
+
+    def _win_reset(self) -> None:
+        self._win_exe = ""
+        self._win_name = ""
+        self._win_cover = ""
+        self._win_cands = []
+        self._win_text = ""
+
+    @Slot(str, result=str)
+    def winPicked(self, path: str) -> str:
+        """The user chose a file. Returns the page to show next."""
+        p = Path(path)
+        self._win_reset()
+        if windows.is_archive(p):
+            self._win_name = windows.clean_name(p.name)
+            self._win_text = "Opening " + p.name + " ..."
+            self._win_cancel = threading.Event()
+            dest = windows.unique_dir(windows.games_dir() / windows.clean_name(p.name))
+            cancel = self._win_cancel
+
+            def worker():
+                try:
+                    def prog(done, total):
+                        self.winEvent.emit("progress", f"Opening {p.name}: {done} of {total} files" if total
+                                           else f"Opening {p.name} ...", None)
+                    windows.extract_archive(p, dest, prog, cancel)
+                    cands = windows.find_exes(dest)
+                    self.winEvent.emit("done", str(dest), cands)
+                except windows.WinError as exc:
+                    self.winEvent.emit("error", str(exc), None)
+                except Exception as exc:  # pragma: no cover - safety net
+                    self.winEvent.emit("error", f"Could not open that file: {exc}", None)
+
+            threading.Thread(target=worker, daemon=True).start()
+            return "winwork"
+        if p.name.lower().endswith(".exe") and p.is_file():
+            self._win_exe = str(p)
+            stem = windows.clean_name(p.name)
+            generic = {"game", "launcher", "start", "main", "play", "app", "run", "windows windowed"}
+            self._win_name = p.parent.name if stem.lower() in generic and p.parent.name else stem
+            return "winform"
+        self.show_toast("Choose a .exe file, or a .zip / .7z that has one inside.")
+        return ""
+
+    @Slot(str, str, object)
+    def _on_win_event(self, kind: str, text: str, payload) -> None:
+        if kind == "progress":
+            self._win_text = text
+            self.pageChanged.emit()
+            return
+        if kind == "error":
+            self.show_toast(text, 9000)
+            self.pageRequested.emit("close")
+            return
+        if self._win_cancel.is_set():
+            self.pageRequested.emit("close")
+            return
+        cands = payload or []
+        self._win_cands = cands
+        if not cands:
+            self.show_toast("Atari could not find a Windows program (.exe) inside that archive. "
+                            "Files were opened in " + text, 10000)
+            self.pageRequested.emit("close")
+        elif len(cands) == 1:
+            self._win_exe = str(cands[0].path)
+            self.pageRequested.emit("winform")
+        else:
+            self.pageRequested.emit("winchoose")
+
+    def _winchoose_rows(self) -> list:
+        rows = []
+        for i, c in enumerate(self._win_cands[:30]):
+            mb = c.size / (1024 * 1024)
+            rows.append({"kind": "item", "id": f"c{i}", "title": c.rel,
+                         "detail": (f"{mb:.0f} MB" if mb >= 1 else f"{c.size // 1024} KB")
+                                   + ("  - most likely the game" if i == 0 else "")})
+        rows.append({"kind": "item", "id": "back", "title": "Cancel"})
+        return rows
+
+    def _winform_rows(self) -> list:
+        ok, label = windows.runner_status(self.cfg)
+        return [
+            self._info("Atari runs Windows games with " + (label if ok else "a helper that is not installed yet") + "."
+                       + ("" if ok else "  " + windows.UMU_HINT)),
+            self._info("Program: " + self._win_exe),
+            {"kind": "item", "id": "name", "title": "Name", "value": self._win_name or "(none)",
+             "detail": "Press Enter to change the name."},
+            {"kind": "item", "id": "cover", "title": "Cover picture (optional)",
+             "value": Path(self._win_cover).name if self._win_cover else "None",
+             "detail": "A .png or .jpg. Skip it for now if you do not have one."},
+            {"kind": "done", "id": "add", "title": "Add this game"},
+            {"kind": "item", "id": "back", "title": "Cancel"},
+        ]
+
+    @Slot(result=str)
+    def winName(self) -> str:
+        return self._win_name
+
+    @Slot(str)
+    def winSetName(self, text: str) -> None:
+        self._win_name = text.strip()
+        self.pageChanged.emit()
+
+    @Slot(str, result=str)
+    def winPickedCover(self, path: str) -> str:
+        self._win_cover = path
+        return "winform"
+
+    @Slot(result=str)
+    def winFinish(self) -> str:
+        if not self._win_exe or not Path(self._win_exe).is_file():
+            self.show_toast("That program is missing. Choose the game again.", 7000)
+            return "close"
+        name = self._win_name.strip() or "Windows game"
+        windows.add_game(name, self._win_exe, self._win_cover)
+        self._win_reset()
+        self.rescan(toast=False)
+        self._filter = windows.PLATFORM
+        self.currentFilterChanged.emit()
+        self._apply()
+        ok, label = windows.runner_status(self.cfg)
+        self.show_toast(f"Added {name} to Windows / PC." + ("" if ok else "  " + windows.UMU_HINT), 10000)
+        return "close"
 
     @Slot(result=str)
     def homeDir(self) -> str:

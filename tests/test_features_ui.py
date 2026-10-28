@@ -27,7 +27,7 @@ def conf(tmp_path, text="[steam]\nenabled = false\n"):
     (tmp_path / "conf" / "config.toml").write_text(text)
 
 
-MENU_ORDER = ["resume", "sort", "add", "bios", "rescan", "emus", "controls", "update", "settings", "full", "quit"]
+MENU_ORDER = ["resume", "sort", "add", "bios", "studio", "winadd", "fix", "help", "rescan", "emus", "update", "settings", "full", "quit"]
 
 
 def open_menu_item(ui, item_id):
@@ -42,9 +42,17 @@ def test_controls_screen_opens_and_closes(app, tmp_path, monkeypatch):
     conf(tmp_path)
     ui = Ui(app, tmp_path, monkeypatch, config_exists=False)
     try:
-        open_menu_item(ui, "controls")
+        open_menu_item(ui, "help")
+        assert ui.mode == "page" and ui.win.property("pageName") == "help"
+        rows = ui.win.property("pageName") and ui.backend.pageRows("help")
+        idx = [r.get("id") for r in rows].index("controls")
+        for _ in range(sum(1 for r in rows[:idx] if r["kind"] != "info")):
+            ui.key(Qt.Key_Down, 20)
+        ui.key(Qt.Key_Return)
         assert ui.mode == "controls"
         ui.key(Qt.Key_Down)
+        ui.key(Qt.Key_Escape)
+        assert ui.mode == "page"          # Back from Controls returns to the Help page
         ui.key(Qt.Key_Escape)
         assert ui.mode == "library" and not ui.warnings, ui.warnings
     finally:
@@ -59,7 +67,7 @@ def test_settings_and_emulator_rows_for_030(app, tmp_path, monkeypatch):
         assert {"bios", "covers", "coversauto", "update", "updateauto", "emulators"} <= kinds
         rows = ui.backend.emulatorRows()
         ekinds = [r["kind"] for r in rows]
-        assert "install" in ekinds and "bios" in ekinds and "controls" in ekinds and ekinds.count("app") == 8
+        assert "install" in ekinds and "bios" in ekinds and "controls" in ekinds and ekinds.count("app") == 12
         ps1 = next(r for r in rows if r.get("id") == "ps1")
         assert "BIOS" in ps1["detail"] and "your own console" in ps1["detail"]
         assert "apps" in [t["key"] for t in ui.backend.tiles]       # the PC Apps tile is always there
@@ -269,5 +277,168 @@ def test_minimise_for_game_and_restore(app, tmp_path, monkeypatch):
         assert ui.backend._minimized_for_game
         ui.backend._on_session_ended("gid", "t", 0.0, "")
         assert not ui.backend._minimized_for_game
+    finally:
+        ui.close()
+
+
+# ----------------------------------------------------------------- 0.3.0: Windows games, Help, Fix my game
+def page(ui):
+    return ui.win.property("pageName")
+
+
+def press_row(ui, rows, row_id):
+    """Move the cursor to the selectable row with this id (the way a player would) and press Enter."""
+    sel = [r for r in rows if r["kind"] != "info"]
+    ids = [r.get("id") for r in sel]
+    for _ in range(ids.index(row_id)):
+        ui.key(Qt.Key_Down, 20)
+    ui.key(Qt.Key_Return)
+
+
+def stub_umu(tmp_path, monkeypatch):
+    import stat
+    b = tmp_path / "bin"
+    b.mkdir(exist_ok=True)
+    rec = tmp_path / "ran.txt"
+    s = b / "umu-run"
+    s.write_text(f'#!/bin/sh\necho "$@ | $WINEPREFIX" > {rec}\nsleep 0.3\n')
+    s.chmod(s.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", str(b) + os.pathsep + os.environ["PATH"])
+    return rec
+
+
+def test_add_a_windows_exe_with_keyboard_only_and_play_it(app, tmp_path, monkeypatch):
+    import zipfile  # noqa: F401
+    conf(tmp_path)
+    rec = stub_umu(tmp_path, monkeypatch)
+    dl = tmp_path / "home" / "Downloads"
+    dl.mkdir(parents=True)
+    (dl / "Dreams_of_Saturn.exe").write_bytes(b"MZ" + b"\0" * 100)
+    monkeypatch.setenv("ATARI_NO_MINIMIZE", "1")
+    ui = Ui(app, tmp_path, monkeypatch, config_exists=False)
+    try:
+        open_menu_item(ui, "winadd")
+        assert ui.mode == "browse"
+        ui.key(Qt.Key_Down)                    # past ".. (go up)" onto the file
+        ui.key(Qt.Key_Return)
+        assert ui.mode == "page" and page(ui) == "winform"
+        rows = ui.backend.pageRows("winform")
+        assert any(r.get("value") == "Dreams of Saturn" for r in rows)
+        # rename it with the on-screen keyboard: Enter on "Name" opens it, type, Enter = done
+        press_row(ui, rows, "name")
+        assert ui.mode == "search"
+        for ch in " 2":
+            ui.key(Qt.Key_2 if ch == "2" else Qt.Key_Space)
+        ui.key(Qt.Key_Return)
+        assert ui.mode == "page" and page(ui) == "winform"
+        assert ui.backend.winName() == "Dreams of Saturn 2"
+        rows = ui.backend.pageRows("winform")
+        press_row(ui, rows, "add")
+        assert ui.mode == "library" and not ui.warnings, ui.warnings
+        assert ui.backend.currentFilter == "windows"
+        assert [g.title for g in ui.backend._all if g.platform == "windows"] == ["Dreams of Saturn 2"]
+        ui.backend.launch(0)
+        assert wait_for(app, lambda: rec.exists() and not ui.backend.running, 10)
+        assert "Dreams_of_Saturn.exe" in rec.read_text() and "prefixes/dreams-of-saturn-2" in rec.read_text()
+    finally:
+        ui.close()
+
+
+def test_add_a_zip_with_several_exes_shows_a_pick_list(app, tmp_path, monkeypatch):
+    import zipfile
+    conf(tmp_path)
+    dl = tmp_path / "home" / "Downloads"
+    dl.mkdir(parents=True)
+    with zipfile.ZipFile(dl / "Fan_Game_v2.zip", "w") as zf:
+        zf.writestr("Fan Game/Fan.exe", b"MZ" + b"\0" * 9000)
+        zf.writestr("Fan Game/Fan_Data/a.dat", b"1")
+        zf.writestr("Fan Game/Config.exe", b"MZ" + b"\0" * 500)
+    ui = Ui(app, tmp_path, monkeypatch, config_exists=False)
+    try:
+        open_menu_item(ui, "winadd")
+        ui.key(Qt.Key_Down)
+        ui.key(Qt.Key_Return)
+        assert wait_for(app, lambda: ui.mode == "page" and page(ui) == "winchoose", 10), (ui.mode, page(ui))
+        rows = ui.backend.pageRows("winchoose")
+        assert rows[0]["title"].endswith("Fan.exe") and "most likely" in rows[0]["detail"]
+        ui.key(Qt.Key_Return)                  # the first one
+        assert page(ui) == "winform"
+        assert ui.backend.winName() == "Fan Game v2"
+        assert (tmp_path / "home/Games/Atari/windows/Fan Game v2/Fan Game/Fan.exe").is_file()
+        ui.key(Qt.Key_Escape)                  # cancel: nothing is added
+        assert ui.mode == "library" and not [g for g in ui.backend._all if g.platform == "windows"]
+        assert not ui.warnings, ui.warnings
+    finally:
+        ui.close()
+
+
+def test_an_archive_without_a_program_explains_itself(app, tmp_path, monkeypatch):
+    import zipfile
+    conf(tmp_path)
+    dl = tmp_path / "home" / "Downloads"
+    dl.mkdir(parents=True)
+    with zipfile.ZipFile(dl / "Readme.zip", "w") as zf:
+        zf.writestr("readme.txt", b"hello")
+    ui = Ui(app, tmp_path, monkeypatch, config_exists=False)
+    try:
+        open_menu_item(ui, "winadd")
+        ui.key(Qt.Key_Down)
+        ui.key(Qt.Key_Return)
+        assert wait_for(app, lambda: ui.mode == "library", 10)
+        assert "could not find a Windows program" in ui.backend.toast
+    finally:
+        ui.close()
+
+
+def test_help_page_copy_log_and_two_press_reset(app, tmp_path, monkeypatch):
+    conf(tmp_path, "[steam]\nenabled = false\n[general]\nfullscreen = false\n")
+    ui = Ui(app, tmp_path, monkeypatch, config_exists=False)
+    try:
+        (tmp_path / "data").mkdir(exist_ok=True)
+        (tmp_path / "data" / "launch.log").write_text("2026-10-28 10:00:00 error: boom\n")
+        before = ui.backend.store.get_pref("sort", "az")
+        ui.backend.store.add_playtime("rom:keep", 600)
+        open_menu_item(ui, "help")
+        assert page(ui) == "help"
+        rows = ui.backend.pageRows("help")
+        ck = [r["id"] for r in rows if str(r.get("id", "")).startswith("ck_")]
+        assert ck == ["ck_emus", "ck_games", "ck_bios", "ck_covers"]       # the four first-run steps
+        press_row(ui, rows, "copylog")
+        from PySide6.QtGui import QGuiApplication
+        assert "error: boom" in QGuiApplication.clipboard().text()
+        ui.key(Qt.Key_Escape)
+        # Safe mode needs two presses
+        open_menu_item(ui, "help")
+        rows = ui.backend.pageRows("help")
+        press_row(ui, rows, "reset")
+        assert any("Press again" in r.get("title", "") for r in ui.backend.pageRows("help"))
+        assert (tmp_path / "conf" / "config.toml").exists()
+        ui.key(Qt.Key_Return)                           # the cursor stayed on the reset row: this is the second press
+        saved = list((tmp_path / "conf").glob("config.toml.before-reset-*"))
+        assert saved and "fullscreen = false" in saved[0].read_text()
+        assert ui.backend.store.playtime("rom:keep") == 600
+        assert not ui.warnings, ui.warnings
+    finally:
+        ui.close()
+
+
+def test_fix_my_game_names_the_problem_in_plain_english(app, tmp_path, monkeypatch):
+    roms = tmp_path / "roms"
+    roms.mkdir()
+    conf(tmp_path, f'[steam]\nenabled = false\n[systems.genesis]\nroms = ["{roms}"]\n')
+    (roms / "Sonic The Hedgehog (USA).md").write_bytes(b"x" * 600)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    ui = Ui(app, tmp_path, monkeypatch, config_exists=False)
+    try:
+        ui.backend.rescan(toast=False)
+        pump(app, 100)
+        assert [g.title for g in ui.backend._all if g.platform == "genesis"], "the test ROM was not found"
+        open_menu_item(ui, "fix")
+        assert ui.mode == "page" and page(ui) == "fix"
+        rows = ui.backend.pageRows("fix")
+        titles = " | ".join(r["title"] for r in rows)
+        assert "Sonic" in titles and "Game file" in titles and "Emulator" in titles and "Controller" in titles
+        ui.key(Qt.Key_Escape)
+        assert ui.mode == "library" and not ui.warnings, ui.warnings
     finally:
         ui.close()

@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("ATARI_NO_COVERS", "1")
 os.environ.setdefault("ATARI_NO_MINIMIZE", "1")
 os.environ.setdefault("ATARI_NO_UPDATE_CHECK", "1")
+os.environ.setdefault("ATARI_NO_SOUND", "1")   # no helper process / audio in tests unless a test asks for it
 FIX = Path(__file__).parent / "fixtures"
 
 

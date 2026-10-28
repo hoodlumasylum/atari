@@ -16,17 +16,19 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import time
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from . import apps, covers
+from . import apps, covers, windows
 from .emulators import EMUS, NOTES, SYSTEMS, find_emu, flatpak_installed
 
 FLATHUB_REPO = "https://dl.flathub.org/repo/flathub.flatpakrepo"
@@ -50,7 +52,7 @@ def used_emulators() -> list:
 
 def default_selection() -> list:
     """Everything: the emulators for the supported consoles plus the PC apps / stores (Roblox, Heroic, Lutris, ...)."""
-    return [e for e in used_emulators() if e.id not in SKIP_BY_DEFAULT] + list(apps.APP_DEFS)
+    return ([e for e in used_emulators() if e.id not in SKIP_BY_DEFAULT] + list(apps.APP_DEFS) + list(apps.HELPERS))
 
 
 def wanted_cores() -> list[str]:
@@ -175,6 +177,55 @@ def install_cores(out: Callable[[str], None], home: Path | None = None, http: co
     return results
 
 
+UMU_API = "https://api.github.com/repos/Open-Wine-Components/umu-launcher/releases/latest"
+
+
+def install_umu(out: Callable[[str], None], home: Path | None = None, http: covers.Http | None = None) -> Outcome:
+    """umu-launcher (runs Windows games with Proton): the official 'zipapp' from its GitHub release, checked against the
+    SHA256 GitHub publishes for it, put in ~/.local/share/umu-launcher with an `umu-run` link in ~/.local/bin."""
+    home = home or Path.home()
+    name = "umu-launcher"
+    if windows.umu_path(home):
+        out("   already installed - nothing to do")
+        return Outcome(name, "already")
+    api = os.environ.get("ATARI_UMU_API") or UMU_API
+    http = http or covers.Http(timeout=60, retries=3, pause=0.2, backoff=2.0)
+    try:
+        meta = http.get(api, max_bytes=3_000_000)
+        rel = json.loads(meta.decode("utf-8", "replace")) if meta else {}
+        asset = next((a for a in rel.get("assets", []) if str(a.get("name", "")).endswith("-zipapp.tar")), None)
+        if not asset:
+            raise ValueError("no download found in the latest release")
+        digest = str(asset.get("digest") or "")
+        if not digest.startswith("sha256:"):
+            raise ValueError("the release has no checksum, so it was not installed")
+        data = http.get(asset["browser_download_url"], max_bytes=100 * 1024 * 1024, timeout=120)
+        if not data:
+            raise ValueError("the download was not found")
+        import hashlib
+        if hashlib.sha256(data).hexdigest() != digest.split(":", 1)[1].lower():
+            raise ValueError("the download did not match its checksum, so it was not installed")
+        with tarfile.open(fileobj=io.BytesIO(data)) as tf:
+            member = next((m for m in tf.getmembers() if m.isreg() and m.name.endswith("umu-run")), None)
+            if member is None:
+                raise ValueError("the download had no umu-run inside")
+            dest = home / ".local/share/umu-launcher"
+            dest.mkdir(parents=True, exist_ok=True)
+            target = dest / "umu-run"
+            target.write_bytes(tf.extractfile(member).read())
+            target.chmod(0o755)
+        link = home / ".local/bin/umu-run"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        link.symlink_to(target)
+        out("   installed (the first Windows game you start will download Proton once - that takes a few minutes)")
+        return Outcome(name, "installed")
+    except (covers.Offline, ValueError, OSError, tarfile.TarError, KeyError) as exc:
+        out(f"   FAILED: {exc} - continuing")
+        return Outcome(name, "failed", str(exc))
+
+
 def apt_only_emulators() -> list:
     return [e for e in used_emulators() if not e.flatpak and e.apt]
 
@@ -240,7 +291,8 @@ def run_install(selection: list, *, out: Callable[[str], None] = print, ask: Cal
     flatpak_ok = ensure_flatpak(out, ask, assume_yes) and ensure_flathub(out)
     fl = [e for e in selection if e.flatpak]
     apt = [e for e in selection if not e.flatpak and e.apt]
-    other = [e for e in selection if not e.flatpak and not e.apt]
+    other = [e for e in selection if not e.flatpak and not e.apt and e.id != "umu"]
+    want_umu = any(e.id == "umu" for e in selection)
     if flatpak_ok:
         for i, e in enumerate(fl, 1):
             out("")
@@ -257,6 +309,10 @@ def run_install(selection: list, *, out: Callable[[str], None] = print, ask: Cal
             results.extend(install_cores(out, home))
         else:
             out("Skipping RetroArch cores because RetroArch is not installed.")
+    if want_umu:
+        out("")
+        out("umu-launcher (starts Windows games with Proton):")
+        results.append(install_umu(out, home))
     if use_apt and apt:
         out("")
         results.extend(install_apt(apt, out, ask, assume_yes))
@@ -272,6 +328,13 @@ def list_status(out: Callable[[str], None] = print) -> None:
     for a in apps.APP_DEFS:
         ok, _t = apps.app_status(cfg, a)
         out(f"{a.id:12} {a.title[:40]:40} {'installed' if ok else '-':22} Flathub: {a.flatpak}")
+    for h in apps.HELPERS:
+        if h.id == "umu":
+            have = windows.umu_path() != ""
+        else:
+            have = any(shutil.which(x) for x in h.exes) or bool(h.flatpak and flatpak_installed(h.flatpak))
+        src = f"Flathub: {h.flatpak}" if h.flatpak else (f"apt: {h.apt}" if h.apt else "GitHub release (checked)")
+        out(f"{h.id:12} {h.title[:40]:40} {'installed' if have else '-':22} {src}")
     for e in used_emulators():
         cmd, how = find_emu(cfg, e.id)
         status = {"native": "installed", "flatpak": "installed (Flatpak)", "custom": "custom command"}.get(how, "-")
@@ -346,6 +409,8 @@ def main(argv=None) -> int:
         for n in args.names:
             if n in apps.BY_ID:
                 sel.append(apps.BY_ID[n])
+            elif n in {h.id: h for h in apps.HELPERS}:
+                sel.append({h.id: h for h in apps.HELPERS}[n])
             elif n in EMUS:
                 sel.append(EMUS[n])
             else:
