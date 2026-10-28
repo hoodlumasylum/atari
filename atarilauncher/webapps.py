@@ -27,6 +27,7 @@ class WebApp:
     url: str
     drm: bool = False
     note: str = ""
+    background: bool = False    # keeps running behind Code (music): Esc twice brings Code back and leaves it playing
     browse: bool = False        # a normal browser window (address bar, back / forward) instead of a full-screen app window
 
     @property
@@ -48,6 +49,10 @@ WEBAPPS: list[WebApp] = [
                 "the server URL + stream key TikTok shows here (only for accounts that qualify)."),
     WebApp("youtubelive", "YouTube Live (go live)", "https://studio.youtube.com", browse=True,
            note="YouTube Studio in a browser window: Create > Go live > Stream shows your stream key. Pair it with OBS (Options > Go Live)."),
+    WebApp("spotify", "Spotify (web player)", "https://open.spotify.com", True, background=True,
+           note="Spotify's web player in its own window (sign in once; needs a Spotify account). Music needs Widevine: Google Chrome has it "
+                "built in. It keeps playing behind Code - press Esc twice (or Guide + B) to come back and use the music buttons in the "
+                "top bar (they need playerctl)."),
     WebApp("youtube", "YouTube", "https://www.youtube.com/tv",
            note="The TV layout of YouTube - big buttons, works with arrow keys and Enter. Sign in once."),
     WebApp("netflix", "Netflix", "https://www.netflix.com", True, DRM_NOTE),

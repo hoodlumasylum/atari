@@ -61,8 +61,8 @@ def test_no_company_logos_and_every_app_is_listed(env):
     ids = {w.id for w in webapps.WEBAPPS}
     assert {"youtube", "netflix", "instagram", "facebook", "tiktok", "disney", "prime", "twitch"} <= ids
     assert all(w.url.startswith("https://") for w in webapps.WEBAPPS)
-    assert [w.id for w in webapps.WEBAPPS if w.drm] == ["netflix", "disney", "prime"]
-    assert all("720p" in w.note for w in webapps.WEBAPPS if w.drm)                   # the honest quality limit
+    assert [w.id for w in webapps.WEBAPPS if w.drm] == ["spotify", "netflix", "disney", "prime"]
+    assert all("720p" in w.note for w in webapps.WEBAPPS if w.drm and w.id != "spotify")                   # the honest quality limit
     res = library.build_library(config.default_config())
     g = {x.gid: x for x in res.games}
     assert g["web:netflix"].platform == "streaming" and g["app:kodi"].platform == "streaming"

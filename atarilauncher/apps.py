@@ -34,6 +34,7 @@ class AppDef:
     note: str = ""                  # shown on the tile / Emulators page
     apt: str = ""                   # apt package name when there is one
     group: str = "apps"             # which tile it lives on: "apps" (PC Apps) or "streaming" (Streaming & Social)
+    background: bool = False        # keeps running behind Code (music): Esc twice / Guide+B brings Code back and leaves it playing
 
     @property
     def name(self) -> str:          # lets the installer treat apps like emulators
@@ -76,6 +77,10 @@ APP_DEFS: list[AppDef] = [
            "Free, open-source streaming and recording program for Twitch, YouTube Live, TikTok LIVE and others. Options > Go Live starts "
            "it with a ready screen-capture scene; you add your own stream key. Linux has no 'Game Capture' - it captures the screen.",
            apt="obs-studio"),
+    AppDef("spotify", "Spotify", "com.spotify.Client", ("spotify",),
+           "Spotify's own app (a Spotify account is needed; free accounts have ads). It keeps playing behind Code: press Esc twice "
+           "(or Guide + B) to come back, and use the music buttons in the top bar (they need playerctl). The Flathub package is "
+           "community-maintained, not made by Spotify or Code.", group="streaming", background=True),
     AppDef("moonlight", "Moonlight (game streaming)", "com.moonlight_stream.Moonlight", ("moonlight", "moonlight-qt"),
            "Streams games from another PC running Sunshine or GeForce Experience."),
 ]
@@ -86,6 +91,8 @@ HELPERS: list[AppDef] = [
            apt="wine"),
     AppDef("chrome", "Google Chrome (for YouTube, Netflix and other web apps)", "com.google.Chrome",
            ("google-chrome-stable", "google-chrome"), "Streaming web apps open in it. Has Widevine for Netflix & co."),
+    AppDef("playerctl", "playerctl (music buttons in the top bar)", "", ("playerctl",),
+           "Lets Code's top bar play / pause / skip Spotify and other players. Small and free.", apt="playerctl"),
     AppDef("antimicrox", "AntiMicroX (optional: gamepad as mouse)", "io.github.antimicrox.antimicrox", ("antimicrox",),
            "Lets a controller move the mouse inside web apps. Optional."),
     AppDef("ffmpeg", "FFmpeg (screen recorder)", "", ("ffmpeg",), "Records the screen to an MP4 file (F9).", apt="ffmpeg"),

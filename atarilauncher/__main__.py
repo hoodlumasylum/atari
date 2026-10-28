@@ -52,6 +52,7 @@ def main(argv=None) -> int:
     if headless or args.demo:
         os.environ["ATARI_NO_INTRO"] = "1"          # screenshots and self-tests never wait for an intro
         os.environ["ATARI_NO_WIFI"] = "1"
+        os.environ["ATARI_NO_MEDIA"] = "1"
     backend = Backend(demo=args.demo, enable_gamepad=not headless)
     if args.windowed:
         backend.cfg.fullscreen = False

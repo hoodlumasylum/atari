@@ -130,44 +130,85 @@ def test_closed_password_window_and_failures_are_explained(box):
     assert not ok and "not written" in text
 
 
-def test_the_session_script_really_falls_back_to_the_desktop(box, tmp_path):
-    """Run the generated session script for real: a broken Code three times in a row -> the Mint desktop starts."""
-    layout, run_sh, _ = box
-    bad = tmp_path / "bad-run.sh"
-    bad.write_text("#!/bin/sh\necho start >> %s/starts\nexit 1\n" % tmp_path)
-    bad.chmod(0o755)
-    fake_desktop = tmp_path / "fakedesktop"
-    fake_desktop.write_text("#!/bin/sh\necho desktop >> %s/starts\n" % tmp_path)
-    fake_desktop.chmod(0o755)
+SESSION_ENV = {"ATARI_RESTART_DELAY": "0"}
+
+
+def run_session(tmp_path, run_body, desktop_body="echo desktop >> %s/starts\n", home=None, timeout=60):
+    """Run the generated session script for real with a stand-in Code (run_body) and a stand-in Mint desktop."""
+    run = tmp_path / "run.sh"
+    run.write_text("#!/bin/sh\n" + run_body.replace("@T@", str(tmp_path)))
+    run.chmod(0o755)
+    desk = tmp_path / "fakedesktop"
+    desk.write_text("#!/bin/sh\n" + (desktop_body % tmp_path))
+    desk.chmod(0o755)
     script = tmp_path / "session.sh"
-    script.write_text(kiosk.render_session_script(bad, str(fake_desktop)))
-    env = dict(os.environ, HOME=str(tmp_path / "home"), PATH="/usr/bin:/bin")
-    (tmp_path / "home").mkdir()
-    subprocess.run(["sh", str(script)], env=env, timeout=30)
-    assert (tmp_path / "starts").read_text().split() == ["start", "start", "start", "desktop"]
+    script.write_text(kiosk.render_session_script(run, str(desk)))
+    home = home or (tmp_path / "home")
+    home.mkdir(exist_ok=True)
+    env = dict(os.environ, HOME=str(home), PATH="/usr/bin:/bin", **SESSION_ENV)
+    return subprocess.run(["sh", str(script)], env=env, timeout=timeout)
+
+
+def starts(tmp_path):
+    f = tmp_path / "starts"
+    return f.read_text().split() if f.exists() else []
+
+
+def test_the_session_script_still_falls_back_to_the_desktop_but_only_for_a_real_crash_loop(box, tmp_path):
+    run_session(tmp_path, "echo start >> @T@/starts\nexit 1\n")
+    assert starts(tmp_path) == ["start"] * kiosk.MAX_QUICK_CRASHES + ["desktop"]            # Code cannot start at all: desktop, never locked out
+
+
+def test_code_that_ends_for_any_reason_is_started_again_not_left_to_the_desktop(box, tmp_path):
+    """Code dies (killed by an app, crash, 'Restart Code') after running a while: the session starts it again - no logout, no desktop."""
+    body = ("n=$(cat @T@/n 2>/dev/null || echo 0); n=$((n+1)); echo $n > @T@/n; echo start >> @T@/starts\n"
+            "sleep 4\n"                                                         # a normal, longer run
+            "case $n in 1) kill -9 $$;; 2) exit 0;; 3) exit 3;; *) exit 64;; esac\n")   # 1: killed  2: restart  3: crash  4: log out on purpose
+    run_session(tmp_path, body)
+    assert starts(tmp_path) == ["start"] * 4                                         # four starts, then the deliberate logout; no desktop
+    assert "desktop" not in starts(tmp_path)
+
+
+def test_a_clean_exit_after_a_quick_run_does_not_count_as_a_crash_loop(box, tmp_path):
+    """Pressing 'Restart Code' a few times in a row (exit 0) never triggers the desktop fallback; only crashes do."""
+    body = ("n=$(cat @T@/n 2>/dev/null || echo 0); n=$((n+1)); echo $n > @T@/n; echo start >> @T@/starts\n"
+            "sleep 3.2\n[ $n -lt 7 ] && exit 0\nexit 64\n")
+    run_session(tmp_path, body, timeout=90)
+    assert starts(tmp_path) == ["start"] * 7
+
+
+def test_a_crash_that_comes_after_a_long_run_resets_the_counter(box, tmp_path):
+    body = ("n=$(cat @T@/n 2>/dev/null || echo 0); n=$((n+1)); echo $n > @T@/n; echo start >> @T@/starts\n"
+            "case $n in 4|5) sleep 0;; *) ;; esac\n"
+            "[ $n -eq 5 ] && sleep 11\n[ $n -ge 9 ] && exit 64\nexit 1\n")
+    run_session(tmp_path, body, timeout=120)
+    assert starts(tmp_path) == ["start"] * 9 and "desktop" not in starts(tmp_path)    # 4 quick crashes, a longer run, 4 more: still no fallback
+
+
+def test_the_session_script_tells_code_it_is_the_session(box, tmp_path):
+    run_session(tmp_path, 'echo "$ATARI_KIOSK" >> @T@/starts\nexit 64\n')
+    assert starts(tmp_path) == ["1"]
+    assert kiosk.in_session({"ATARI_KIOSK": "1"}) and not kiosk.in_session({}) and not kiosk.in_session({"ATARI_KIOSK": "0"})
 
 
 def test_open_desktop_once_flag_makes_the_session_start_the_desktop_and_is_single_use(box, tmp_path):
-    layout, run_sh, _ = box
     home = tmp_path / "home"
     home.mkdir()
-    good = tmp_path / "good-run.sh"
-    good.write_text("#!/bin/sh\necho atari >> %s/starts\nexit 0\n" % tmp_path)
-    good.chmod(0o755)
-    desk = tmp_path / "fakedesktop"
-    desk.write_text("#!/bin/sh\necho desktop >> %s/starts\n" % tmp_path)
-    desk.chmod(0o755)
-    script = tmp_path / "session.sh"
-    script.write_text(kiosk.render_session_script(good, str(desk)))
-    env = dict(os.environ, HOME=str(home), PATH="/usr/bin:/bin")
     calls = []
     ok, text = kiosk.open_desktop_once(home, run=lambda cmd, **kw: calls.append(cmd), which=lambda n: "/usr/bin/" + n)
     assert ok and kiosk.desktop_once_flag(home).is_file() and calls == [["cinnamon-session-quit", "--logout", "--no-prompt"]]
-    subprocess.run(["sh", str(script)], env=env, timeout=30)             # next login: desktop, once
-    subprocess.run(["sh", str(script)], env=env, timeout=40)             # login after that: Code again (it ends quickly -> retries, then desktop)
-    first = (tmp_path / "starts").read_text().split()
-    assert first[0] == "desktop" and "atari" in first[1:]
+    run_session(tmp_path, "echo atari >> @T@/starts\nexit 64\n", home=home)             # next login: desktop, once
+    run_session(tmp_path, "echo atari >> @T@/starts\nexit 64\n", home=home)             # login after that: Code again
+    assert starts(tmp_path) == ["desktop", "atari"]
     assert not kiosk.desktop_once_flag(home).exists()
+
+
+def test_the_flag_left_while_code_runs_sends_the_next_restart_to_the_desktop(box, tmp_path):
+    """'Open the Mint desktop once' leaves the flag then logs out; if only Code ends, the session honours the flag instead of looping."""
+    home = tmp_path / "home"
+    home.mkdir()
+    run_session(tmp_path, "echo atari >> @T@/starts\nmkdir -p $HOME/.config/atari && echo 1 > $HOME/.config/atari/desktop-once\nsleep 3.2\nexit 0\n", home=home)
+    assert starts(tmp_path) == ["atari", "desktop"]
 
 
 def test_recovery_text_names_the_exact_command():
@@ -224,5 +265,51 @@ def test_blocked_machines_get_only_a_back_button(app, tmp_path, monkeypatch, box
         rows = b.pageRows("kiosk")
         assert [r.get("id") for r in rows if r["kind"] != "info"] == ["back"]
         assert any(r["title"].startswith("CANNOT CONTINUE") and "pkexec" in r["title"] for r in rows)
+    finally:
+        ui.close()
+
+
+# ------------------------------------------------------------------ an install made by an older Code
+OLD_SCRIPT = """#!/bin/sh
+RUN=/x/run.sh
+n=0
+while [ "$n" -lt 3 ]; do
+    t=$(date +%s)
+    "$RUN" --fullscreen
+    if [ $(( $(date +%s) - t )) -ge 30 ]; then exit 0; fi
+    n=$((n + 1))
+done
+exec cinnamon-session-cinnamon
+"""
+
+
+def test_a_session_script_from_before_0_4_1_is_noticed_and_replaced_by_one_press(box):
+    layout, run_sh, _ = box
+    for f in layout.files:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("x")
+    layout.p(layout.session_script).write_text(OLD_SCRIPT)          # what Code 0.3.x / 0.4.0 wrote (root's file: an update cannot touch it)
+    assert kiosk.enabled(layout) and kiosk.session_outdated(layout)
+    ok, text = kiosk.enable(layout, fake_pkexec(layout), user="hazel", checks=checks(box), run_sh=run_sh)
+    assert ok and not kiosk.session_outdated(layout)
+    assert f"atari-session-version: {kiosk.SESSION_VERSION}" in layout.p(layout.session_script).read_text()
+    assert not kiosk.session_outdated(kiosk.Layout(root=layout.root / "nowhere"))      # nothing installed: nothing to update
+
+
+def test_the_code_only_screen_offers_the_update_only_when_needed(app, tmp_path, monkeypatch, box):
+    layout, run_sh, _ = box
+    conf(tmp_path, '[steam]\nenabled = false\n')
+    ui = Ui(app, tmp_path, monkeypatch, config_exists=False)
+    try:
+        b = ui.backend
+        b._kiosk_layout = layout
+        for f in layout.files:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text("x")
+        layout.p(layout.session_script).write_text(OLD_SCRIPT)
+        rows = b.pageRows("kiosk")
+        assert any(r.get("id") == "kioskupdate" for r in rows) and "drop you to the Mint desktop" in " ".join(r.get("title", "") for r in rows)
+        layout.p(layout.session_script).write_text(kiosk.render_session_script(run_sh, "cinnamon-session"))
+        assert not any(r.get("id") == "kioskupdate" for r in b.pageRows("kiosk"))
     finally:
         ui.close()

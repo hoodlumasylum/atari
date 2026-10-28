@@ -228,7 +228,8 @@ def run_game(cfg: Config, game: Game, on_started: Callable[[], None],
     started = time.time()
     try:
         proc = subprocess.Popen(cmd, env=clean_env(), stdout=logfh, stderr=logfh,
-                                stdin=subprocess.DEVNULL, cwd=str(Path(game.rom_path).parent))
+                                stdin=subprocess.DEVNULL, cwd=str(Path(game.rom_path).parent),
+                                start_new_session=True)       # its own session: nothing it does to its process group can reach Code
     except OSError as exc:
         raise LaunchError(f"Could not start the emulator: {exc}")
     on_started()
@@ -274,13 +275,15 @@ def _run_app(cfg: Config, game: Game, on_started):
         logfh = open(paths.log_file(), "ab")
     except OSError:
         logfh = subprocess.DEVNULL
+    if app.background and not game.launch:
+        return _run_background(cfg, cmd, app.title, on_started, logfh)
     watched = game.platform == webapps.STREAMING and exitwatch.enabled(cfg)    # Kodi: Esc twice / hold Esc returns to Code
     if watched:
         time.sleep(_hint_delay())
     started = time.time()
     try:
         proc = subprocess.Popen(cmd, env=clean_env(), stdout=logfh, stderr=logfh, stdin=subprocess.DEVNULL,
-                                start_new_session=watched)
+                                start_new_session=True)
     except OSError as exc:
         raise LaunchError(f"Could not start {app.title}: {exc}")
     watch = _start_watch(cfg, proc, cmd) if watched else None
@@ -310,6 +313,11 @@ def _roblox_recover(cmd, started: float, logfh):
     advice: if the connection to its servers works, update Sober and start it once more (it retries the download itself);
     if not - or if it fails again - say plainly what is wrong. Never downloads a Roblox APK. Returns None when this
     start was normal, else (seconds, message)."""
+    if sober.permission_state(started):
+        _log("roblox: Sober asked for the permission update")
+        return 0.0, INFO + ("Sober shows \"Permission Update Required\". That is normal after a Sober update: it needs the permission update below. "
+                            "The next screen shows the exact command in plain English; press Run fix and Code applies it (your user only, "
+                            "Sober only) and starts Roblox again. " + sober.OVERRIDE_COMMAND)
     if not sober.bundle_state(started):
         return None
     _log("roblox: Sober fell back to the manual APK screen")
@@ -321,7 +329,7 @@ def _roblox_recover(cmd, started: float, logfh):
         retried = True
         t0 = time.time()
         try:
-            p2 = subprocess.Popen(cmd, env=clean_env(), stdout=logfh, stderr=logfh, stdin=subprocess.DEVNULL)
+            p2 = subprocess.Popen(cmd, env=clean_env(), stdout=logfh, stderr=logfh, stdin=subprocess.DEVNULL, start_new_session=True)
             p2.wait()
         except OSError as exc:
             _log("roblox: retry could not start: " + str(exc))
@@ -458,7 +466,7 @@ def _run_free(cfg: Config, game: Game, on_started):
         started = time.time()
         try:
             proc = subprocess.Popen(cmd, env=clean_env(), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.DEVNULL)
+                                    stderr=subprocess.DEVNULL, start_new_session=True)
         except OSError as exc:
             raise LaunchError(f"Could not start {fg.title}: {exc}")
         on_started()
@@ -484,6 +492,66 @@ def _wait_for_steam_game(appid: str, title: str):
     return (time.time() - started if time.time() - started > 5 else 0.0), ""
 
 
+class _Alive:
+    """Stands in for a background app's process. A browser that hands the window to an already-open copy of itself exits with
+    code 0 within seconds: that is NOT "closed" - the app is still there, so it stays alive until the person leaves with
+    Esc twice / Guide + B. A process that ends with 0 after a longer run (the window was closed) or with an error is over."""
+    HANDOVER = 8.0
+
+    def __init__(self, proc=None, started: float | None = None):
+        self.proc = proc
+        self.pid = proc.pid if proc is not None else 0
+        self.started = started if started is not None else time.time()
+
+    def poll(self):
+        if self.proc is None:
+            return None
+        rc = self.proc.poll()
+        if rc is None:
+            return None
+        if rc != 0 or time.time() - self.started > self.HANDOVER:
+            return rc
+        return None
+
+
+def _leave_running(proc, flatpak_id, grace):
+    """The Esc watcher's way of "closing" a background app: do nothing - the app stays, Code simply comes back."""
+    return None
+
+
+def _run_background(cfg: Config, cmd: list[str], name: str, on_started, logfh, wait_cap: float = 86400.0):
+    """Music apps: start the app, hide Code, and come back on Esc twice / Guide + B WITHOUT closing the app, so it keeps playing."""
+    if exitwatch.enabled(cfg):
+        time.sleep(_hint_delay())
+    started = time.time()
+    try:
+        proc = subprocess.Popen(cmd, env=clean_env(), stdout=logfh, stderr=logfh, stdin=subprocess.DEVNULL, start_new_session=True)
+    except OSError as exc:
+        raise LaunchError(f"Could not start {name}: {exc}")
+    alive = _Alive(proc, started)
+    watch = None
+    if exitwatch.enabled(cfg):
+        watch = exitwatch.Watch(alive, "", term=_leave_running, grace=0.0)
+        _log("esc-to-return (background): " + ("keyboard watcher on (X11)" if watch.keyboard_ok else
+                                              f"keyboard watcher unavailable ({watch.keys.why}); gamepad Guide+B only"))
+        watch.start()
+        exitwatch.notify(exitwatch.HINT_SHORT)
+    on_started()
+    try:
+        while alive.poll() is None and not (watch is not None and watch.triggered) and time.time() - started < wait_cap:
+            if watch is None and proc.poll() == 0:
+                break                                  # no way to leave with a key: do not hide Code for ever
+            time.sleep(0.3)
+    finally:
+        if watch is not None:
+            watch.stop()
+    code = proc.poll()
+    if code not in (None, 0) and time.time() - started < 8:
+        return 0.0, f"{name} closed right away (code {code}). Details: {paths.log_file()}"
+    _log(f"background: back in Code, {name} keeps running")
+    return time.time() - started, INFO + f"{name} keeps playing in the background. Use the music buttons in the top bar."
+
+
 def _run_web(cfg: Config, game: Game, on_started):
     """A web app (YouTube, Netflix, ...) in a full-screen browser window with its own profile. Blocks until it closes."""
     wa = webapps.BY_ID.get(game.gid.split(":", 1)[-1])
@@ -503,6 +571,8 @@ def _run_web(cfg: Config, game: Game, on_started):
         logfh = open(paths.log_file(), "ab")
     except OSError:
         logfh = subprocess.DEVNULL
+    if wa.background:
+        return _run_background(cfg, cmd, name, on_started, logfh)
     if exitwatch.enabled(cfg):
         time.sleep(_hint_delay())       # let the "Press Esc twice to return to Code" screen be read before the browser covers it
     started = time.time()
@@ -544,7 +614,8 @@ def _run_windows(cfg: Config, game: Game, on_started):
         logfh = subprocess.DEVNULL
     started = time.time()
     try:
-        proc = subprocess.Popen(cmd, env=env, stdout=logfh, stderr=logfh, stdin=subprocess.DEVNULL, cwd=str(cwd))
+        proc = subprocess.Popen(cmd, env=env, stdout=logfh, stderr=logfh, stdin=subprocess.DEVNULL, cwd=str(cwd),
+                                start_new_session=True)
     except OSError as exc:
         raise LaunchError(f"Could not start the Windows helper ({label}): {exc}")
     on_started()

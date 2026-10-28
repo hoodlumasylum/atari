@@ -67,7 +67,7 @@ def test_settings_and_emulator_rows_for_030(app, tmp_path, monkeypatch):
         assert {"bios", "covers", "coversauto", "update", "updateauto", "emulators"} <= kinds
         rows = ui.backend.emulatorRows()
         ekinds = [r["kind"] for r in rows]
-        assert "install" in ekinds and "bios" in ekinds and "controls" in ekinds and ekinds.count("app") == 15
+        assert "install" in ekinds and "bios" in ekinds and "controls" in ekinds and ekinds.count("app") == 16
         ps1 = next(r for r in rows if r.get("id") == "ps1")
         assert "BIOS" in ps1["detail"] and "your own console" in ps1["detail"]
         assert "apps" in [t["key"] for t in ui.backend.tiles]       # the PC Apps tile is always there

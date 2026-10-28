@@ -223,4 +223,226 @@ def update_sober(run: Callable | None = None, timeout: float = 900) -> tuple[boo
 def recovery_note(retried: bool, checks: list[Check]) -> str:
     return ("Roblox could not download itself through Sober (it asked for an \"APK bundle\"). "
             + ("Code updated Sober and tried again, but it still failed. " if retried else "")
-            + explain(checks) + " More: Help > \"Roblox asks for an application bundle\".")
+            + explain(checks) + " The next screen has a Run fix button and the log paths.")
+
+
+# ------------------------------------------------------------------ "Permission Update Required"
+# Newer Sober builds show a "Permission Update Required" window with this exact command (user level, only for Sober):
+OVERRIDE_ARGS = ["flatpak", "override", "--user", "--filesystem=xdg-run/app/com.discordapp.Discord:create",
+                 "--filesystem=xdg-run/discord-ipc-0", "--device=all", FLATPAK_ID]
+OVERRIDE_COMMAND = " ".join(OVERRIDE_ARGS)
+OVERRIDE_PLAIN = ("Sober asks for two extra permissions: to use all the computer's devices (controllers, graphics) and to reach Discord's "
+                  "chat link if Discord is running. Code gives them with this one command, for your user only and for Sober only "
+                  "(nothing else changes, no password): " + OVERRIDE_COMMAND)
+PERMISSION_MARKERS = ("permission update required", "flatpak override", "--device=all", "xdg-run/discord-ipc")
+
+
+def needs_permission(text: str) -> bool:
+    low = (text or "").lower()
+    return any(m in low for m in PERMISSION_MARKERS)
+
+
+def permission_state(since: float = 0.0, home: str | None = None) -> bool:
+    """Did the newest Sober log written at or after `since` ask for the permission update?"""
+    for f in log_candidates(home)[:3]:
+        if _mtime(f) >= since - 2:
+            try:
+                with open(f, encoding="utf-8", errors="replace") as fh:
+                    return needs_permission(fh.read()[-200000:])
+            except OSError:
+                continue
+        break
+    return False
+
+
+def override_applied(run: Callable | None = None) -> bool:
+    """Has the override already been given to Sober? (flatpak override --user --show)"""
+    import subprocess
+    run = run or subprocess.run
+    try:
+        r = run(["flatpak", "override", "--user", "--show", FLATPAK_ID], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if r.returncode != 0:
+        return False
+    out = r.stdout or ""
+    return all(tok in out for tok in ("xdg-run/app/com.discordapp.Discord", "xdg-run/discord-ipc-0", "all"))
+
+
+def apply_override(run: Callable | None = None) -> tuple[bool, str]:
+    """Run exactly OVERRIDE_ARGS (user level, Sober only). Returns (ok, output tail)."""
+    import subprocess
+    run = run or subprocess.run
+    try:
+        r = run(OVERRIDE_ARGS, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, str(exc)
+    return r.returncode == 0, ((r.stdout or "") + (r.stderr or ""))[-400:]
+
+
+# ------------------------------------------------------------------ the "Roblox fix" screen
+# What Sober's own docs (vinegarhq.org/Sober/Troubleshooting) and its issue tracker say, checked 2026-10-28:
+#  * "Automatic download isn't working ... falls back to manual install": the ISP / DNS blocks Google Play's API (what Sober downloads
+#    Roblox through), or the internet is down, or the API is down -> VPN or DNS like Cloudflare 1.1.1.1 / Mullvad.
+#  * July 2026 (issue #2376): Sober's own update service (sober.vinegarhq.org/update) answered HTTP 500 "error code: 1101" for about two
+#    days; it recovered with NO new Sober version. Reinstalling Sober did nothing in that case. Only waiting helped.
+#  * "Select Application Bundle" does nothing without a working D-Bus session and the desktop portals (issue #1818) - which a
+#    Code-only session may lack. A manual bundle must be the exact version named, base APK + x86_64 split, from a source you trust.
+#  * The wanted version is in ~/.var/app/org.vinegarhq.Sober/data/sober/state ; logs in .../sober/sober_logs/.
+STATE_FILE = "~/.var/app/org.vinegarhq.Sober/data/sober/state"
+LATEST_LOG = "~/.var/app/org.vinegarhq.Sober/data/sober/sober_logs/latest.log"
+FLATHUB_URL = "https://dl.flathub.org/repo/flathub.flatpakrepo"
+MAX_SKEW = 300.0           # seconds the clock may be off before secure connections start to fail
+
+
+@dataclass
+class Step:
+    id: str
+    title: str
+    ok: bool
+    detail: str
+    changed: bool = False      # this step changed something (e.g. gave Sober the permission it asked for)
+
+
+def requested_version(home: str | None = None) -> str:
+    """The Roblox version Sober says it needs, from its state file ('' when unknown)."""
+    import os
+    try:
+        text = open(os.path.expanduser(STATE_FILE.replace("~", home) if home else STATE_FILE), errors="replace").read()
+    except OSError:
+        return ""
+    m = re.search(r"(\d+\.\d{3}\.\d+)", text)
+    return m.group(1) if m else ""
+
+
+def http_date(url: str = MANIFEST_URL, timeout: float = 6.0) -> float | None:
+    """The server's own clock (HTTP Date header) as a Unix time, or None."""
+    import urllib.request
+    from email.utils import parsedate_to_datetime
+    try:
+        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "Code-Launcher connection check"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            d = r.headers.get("Date")
+    except Exception as exc:
+        d = getattr(getattr(exc, "headers", None), "get", lambda *_: None)("Date")
+    try:
+        return parsedate_to_datetime(d).timestamp() if d else None
+    except (TypeError, ValueError):
+        return None
+
+
+def resolves(host: str) -> bool:
+    import socket
+    try:
+        return bool(socket.getaddrinfo(host, 443))
+    except OSError:
+        return False
+
+
+def portal_running(run: Callable | None = None) -> bool:
+    import subprocess
+    run = run or subprocess.run
+    try:
+        return run(["pgrep", "-x", "xdg-desktop-portal"], capture_output=True, timeout=5).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def run_fix(run: Callable | None = None, probe: Callable[[str], int] | None = None, now: Callable[[], float] | None = None,
+            date_fn: Callable[[], float | None] | None = None, resolve: Callable[[str], bool] | None = None,
+            portal: Callable[[], bool] | None = None, home: str | None = None,
+            update: Callable[[], tuple[bool, str]] | None = None) -> tuple[list[Step], str]:
+    """Do everything that can be done from here, in Sober's documented order. Returns (steps, plain verdict).
+    Only touches Flatpak (add the Flathub store for this user if it is missing, then `flatpak update` Sober)."""
+    import subprocess
+    import time
+    run = run or subprocess.run
+    now = now or time.time
+    steps: list[Step] = []
+
+    def sh(args):
+        try:
+            r = run(args, capture_output=True, text=True, timeout=60)
+            return r.returncode, ((r.stdout or "") + (r.stderr or "")).strip()
+        except (OSError, subprocess.SubprocessError) as exc:
+            return 1, str(exc)
+
+    # 1 Flathub store + where Sober came from
+    rc, out = sh(["flatpak", "remotes", "--columns=name"])
+    has_flathub = rc == 0 and any(ln.strip().lower() == "flathub" for ln in out.splitlines())
+    if rc != 0 and not shutil.which("flatpak"):
+        steps.append(Step("flatpak", "Flatpak (the program that installs Sober)", False,
+                          "Flatpak is not installed. Use Settings > Emulators > Install emulators and apps."))
+        return steps, "Sober needs Flatpak, which is missing. Install it first (Settings > Emulators > Install emulators and apps)."
+    if not has_flathub:
+        rc2, out2 = sh(["flatpak", "remote-add", "--user", "--if-not-exists", "flathub", FLATHUB_URL])
+        steps.append(Step("flathub", "The Flathub store is set up", rc2 == 0,
+                          "It was missing, so Code added it for you (only for your user)." if rc2 == 0 else
+                          "It was missing and could not be added: " + out2[-160:]))
+    else:
+        steps.append(Step("flathub", "The Flathub store is set up", True, "Yes."))
+    rc, out = sh(["flatpak", "info", "--show-origin", FLATPAK_ID])
+    origin = out.strip().splitlines()[-1].strip() if rc == 0 and out.strip() else ""
+    if rc != 0:
+        steps.append(Step("installed", "Sober is installed", False, "It is not installed. Press Install on the Roblox tile."))
+    elif origin and origin.lower() != "flathub":
+        steps.append(Step("installed", "Sober came from Flathub", False,
+                          f"It came from \"{origin}\". Only the Flathub copy is supported: remove it and press Install on the Roblox tile."))
+    else:
+        steps.append(Step("installed", "Sober is installed (from Flathub)", True, "Yes."))
+
+    # 2 update (Sober's own advice)
+    if rc == 0:
+        ok, tail = (update or update_sober)()
+        steps.append(Step("update", "Sober is up to date (flatpak update)", ok, "Done." if ok else "It could not update: " + tail[-160:]))
+
+    # 2b the permission Sober asks for ("Permission Update Required"): user level, Sober only
+    if rc == 0:
+        if override_applied(run):
+            steps.append(Step("permissions", "Sober has the permissions it asks for", True, "Yes (already given)."))
+        else:
+            ok_o, tail_o = apply_override(run)
+            steps.append(Step("permissions", "Sober has the permissions it asks for", ok_o,
+                              "Code gave them with:  " + OVERRIDE_COMMAND if ok_o else "That command failed: " + tail_o[-160:], changed=ok_o))
+
+    # 3 DNS + internet
+    resolve = resolve or resolves
+    dns_bad = [h for h in ("sober.vinegarhq.org", "play.googleapis.com") if not resolve(h)]
+    steps.append(Step("dns", "The computer can look up Sober's and Google Play's addresses (DNS)", not dns_bad,
+                      "Yes." if not dns_bad else "It cannot look up " + " and ".join(dns_bad) +
+                      ". Your DNS or provider is blocking them - an adult can set DNS to 1.1.1.1 in Network settings, or use a VPN."))
+    checks = service_checks(probe)
+    for c in checks:
+        steps.append(Step(c.id, "Sober's server is reachable" if c.id == "manifest" else "Google Play (where Sober gets Roblox) is reachable",
+                          c.ok, "Yes." if c.ok else c.text))
+
+    # 4 clock
+    server = (date_fn or http_date)()
+    if server is None:
+        steps.append(Step("clock", "The clock is right", True, "Could not compare it (no answer from the server)."))
+    else:
+        skew = abs(now() - server)
+        steps.append(Step("clock", "The clock is right", skew <= MAX_SKEW,
+                          "Yes." if skew <= MAX_SKEW else f"The clock is {int(skew // 60)} minutes off. Secure connections fail with a wrong clock: "
+                          "switch on automatic date & time in the system settings."))
+
+    # 5 file picker (only matters for the manual route)
+    p_ok = (portal or portal_running)()
+    steps.append(Step("portal", "The file picker works (needed only to choose a file by hand)", p_ok,
+                      "Yes." if p_ok else "No desktop portal is running (common in Code-only mode), so \"Select Application Bundle\" "
+                      "may do nothing. You should not need it: let Sober download Roblox itself."))
+
+    # verdict: the first real problem, else the honest "it is Sober's side"
+    bad = next((s for s in steps if not s.ok and s.id != "portal"), None)
+    if bad is not None:
+        verdict = {"dns": "DNS is blocking the download. " + bad.detail, "play": explain(checks), "manifest": explain(checks),
+                   "clock": bad.detail}.get(bad.id, bad.detail)
+    else:
+        v = requested_version(home)
+        verdict = ("Everything on this computer looks right" + (f" (Sober wants Roblox {v})" if v else "") + ". Press Roblox again. If it still "
+                   "asks for a bundle, the cause is Sober's own download service (in July 2026 it failed for two days and then fixed "
+                   "itself) - nothing Code can repair. Try again in a few hours, and ask for help on Sober's support page (vinegarhq.org) "
+                   "with the log named below.")
+    if any(st.changed for st in steps):
+        verdict = ("Code gave Sober the permission it asked for (" + OVERRIDE_COMMAND + ") and will start Roblox again now. " + verdict)
+    return steps, verdict

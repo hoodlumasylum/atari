@@ -9,9 +9,14 @@ Nothing else is touched. Turning it OFF removes exactly those three files.
 Ways back to the normal Mint desktop (also written in the README and Help):
   * Code > Settings > "Back to Mint desktop"  (needs the password once; removes the three files)
   * Code > Settings > "Open the Mint desktop once"  (no password; this login only)
-  * safety net: if Code fails to start 3 times in a row, the session starts the Mint desktop by itself
+  * safety net: if Code crashes 5 times in a row, each within seconds of starting, the session starts the Mint desktop by itself
   * at the login screen: click the session icon (top right / next to your name) and choose Cinnamon
   * from a text console (Ctrl+Alt+F2, log in, then):  sudo rm /etc/lightdm/lightdm.conf.d/90-atari-kiosk.conf && sudo systemctl restart lightdm
+
+The session script is the session's main process and runs Code in a loop: when Code ends for any reason except exit code 64 or the
+one-off desktop flag, it starts Code again. Code itself also never quits by accident here (ATARI_KIOSK=1: "Quit Code" becomes
+"Restart Code"), every game / app it starts runs in its own session (so nothing it does can take Code down), and Code re-takes the
+screen whenever an app closes.
 
 Everything outside (pkexec, files under /etc, the clock) is injectable so the tests never touch the system."""
 from __future__ import annotations
@@ -65,6 +70,11 @@ class Check:
     ok: bool
     fatal: bool
     text: str
+
+
+def in_session(env: dict | None = None) -> bool:
+    """True when Code runs as the whole Code-only session (the session script sets ATARI_KIOSK=1)."""
+    return (env if env is not None else os.environ).get("ATARI_KIOSK") == "1"
 
 
 def run_script_path() -> Path:
@@ -145,30 +155,57 @@ def enabled(layout: Layout = DEFAULT) -> bool:
 
 
 # ------------------------------------------------------------------ the three files
+SESSION_VERSION = 2     # the session script written by Code 0.4.1+ (restarts Code instead of ending the session)
+EXIT_LOGOUT = 64        # the one exit code that means "log out on purpose" (anything else: the session starts Code again)
+MAX_QUICK_CRASHES = 5   # only this many crashes in a row, each within seconds of starting, send the session to the desktop
+
+
+def session_outdated(layout: Layout = DEFAULT) -> bool:
+    """Code-only mode is on, but its session script was written by an older Code (it ends the session - and so logs out to the
+    desktop - when Code stops). /usr/local/bin is root's, so updating Code cannot rewrite it: the person presses Update once."""
+    try:
+        text = layout.p(layout.session_script).read_text(errors="replace")
+    except OSError:
+        return False
+    m = re.search(r"atari-session-version:\s*(\d+)", text)
+    return enabled(layout) and (int(m.group(1)) if m else 1) < SESSION_VERSION
+
+
 def render_session_script(run_sh: Path, desktop_exec: str, home_hint: str = "") -> str:
     return f"""#!/bin/sh
 # Code-only session. Written by Code > Settings > Code-only mode. Remove it with Settings > Back to Mint desktop.
+# atari-session-version: {SESSION_VERSION}
+# This script IS the session: it never ends while Code is wanted. Whenever Code stops - a crash, a game that took it down,
+# "Restart Code" - it starts Code again after a second. Launching and closing games, browsers and emulators never reaches here.
+# Exceptions: the "Open the Mint desktop once" flag, Code exiting with code {EXIT_LOGOUT} (log out on purpose), and a real crash
+# loop ({MAX_QUICK_CRASHES} crashes in a row, each within seconds): then the Mint desktop starts so you are never locked out.
 RUN={shlex.quote(str(run_sh))}
 FLAG="$HOME/.config/atari/desktop-once"
+DELAY="${{ATARI_RESTART_DELAY:-1}}"
 desktop() {{
     exec {desktop_exec}
 }}
 # "Open the Mint desktop once" in Code's settings leaves this flag file.
 if [ -e "$FLAG" ]; then rm -f "$FLAG"; desktop; fi
 [ -x "$RUN" ] || desktop
+# tells Code it is the whole session: Quit means Restart, and it re-takes the screen when any app closes
+export ATARI_KIOSK=1
 # a small window manager keeps the full-screen window focused (optional; Code also runs without one)
 for wm in openbox metacity marco xfwm4; do
     if command -v "$wm" >/dev/null 2>&1; then "$wm" >/dev/null 2>&1 & break; fi
 done
-n=0
-while [ "$n" -lt 3 ]; do
+crashes=0
+while :; do
     t=$(date +%s)
     "$RUN" --fullscreen
-    if [ $(( $(date +%s) - t )) -ge 30 ]; then exit 0; fi   # it ran for a while and was closed on purpose: log out
-    n=$((n + 1))
+    rc=$?
+    [ "$rc" -eq {EXIT_LOGOUT} ] && exit 0                       # Code asked to log out on purpose
+    if [ -e "$FLAG" ]; then rm -f "$FLAG"; desktop; fi
+    ran=$(( $(date +%s) - t ))
+    if [ "$ran" -lt 3 ] || {{ [ "$rc" -ne 0 ] && [ "$ran" -lt 10 ]; }}; then crashes=$((crashes + 1)); else crashes=0; fi
+    if [ "$crashes" -ge {MAX_QUICK_CRASHES} ]; then desktop; fi    # Code cannot start at all: never leave the computer without a desktop
+    sleep "$DELAY"
 done
-# Code would not start three times in a row: never leave the computer without a desktop
-desktop
 """
 
 

@@ -5,7 +5,7 @@ Item {
     id: tb
     property real u: 1
     property int activeTab: 0
-    property int focusIndex: -1      // 0-4 tabs, 5 Add Games, 6 search, 7 WiFi; -1 = nothing focused
+    property int focusIndex: -1      // 0-4 tabs, 5 Add Games, 6 search, 7 WiFi, 8 previous, 9 play/pause, 10 next (music); -1 = nothing focused
     signal activated(int index)
     signal updateRequested()
 
@@ -165,6 +165,37 @@ Item {
                 }
             }
             MouseArea { anchors.fill: parent; onClicked: tb.activated(7) }
+        }
+        Row {   // music in the background (Spotify & co. through MPRIS / playerctl): only there while something is playing or paused
+            id: mediaRow
+            objectName: "mediaControl"
+            visible: backend.media.active
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 6 * tb.u
+            Repeater {
+                model: [ { act: "previous", idx: 8, sym: "\u23EE" }, { act: "play-pause", idx: 9, sym: "" }, { act: "next", idx: 10, sym: "\u23ED" } ]
+                Rectangle {
+                    required property var modelData
+                    readonly property bool hot: tb.focusIndex === modelData.idx
+                    objectName: "media_" + modelData.act
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 40 * tb.u; height: 40 * tb.u; radius: width / 2
+                    color: hot ? "#26ffffff" : "#40000000"
+                    border.width: hot ? 2 * tb.u : 0
+                    border.color: "#cfd3e0"
+                    Text { anchors.centerIn: parent; color: "white"; font.pixelSize: 18 * tb.u; font.bold: true
+                           text: modelData.act === "play-pause" ? (backend.media.playing ? "\u23F8" : "\u25B6") : modelData.sym }
+                    MouseArea { anchors.fill: parent; onClicked: tb.activated(modelData.idx) }
+                }
+            }
+            Text {
+                objectName: "mediaText"
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.min(implicitWidth, 230 * tb.u)
+                elide: Text.ElideRight
+                text: backend.media.text
+                color: "#d6d9e6"; font.pixelSize: 14 * tb.u
+            }
         }
         Text {
             id: clock

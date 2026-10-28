@@ -12,7 +12,7 @@ VERIFIED_FLATHUB_IDS = {   # checked against flathub.org on 2026-10-28
     "bottles": "com.usebottles.bottles", "itch": "io.itch.itch", "prism": "org.prismlauncher.PrismLauncher",
     "minecraft": "com.mojang.Minecraft", "moonlight": "com.moonlight_stream.Moonlight",
     "protonup": "net.davidotek.pupgui2", "kodi": "tv.kodi.Kodi", "steam": "com.valvesoftware.Steam",
-    "transmission": "com.transmissionbt.Transmission", "obs": "com.obsproject.Studio",
+    "transmission": "com.transmissionbt.Transmission", "obs": "com.obsproject.Studio", "spotify": "com.spotify.Client",
 }
 
 

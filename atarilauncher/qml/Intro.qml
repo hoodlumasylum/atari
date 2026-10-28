@@ -52,5 +52,5 @@ Item {
         PauseAnimation { duration: Theme.anim ? 1500 : 1900 }
         NumberAnimation { target: blackout; property: "opacity"; from: 0; to: 1; duration: Theme.anim ? 900 : 1 }
     }
-    MouseArea { anchors.fill: parent; onClicked: backend.skipIntro() }
+    MouseArea { anchors.fill: parent; cursorShape: Qt.BlankCursor; onClicked: backend.skipIntro() }     // no mouse pointer during the intro
 }

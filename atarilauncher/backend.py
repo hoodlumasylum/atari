@@ -77,6 +77,7 @@ class Backend(QObject):
     updateEvent = Signal(str, str, float)       # state, text, fraction (from the worker thread)
     updateChecked = Signal(object, str, bool)   # release or None, error text, was it asked for by the user
     uiPrefsChanged = Signal()
+    robloxFixDone = Signal(object, str)         # (steps, verdict) from the Roblox fix thread
     pageChanged = Signal()                      # the rows of the help / fix / Windows pages changed
     studioRequested = Signal()                  # the Studio tile / menu entry: the screen opens the Studio
     pageRequested = Signal(str)                 # a worker wants the screen to show this page ('close' = go to the library)
@@ -115,6 +116,8 @@ class Backend(QObject):
         self._add_result = ""             # what the last Add Games run did, shown on the wizard page
         self.importScanned.connect(self._on_import_scanned, Qt.QueuedConnection)
         self.inputFixDone.connect(self._input_fix_finished, Qt.QueuedConnection)
+        self.robloxFixDone.connect(self._roblox_fix_finished, Qt.QueuedConnection)
+        self._rbx_state, self._rbx_steps, self._rbx_verdict = "idle", [], ""
         self._input_fixing = False
         self.kioskDone.connect(self._kiosk_finished, Qt.QueuedConnection)
         self._kiosk_busy = False
@@ -186,6 +189,7 @@ class Backend(QObject):
         self._snd_dead = False
         self._studio = None
         self._wifi = None
+        self._media = None
         self._sound_sink = None          # tests put a function here to see the commands instead of playing them
         self._last_tick = 0.0
         self._start_timer = QTimer(self, singleShot=True, interval=700)
@@ -205,6 +209,11 @@ class Backend(QObject):
                 QTimer.singleShot(1200, self._sync_music)
         if not self._demo and not os.environ.get("ATARI_NO_WIFI"):
             QTimer.singleShot(2500, self._wifi_poll)         # the WiFi name next to the clock
+        if not self._demo and kiosk.session_outdated(self._kiosk_layout):
+            QTimer.singleShot(7000, lambda: self.show_toast("Code-only mode needs a one-time update so Code never drops to the desktop: "
+                                                            "Settings > Code-only mode > Update.", 15000))
+        if not self._demo and not os.environ.get("ATARI_NO_MEDIA"):
+            QTimer.singleShot(3000, self._media_poll)        # the music control in the top bar
         # pages (help / fix my game / add Windows game)
         self._fix_gid = ""
         self._dl_items = []
@@ -870,6 +879,73 @@ class Backend(QObject):
         threading.Thread(target=work, daemon=True, name="atari-sober-fix").start()
 
     @Slot(bool, str)
+    # ----- the Roblox fix screen (step by step, "Run fix") ------------------------------------
+    def _roblox_fix_rows(self) -> list:
+        import os
+        rows = [self._info("Roblox shows a window asking for an \"application bundle (APK)\". That is Sober (the Roblox runner for Linux) saying: "
+                           "\"I could not download Roblox myself.\" Your Roblox account and this computer are not damaged.")]
+        if self._rbx_state == "running":
+            rows.append(self._info("Working - checking everything, updating Sober. This can take a minute or two..."))
+        elif self._rbx_state == "done":
+            for st in self._rbx_steps:
+                rows.append({"kind": "item", "id": "noop", "title": ("OK   " if st.ok else "FIX  ") + st.title, "detail": st.detail,
+                             "value": "" if st.ok else "Problem"})
+            rows.append(self._info("Result:  " + self._rbx_verdict))
+        else:
+            for t in ("1  Sober comes from Flathub and is up to date", "2  The internet and DNS can reach Sober's server and Google Play",
+                      "3  The clock is right (a wrong clock breaks secure connections)",
+                      "4  The file picker exists (only needed to pick a file by hand)"):
+                rows.append(self._info(t))
+            rows.append(self._info("5  Sober has the permissions it asks for (\"Permission Update Required\")"))
+            rows.append(self._info(sober.OVERRIDE_PLAIN))
+            rows.append(self._info("Press \"Run fix\": Code checks all of this, adds the Flathub store if it is missing, gives Sober that permission if it "
+                                   "lacks it, updates Sober, tells you the cause - and starts Roblox again if it changed something."))
+        rows.append({"kind": "done", "id": "rbxrun", "title": "Working..." if self._rbx_state == "running" else "Run fix"})
+        rows.append({"kind": "item", "id": "rbxopen", "title": "Open Roblox again", "detail": "Sober retries the download by itself."})
+        rows.append(self._info("Sober's log:  " + sober.LATEST_LOG + "   (Sober's \"state\" file, which names the Roblox version it wants, is next to it)"))
+        rows.append(self._info("Code's log:  " + str(paths.log_file())))
+        rows.append({"kind": "item", "id": "copylog", "title": "Copy Code's log (to send to someone who is helping you)"})
+        rows.append(self._info("Honest limit: if everything above is OK and Roblox still asks for a bundle, Sober's own download service is failing. "
+                               "Code cannot fix that and never downloads a Roblox file for you. Choosing a file by hand only works with the exact "
+                               "Roblox version it names plus the x86_64 part, from a source you trust - not recommended."))
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    def _roblox_fix_activate(self, rid: str) -> str:
+        if rid == "rbxrun":
+            if self._rbx_state == "running":
+                return ""
+            self._rbx_state, self._rbx_steps, self._rbx_verdict = "running", [], ""
+
+            def work():
+                try:
+                    steps, verdict = sober.run_fix()
+                except Exception as exc:  # pragma: no cover - safety net
+                    steps, verdict = [], f"That hit a problem: {exc}"
+                self.robloxFixDone.emit(steps, verdict)
+            threading.Thread(target=work, name="atari-roblox-fix", daemon=True).start()
+            return "refresh"
+        if rid == "rbxopen":
+            g = next((x for x in self._all if x.gid == "app:roblox"), None)
+            if g is None or g.missing:
+                self.begin_install(["roblox"], for_gid="app:roblox", what="Roblox (Sober)")
+                return ""
+            self._launch_game(g)
+            return "close"
+        if rid == "copylog":
+            self.copyLog()
+            return ""
+        return ""
+
+    def _roblox_fix_finished(self, steps, verdict: str) -> None:
+        self._rbx_state, self._rbx_steps, self._rbx_verdict = "done", list(steps), verdict
+        self.pageChanged.emit()
+        if any(getattr(st, "changed", False) for st in steps):          # it gave Sober the permission: start Roblox again for the person
+            g = next((x for x in self._all if x.gid == "app:roblox"), None)
+            if g is not None and not g.missing and not self._running:
+                self._launch_game(g)
+                self.pageRequested.emit("close")
+
     def _input_fix_finished(self, ok: bool, text: str) -> None:
         self._input_fixing = False
         self.show_toast(text, 12000)
@@ -1033,6 +1109,11 @@ class Backend(QObject):
         if self._kiosk_msg:
             rows.append(self._info("Result:  " + self._kiosk_msg))
         if kiosk.enabled(lay):
+            if kiosk.session_outdated(lay):
+                rows += [self._info("Code-only mode's session file is from an older Code. With it, closing Code (or an app taking Code down) can drop you "
+                                    "to the Mint desktop. Press the button below once (password) to update it."),
+                         {"kind": "done", "id": "kioskupdate", "title": "Update Code-only mode (fixes landing on the desktop)",
+                          "detail": "Asks for your password once. Rewrites the same three files; nothing else changes."}]
             rows += [self._info("Code-only mode is ON: the computer starts straight into Code, with no Linux Mint desktop."),
                      {"kind": "done", "id": "kioskoff", "title": "Back to Mint desktop (turn Code-only mode off)",
                       "detail": "Asks for your password once. The normal login and desktop come back after the next restart or log out."},
@@ -1047,7 +1128,7 @@ class Backend(QObject):
                      self._info("What changes (needs your password once): three small files named \"atari\" - the login screen's auto-login and a "
                                 "\"session\" that starts Code. Turning it off removes exactly those files."),
                      self._info("Ways back, always: Settings > Back to Mint desktop; or at the login screen pick the Cinnamon session; "
-                                "or if Code cannot start three times in a row, the Mint desktop starts by itself."),
+                                "or if Code crashes five times in a row right after starting, the Mint desktop starts by itself."),
                      self._info(kiosk.RECOVERY)]
             for c in checks:
                 if not c.ok:
@@ -1062,7 +1143,7 @@ class Backend(QObject):
         return rows
 
     def _kiosk_activate(self, rid: str) -> str:
-        if rid in ("kioskon", "kioskoff"):
+        if rid in ("kioskon", "kioskoff", "kioskupdate"):
             if self._kiosk_busy:
                 return ""
             self._kiosk_busy = True
@@ -1072,7 +1153,7 @@ class Backend(QObject):
 
             def work():
                 try:
-                    done, msg = (kiosk.enable(lay) if rid == "kioskon" else kiosk.disable(lay))
+                    done, msg = (kiosk.disable(lay) if rid == "kioskoff" else kiosk.enable(lay))
                 except Exception as exc:  # pragma: no cover - safety net
                     done, msg = False, f"The change hit a problem: {exc}"
                 studio_fix.log(f"code-only mode {rid}: ok={done} {msg}")
@@ -1419,14 +1500,16 @@ class Backend(QObject):
             return
         if self._minimized_for_game:
             self._minimized_for_game = False
-            if self.cfg.fullscreen:
+            if self.cfg.fullscreen or kiosk.in_session():
                 win.showFullScreen()
             else:
                 win.showNormal()
+        elif kiosk.in_session():
+            win.showFullScreen()            # Code-only: always take the whole screen back, whatever the app did to the window
         win.raise_()
         win.requestActivate()
         # window managers sometimes ignore the first focus request right after a full-screen app closed: ask again
-        for ms in (300, 1000):
+        for ms in ((300, 1000, 2500, 5000) if kiosk.in_session() else (300, 1000)):       # Code-only: nothing else may keep the screen
             QTimer.singleShot(ms, self._reactivate)
 
     def _reactivate(self) -> None:
@@ -1464,6 +1547,9 @@ class Backend(QObject):
             elif "Fix my game" not in err:
                 err += "   (Options > Fix my game can check what is wrong.)"
         self.show_toast(err or f"Welcome back! You played {title} for {max(1, int(secs // 60))} min.", 12000 if err else 8000)
+        if gid == "app:roblox" and err and ("APK bundle" in err or "Permission Update Required" in err):      # Sober fell back to its file screen: show the step-by-step fix
+            self._rbx_state = "idle"
+            self.pageRequested.emit("robloxfix")
 
     @Slot()
     def toggleFullscreen(self) -> None:
@@ -1987,6 +2073,26 @@ class Backend(QObject):
             from .wifi_ui import WifiController
             self._wifi = WifiController(self, run=getattr(self, "_wifi_run", None))
         return self._wifi
+
+    @Property(bool, constant=True)
+    def kioskSession(self):
+        """Code is the whole session (Code-only mode): quitting only restarts it."""
+        return kiosk.in_session()
+
+    @Property(QObject, constant=True)
+    def media(self):
+        """The top bar's play / pause / skip control (playerctl, MPRIS). Tests may pass fakes through `_media_fns`."""
+        if self._media is None:
+            from .media_ui import MediaController
+            now, send = getattr(self, "_media_fns", (None, None))
+            self._media = MediaController(self, now=now, send=send)
+        return self._media
+
+    def _media_poll(self) -> None:
+        if self._demo or os.environ.get("ATARI_NO_MEDIA"):
+            return
+        self.media.refresh()
+        QTimer.singleShot(4000, self._media_poll)
 
     def _wifi_poll(self) -> None:
         """The home screen's one-line WiFi status, refreshed now and every minute (never in demo / test runs)."""
@@ -2533,13 +2639,14 @@ class Backend(QObject):
                 "winchoose": "WHICH PROGRAM STARTS THE GAME?", "winwork": "OPENING THE ARCHIVE",
                 "install": "INSTALL", "installmenu": "INSTALL EMULATORS & APPS", "steam": "STEAM",
                 "recordings": "RECORDINGS", "coverpick": "PICK A COVER", "nocovers": "COVERS NOT FOUND",
-                "addgames": "ADD GAMES", "kiosk": "CODE-ONLY MODE", "downloads": "DOWNLOADS", "golive": "GO LIVE",
+                "addgames": "ADD GAMES", "kiosk": "CODE-ONLY MODE", "downloads": "DOWNLOADS", "golive": "GO LIVE", "robloxfix": "FIX ROBLOX",
                 "dlsystem": "WHICH SYSTEM IS THIS FILE FOR?"}.get(name, name.upper())
 
     @Slot(str, result=str)
     def pageSub(self, name: str) -> str:
         return {"help": "Up/Down to choose, Enter / A to press.  Esc / B = back.",
                 "golive": "Enter / A to press.  Esc / B = back.",
+                "robloxfix": "Enter / A on Run fix.  Esc / B = back.",
                 "downloads": "Enter / A on a finished file adds it to your games.  Esc / B = back.",
                 "dlsystem": "Enter / A picks the system - the file moves into that games folder.  Esc / B = back.",
                 "fix": "Code checked everything it can.  Esc / B = back.",
@@ -2718,6 +2825,8 @@ class Backend(QObject):
     def pageRows(self, name: str):
         if name == "addgames":
             return self._addgames_rows()
+        if name == "robloxfix":
+            return self._roblox_fix_rows()
         if name == "golive":
             return self._golive_rows()
         if name == "downloads":
@@ -2781,8 +2890,8 @@ class Backend(QObject):
                        "The Free Games tile lists free games that do work (checked on ProtonDB). Minecraft Java: Prism Launcher in PC Apps (needs your own licence)."),
             self._info("Q: Roblox says \"Invalid Bundle\" / I downloaded a .flatpak file.  A: " + sober.INVALID_BUNDLE_TEXT),
             self._info("Q: Roblox asks for an \"application bundle (APK)\" / \"Install Roblox\".  A: " + sober.BUNDLE_HELP),
-            {"kind": "item", "id": "soberfix", "title": "Roblox asks for an application bundle? Update Sober and test the connection",
-             "detail": "Runs flatpak update for Sober and checks that this computer can reach Sober's server and Google Play. Needs internet."},
+            {"kind": "item", "id": "soberfix", "title": "Roblox asks for an application bundle? Open the step-by-step fix",
+             "detail": "Checks Flathub, updates Sober, tests the internet, DNS and clock, and names the cause. Needs internet."},
             self._info("Q: Can I get games from the web?  A: Options > Downloads opens a web browser (it starts at a neutral search engine; "
                        "Code recommends no sites) and lists what you downloaded. Press a finished file, choose its system, and it moves into "
                        "~/Games/Atari/<system>. Only add games you own or may legally use. A torrent client (Transmission) installs with one "
@@ -2844,7 +2953,7 @@ class Backend(QObject):
             rows.append({"kind": "item", "id": "inputfix", "title": "Fix Steam controller / gamepad permissions",
                          "detail": "For \"Missing permissions for input devices\" in Steam."})
         if g.gid.endswith(":roblox") and g.platform == apps.APPS:
-            rows.append({"kind": "item", "id": "soberfix", "title": "Update Sober and test the connection",
+            rows.append({"kind": "item", "id": "soberfix", "title": "Fix Roblox (step by step)",
                          "detail": "For Roblox asking for an \"application bundle (APK)\": updates Sober and checks Sober's server and Google Play can be reached."})
         rows.append({"kind": "item", "id": "copylog", "title": "Copy log"})
         if g.platform == windows.PLATFORM:
@@ -2917,6 +3026,8 @@ class Backend(QObject):
             return "back" if rid == "back" else ""
         if name == "help":
             return self._help_activate(rid)
+        if name == "robloxfix":
+            return self._roblox_fix_activate(rid)
         if name == "golive":
             return self._golive_activate(rid)
         if name == "downloads":
@@ -2963,8 +3074,8 @@ class Backend(QObject):
                 self.fixInputPermissions()
                 return ""
             if rid == "soberfix":
-                self.fixSober()
-                return ""
+                self._rbx_state = "idle"
+                return "page:robloxfix"
             if rid == "emus":
                 self.installEmulators()
                 return ""
@@ -3027,8 +3138,8 @@ class Backend(QObject):
             self.fixInputPermissions()
             return ""
         if rid == "soberfix":
-            self.fixSober()
-            return ""
+            self._rbx_state = "idle"
+            return "page:robloxfix"
         if rid == "studiofix":
             st = self.studio
             if st.available and not studio_fix.problems(True):

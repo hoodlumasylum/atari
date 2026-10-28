@@ -8,7 +8,7 @@ Window {
     height: 720
     title: "Code"
     color: Theme.bg
-    visibility: backend.fullscreen ? Window.FullScreen : Window.Windowed
+    visibility: (backend.fullscreen || (mode === "intro" && Qt.platform.pluginName !== "offscreen")) ? Window.FullScreen : Window.Windowed     // the intro is always full screen (the headless test platform cannot)
 
     // everything is drawn in "units" that scale with the window (1 unit = 1 pixel at 1920x1080)
     Binding { target: Theme; property: "anim"; value: backend.animations }
@@ -18,7 +18,7 @@ Window {
     property string mode: backend.introActive ? "intro" : (backend.firstRun ? "setup" : "library")
     property string introBack: backend.firstRun ? "setup" : "library"     // where to go when the intro ends
     property string area: "grid"        // which part of the library has the highlight: tabs tiles side grid detail
-    property int tabFocus: 0            // 0-4 tabs, 5 Add Games, 6 search, 7 WiFi
+    property int tabFocus: 0            // 0-4 tabs, 5 Add Games, 6 search, 7 WiFi, 8-10 music
     property int tileIndex: 0
     property int sideIndex: 0
     property int detailIndex: 0
@@ -113,6 +113,7 @@ Window {
         else if (i === 4) openSetup()
         else if (i === 5) openPage("addgames")
         else if (i === 7) openWifi("library")
+        else if (i >= 8) backend.media.press(["previous", "play-pause", "next"][i - 8])
         else openSearch()
     }
     function toggleFav() {
@@ -148,7 +149,7 @@ Window {
             { kind: "item", id: "golive", title: "Go Live: stream to Twitch, TikTok, YouTube with OBS" },
             { kind: "item", id: "downloads", title: "Downloads: web browser, add downloaded files to my games" },
             { kind: "item", id: "full", title: "Toggle full screen" },
-            { kind: "item", id: "quit", title: "Quit Code" }
+            { kind: "item", id: "quit", title: backend.kioskSession ? "Restart Code" : "Quit Code" }
         ]
     }
     function openSort() {
@@ -375,8 +376,9 @@ Window {
         if (k === Qt.Key_S && !(e.modifiers & Qt.ControlModifier)) { openSort(); return }
         if (k === Qt.Key_F) { toggleFav(); return }
         if (area === "tabs") {
+            if (tabFocus > 7 && !backend.media.active) tabFocus = 7
             if (k === Qt.Key_Left) tabFocus = Math.max(0, tabFocus - 1)
-            else if (k === Qt.Key_Right) tabFocus = Math.min(7, tabFocus + 1)
+            else if (k === Qt.Key_Right) tabFocus = Math.min(backend.media.active ? 10 : 7, tabFocus + 1)
             else if (k === Qt.Key_Down) area = "tiles"
             else if (isEnter(k) || k === Qt.Key_Space) activateTab(tabFocus)
             return

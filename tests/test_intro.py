@@ -91,8 +91,32 @@ def test_plan_follows_the_two_switches_and_the_env(tmp_path):
 
 def test_the_shipped_intro_video_is_there_and_is_a_real_clip():
     f = intro.bundled_file()
-    assert f is not None and f.name == "code-intro.mp4" and 1_000_000 < f.stat().st_size < 6_000_000
+    assert f is not None and f.name == "code-intro.mp4" and 6_000_000 < f.stat().st_size < 9_000_000
     assert f.read_bytes()[4:8] == b"ftyp"                                    # an MP4 container
+    # the ORIGINAL video, not a re-compressed copy: the source is 1280x720 at about 6 Mbit/s (it is not 1080p; nothing is upscaled)
+    if shutil.which("ffprobe"):
+        out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,bit_rate",
+                              "-of", "csv=p=0", str(f)], capture_output=True, text=True).stdout.strip().split(",")
+        assert int(out[0]) == 1280 and int(out[1]) == 720 and int(out[2]) > 5_000_000
+
+
+def test_players_fill_the_whole_screen_borderless_keep_the_whole_picture_and_hide_the_pointer():
+    mpv = intro.player_command("mpv", "mpv", "/x.mp4", muted=False)
+    for flag in ("--fs", "--no-border", "--ontop", "--keepaspect", "--panscan=0", "--cursor-autohide=always"):
+        assert flag in mpv, flag                                              # full screen, no frame, black bars not cropping, no pointer
+    assert not any(a.startswith("--panscan=") and a != "--panscan=0" for a in mpv) and "--video-zoom" not in " ".join(mpv)
+    ff = intro.player_command("ffplay", "ffplay", "/x.mp4", muted=False)
+    assert "-fs" in ff and "-noborder" in ff and "-x" not in ff and "-vf" not in ff     # ffplay keeps the aspect: black bars
+    vlc = intro.player_command("cvlc", "cvlc", "/x.mp4", muted=False)
+    assert "--fullscreen" in vlc and "--no-video-deco" in vlc and "--video-on-top" in vlc and "--mouse-hide-timeout=1" in vlc
+
+
+def test_the_intro_screen_and_window_are_full_screen_with_no_pointer_even_in_windowed_mode():
+    from pathlib import Path
+    qml = Path(intro.__file__).parent / "qml"
+    main = (qml / "Main.qml").read_text()
+    assert 'mode === "intro" && Qt.platform.pluginName !== "offscreen")) ? Window.FullScreen' in main                     # full screen during the intro, desktop or Code-only mode
+    assert "Qt.BlankCursor" in (qml / "Intro.qml").read_text()
 
 
 def test_settings_are_saved_and_default_on(tmp_path):
@@ -556,3 +580,4 @@ def test_no_third_party_logo_or_video_is_shipped():
                if p.suffix.lower() in (".mp4", ".webm", ".mkv", ".mov", ".avi")]
     assert shipped == ["atarilauncher/assets/intro/code-intro.mp4"]        # exactly one clip: the project owner's own Code intro
     assert (root / "atarilauncher" / "assets" / "sfx" / "intro.wav").is_file()
+

@@ -31,7 +31,15 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
-## What's new in 0.4.0
+## What's new in 0.4.1
+
+- **Intro: truly full screen, original quality.** The bundled intro is now the original video file (1280x720, ~7.5 MB; it is not 1080p, so nothing is up-scaled) instead of a re-compressed copy. mpv / VLC / ffplay are started borderless, always on top and full screen, keep the whole picture (black bars if the aspect differs, never cropped), and hide the pointer; Code's own window also goes full screen for the intro and returns to window mode afterwards.
+- **Code-only mode never drops to the desktop.** Root cause: the session script ended (and logged out to the login screen, where Cinnamon is the default) whenever Code itself ended after 30 seconds or more - and games / emulators were started in Code's own process group, so an app that signalled its group could take Code down with it. Now every app runs in its own session, the session script restarts Code whenever it ends (only a deliberate exit code 64 or the one-off desktop flag leave; five quick crashes in a row still fall back to the desktop so you are never locked out), "Quit Code" is "Restart Code" in this mode, and Code re-takes the whole screen when an app closes. **If Code-only mode was switched on by an older Code, open Settings > Code-only mode once and press "Update Code-only mode" (password once): the session file lives in /usr/local/bin, which a normal update cannot rewrite.**
+- **Roblox fix screen** (shown after a failed start, and under Options > Fix my game > Fix Roblox, or Help): step by step with a **Run fix** button, Sober's and Code's log paths and an honest limit. It checks the Flathub store and where Sober came from, runs `flatpak update`, tests DNS / internet / the clock / the file-picker portal, and names the cause. It also handles Sober's **"Permission Update Required"**: Code shows the command in plain English first, runs exactly `flatpak override --user --filesystem=xdg-run/app/com.discordapp.Discord:create --filesystem=xdg-run/discord-ipc-0 --device=all org.vinegarhq.Sober` (your user only, Sober only), then starts Roblox again - and applies it when it installs Sober.
+
+- **Spotify in the background, with music buttons in the top bar.** Two tiles in *Streaming & Social*: **Spotify** (Spotify's own desktop app, Flatpak `com.spotify.Client`, one-button install) and **Spotify (web player)** (your Chrome / Firefox, own profile; music needs Widevine, which Chrome has). Both **keep playing behind Code**: press **Esc twice** (or Guide + B) and Code comes back *without* closing Spotify. While anything is playing or paused, small buttons **previous / play-pause / next** and the track name appear next to the clock (mouse, touch, keyboard or controller - Right from the WiFi button). They talk to the player through MPRIS with **`playerctl`** (`sudo apt install playerctl`; "Install everything" adds it too) and also work with other MPRIS players. Needs your own Spotify account; no Spotify logos are shipped (tile icons are fetched when Code runs).
+
+## 0.4.0
 
 - **Web browser + Downloads (new):** the *Web Browser* tile (Streaming & Social) opens a normal browser window with an address bar and back / forward buttons, starting at a neutral search engine; Esc twice or Guide + B returns to Code. Options > Downloads lists what you saved in `~/Downloads` (with a "still downloading" marker), and a finished file gets **Add to my games**: choose its system and it moves into `~/Games/Atari/<system>` (also reachable as `~/Games/Code/<system>`). It uses Chrome / Chromium / Brave / Firefox from your PC - no embedded engine, so pause / resume and speed are the browser's own. Code does not recommend, bookmark or link any download site, and bundles no games.
 - **Torrent client (new):** *Transmission* (open source) is a tile in PC Apps and installs with one button (also from Options > Downloads); `.torrent` files in Downloads open in it. No torrents, trackers or site lists are included; use it for files you own or may legally share.
@@ -242,13 +250,13 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.4.0.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
+1. Download **`atari-0.4.1.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
 2. Open a **Terminal** and type:
 
    ```bash
    cd ~/Downloads
-   tar xzf atari-0.4.0.tar.gz
-   cd atari-0.4.0
+   tar xzf atari-0.4.1.tar.gz
+   cd atari-0.4.1
    ./install.sh
    ```
 

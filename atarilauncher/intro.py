@@ -137,8 +137,11 @@ def player_command(kind: str, exe: str, video: str | Path, muted: bool, input_co
     """The command line that plays `video` full screen, once, then quits. Sound off = no audio at all."""
     video = str(video)
     if kind == "mpv":
-        cmd = [exe, "--no-config", "--fs", "--no-osc", "--osd-level=0", "--really-quiet", "--no-terminal", "--keep-open=no",
-               "--cursor-autohide=always", "--force-window=immediate", "--no-input-default-bindings"]
+        # full screen over everything (no border, on top), whole picture kept (black bars when the aspect differs, never cropped),
+        # mouse pointer hidden
+        cmd = [exe, "--no-config", "--fs", "--no-border", "--ontop", "--keepaspect", "--panscan=0", "--no-osc", "--osd-level=0",
+               "--really-quiet", "--no-terminal", "--keep-open=no", "--cursor-autohide=always", "--force-window=immediate",
+               "--no-input-default-bindings"]
         if input_conf:
             cmd.append(f"--input-conf={input_conf}")
         if muted:
@@ -150,7 +153,8 @@ def player_command(kind: str, exe: str, video: str | Path, muted: bool, input_co
             cmd.append("-an")
         return cmd + [video]
     # VLC
-    cmd = [exe, "--fullscreen", "--play-and-exit", "--no-osd", "--no-video-title-show", "--quiet"]
+    cmd = [exe, "--fullscreen", "--no-video-deco", "--video-on-top", "--mouse-hide-timeout=1", "--play-and-exit", "--no-osd",
+           "--no-video-title-show", "--quiet"]
     if muted:
         cmd.append("--no-audio")
     return cmd + [video, "vlc://quit"]

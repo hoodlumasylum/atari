@@ -251,7 +251,13 @@ def _try(step: str, t: Target, env: Env, out: Callable[[str], None], has_apt: bo
                 time.sleep(2.0)
         if rc == 130:
             raise InterruptedError("cancelled")
-        return rc == 0 and flatpak_installed(t.flatpak, env.home), f"flatpak install flathub {t.flatpak} did not finish (code {rc})"
+        done = rc == 0 and flatpak_installed(t.flatpak, env.home)
+        if done and t.flatpak == sober.FLATPAK_ID:
+            # Sober asks for a permission update ("Permission Update Required") on its first start: give it now (user level, Sober only)
+            out("Giving Sober the permission it asks for (your user only):  " + sober.OVERRIDE_COMMAND)
+            orc = env.run(list(sober.OVERRIDE_ARGS), out, env.cancel)
+            out("   done" if orc == 0 else f"   that did not work (code {orc}); Roblox's fix screen can do it later")
+        return done, f"flatpak install flathub {t.flatpak} did not finish (code {rc})"
     if step == "apt":
         out(f"Installing {t.title} with your system's software sources. A password window will pop up - type your usual password there.")
         rc = env.run(_pkexec(env, "apt-get", "install", "-y", t.apt), out, env.cancel)

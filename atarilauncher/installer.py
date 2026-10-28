@@ -169,6 +169,10 @@ def install_flatpak(emu, out: Callable[[str], None], retries: int = 2, wait: flo
         rc = _run_friendly(["flatpak", "install", "--user", "-y", "--noninteractive", "flathub", emu.flatpak], out)
         if rc == 0 and flatpak_has(emu.flatpak):
             out("   installed")
+            from . import sober
+            if emu.flatpak == sober.FLATPAK_ID:       # Sober's "Permission Update Required": give it now, user level, Sober only
+                out("   giving Sober the permission it asks for:  " + sober.OVERRIDE_COMMAND)
+                _run_friendly(list(sober.OVERRIDE_ARGS), out)
             return Outcome(emu.name, "installed")
         if attempt < retries:
             out(f"   that did not work (code {rc}); trying once more ...")
