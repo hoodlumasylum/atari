@@ -7,7 +7,7 @@ from .importer import ImportItem, human_size
 
 
 class ImportModel(QAbstractListModel):
-    ROLES = ["name", "systemName", "sizeText", "checked", "rel", "kind"]
+    ROLES = ["name", "systemName", "sizeText", "checked", "rel", "kind", "extra"]
     selectionChanged = Signal()
 
     def __init__(self, parent=None):
@@ -15,6 +15,7 @@ class ImportModel(QAbstractListModel):
         self._items: list[ImportItem] = []
         self._names: dict[str, str] = {}
         self._checked: list[bool] = []
+        self._bios = False
         self._role_ids = {Qt.UserRole + 1 + i: n for i, n in enumerate(self.ROLES)}
 
     def roleNames(self):
@@ -40,13 +41,20 @@ class ImportModel(QAbstractListModel):
             return it.rel
         if name == "kind":
             return "folder" if it.is_dir else "file"
+        if name == "extra":  # BIOS list: what the file is and whether it checked out
+            if not self._bios:
+                return ""
+            from .bios import STATUS_TEXT
+            return f"{it.label}  -  {STATUS_TEXT.get(it.status, '')}"
         return None
 
-    def set_items(self, items: list[ImportItem], names: dict[str, str] | None = None) -> None:
+    def set_items(self, items: list, names: dict[str, str] | None = None, kind: str = "games") -> None:
         self.beginResetModel()
         self._items = list(items)
         self._names = names or {}
-        self._checked = [True] * len(self._items)
+        self._bios = kind == "bios"
+        # BIOS list: unusual files and notes start unticked
+        self._checked = [not (self._bios and getattr(it, "status", "") in ("odd", "note")) for it in self._items]
         self.endResetModel()
         self.selectionChanged.emit()
 

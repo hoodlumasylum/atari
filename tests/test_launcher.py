@@ -148,9 +148,13 @@ def test_table_picks_installed_emulator_native_or_flatpak(tmp_path, monkeypatch)
     ready, label, hint = emulators.status_line(cfg, cfg.systems["ps2"], home)
     assert not ready and "flatpak install flathub net.pcsx2.PCSX2" in hint
     # Flatpak installed: detected automatically
+    # a data folder alone (e.g. created by "Add BIOS files") is NOT an install
     (home / ".var/app/net.pcsx2.PCSX2").mkdir(parents=True)
+    assert not emulators.status_line(cfg, cfg.systems["ps2"], home)[0]
+    (home / ".local/share/flatpak/app/net.pcsx2.PCSX2/current").mkdir(parents=True)
     cmd = launcher.build_rom_command(cfg, cfg.systems["ps2"], "/g/x.iso", home)
-    assert cmd == ["flatpak", "run", "net.pcsx2.PCSX2", "-batch", "-fullscreen", "--", "/g/x.iso"]
+    # the Flatpak is given read access to the game's folder for this launch only
+    assert cmd == ["flatpak", "run", "--filesystem=/g:ro", "net.pcsx2.PCSX2", "-batch", "-fullscreen", "--", "/g/x.iso"]
     assert emulators.status_line(cfg, cfg.systems["ps2"], home)[:2] == (True, "PCSX2 (Flatpak)")
     # a program on PATH wins over nothing; user override wins over detection
     monkeypatch.setattr(emulators.shutil, "which", lambda n: f"/usr/bin/{n}" if n in ("rpcs3", "xemu") else None)

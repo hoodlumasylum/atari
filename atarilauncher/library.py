@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import emulators, paths, roms, steam
+from . import apps, covers as covers_mod, emulators, paths, roms, steam
 from .config import Config
 
 STEAM = "steam"
@@ -27,6 +27,7 @@ class Game:
     header: str = ""  # wide banner art for the detail panel (Steam header.jpg) or ""
     added: float = 0.0  # file date, used by "Recently added"
     meta: dict = field(default_factory=dict)  # optional genre / players / release / rating
+    launch: str = ""  # for imported Heroic / Lutris games: the link that starts it (heroic://launch/..., lutris:rungameid/N)
 
 
 @dataclass
@@ -115,10 +116,14 @@ def build_library(cfg: Config, home: Path | None = None, covers_root: Path | Non
             note = ""
             if g.on_ntfs:
                 note = "Installed on a Windows (NTFS) drive - may not run well on Linux"
+            # Steam's own local library cache first; pictures Atari downloaded (Settings > Download covers) after
+            cover = steam.find_art(scan.root, g.appid) or covers_mod.find_downloaded_steam_art(g.appid, "cover", covers_root)
+            header = (steam.find_header(scan.root, g.appid)
+                      or covers_mod.find_downloaded_steam_art(g.appid, "header", covers_root))
             res.games.append(Game(
                 gid=f"steam:{g.appid}", title=g.name, platform=STEAM, platform_name="Steam",
-                cover=steam.find_art(scan.root, g.appid), steam_appid=g.appid, note=note,
-                header=steam.find_header(scan.root, g.appid), added=g.added,
+                cover=cover, steam_appid=g.appid, note=note,
+                header=header, added=g.added,
                 meta=meta_for(f"steam:{g.appid}", g.name)))
     res.steam_note = steam_status_text(res.steam_scan, cfg.steam_enabled)
 
@@ -140,6 +145,21 @@ def build_library(cfg: Config, home: Path | None = None, covers_root: Path | Non
                 rom_path=str(r.path), header=cover, added=r.mtime, meta=meta_for(gid, r.title),
                 note=("PS3 installer package: Play opens RPCS3's install window."
                       if r.path.suffix.lower() == ".pkg" else (emulators.SYSTEM_BY_ID[sc.id].note if sc.id in emulators.SYSTEM_BY_ID else ""))))
+    # "PC Apps / Stores": one always-visible entry per app (Roblox, Heroic, Lutris, ...)
+    for app in apps.APP_DEFS:
+        ready, _text = apps.app_status(cfg, app, home)
+        res.games.append(Game(gid=app.gid, title=app.title, platform=apps.APPS, platform_name=apps.APPS_NAME,
+                              note=app.note if ready else apps.install_hint(app)))
+    # games you installed through Heroic and Lutris (read from their own files, never changed)
+    for finder in (apps.heroic_games, apps.lutris_games):
+        try:
+            found = finder(home)
+        except Exception as exc:  # an odd file there must never break Atari
+            print(f"[atari] {finder.__name__} failed: {exc}")
+            found = []
+        for sg in found:
+            res.games.append(Game(gid=sg.gid, title=sg.title, platform=sg.store, platform_name=sg.store_name,
+                                  launch=sg.uri, added=sg.played))
     return res
 
 

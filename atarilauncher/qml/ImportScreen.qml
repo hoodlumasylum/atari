@@ -13,8 +13,9 @@ Item {
     signal closed()
     signal browseRequested()
 
-    function open() {
-        backend.openImport()
+    readonly property bool bios: backend.importKind === "bios"
+    function open(kind) {
+        backend.openImportKind(kind || "games")
         refreshDrives()
     }
     function refreshDrives() {
@@ -112,13 +113,15 @@ Item {
             anchors.leftMargin: 20 * imp.u
             anchors.verticalCenter: parent.verticalCenter
             spacing: 4 * imp.u
-            Text { text: "ADD GAMES"; color: Theme.redBright; font.pixelSize: 42 * imp.u; font.bold: true; font.letterSpacing: 4 * imp.u }
+            Text { text: imp.bios ? "ADD BIOS FILES" : "ADD GAMES"; color: Theme.redBright; font.pixelSize: 42 * imp.u; font.bold: true; font.letterSpacing: 4 * imp.u }
             Text {
                 color: "#e6e8f2"
                 font.pixelSize: 20 * imp.u
-                text: imp.st === "drives" ? "Copy games from a USB stick into your library. Your stick is only read, never changed."
-                    : imp.st === "scanning" ? "Looking for games..."
-                    : imp.st === "list" ? "Tick the games to copy. They go to ~/Games/Atari/<console> (or your folder for that console)."
+                text: imp.st === "drives" ? (imp.bios ? "Copy BIOS / firmware from your own consoles (on a USB stick or folder) to the emulators. Your stick is only read."
+                                                   : "Copy games from a USB stick into your library. Your stick is only read, never changed.")
+                    : imp.st === "scanning" ? (imp.bios ? "Looking for BIOS files..." : "Looking for games...")
+                    : imp.st === "list" ? (imp.bios ? "Tick the files to copy. Each goes to the right folder for its emulator."
+                                                    : "Tick the games to copy. They go to ~/Games/Atari/<console> (or your folder for that console).")
                     : imp.st === "copying" ? "Copying - please don't unplug the stick yet." : "All done."
             }
         }
@@ -259,6 +262,7 @@ Item {
                 required property bool checked
                 required property string rel
                 required property string kind
+                required property string extra
                 readonly property bool sel: imp.zone === "list" && ListView.isCurrentItem
                 width: list.width
                 height: 52 * imp.u
@@ -284,7 +288,7 @@ Item {
                     anchors.rightMargin: 12 * imp.u
                     anchors.verticalCenter: parent.verticalCenter
                     elide: Text.ElideRight
-                    text: item.name + (item.kind === "folder" ? "  (folder)" : "")
+                    text: item.name + (item.kind === "folder" ? "  (folder)" : "") + (item.extra !== "" ? "   \u2014  " + item.extra : "")
                     color: "white"
                     font.pixelSize: 21 * imp.u
                     font.bold: true

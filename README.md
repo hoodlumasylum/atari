@@ -27,6 +27,38 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
+## What's new in 0.3.0
+
+* **Covers download themselves.** After a scan (and from **Settings → Download covers**) Atari fetches box art in the background,
+  never blocking the screen ("Covers 12/80" shows progress, tiles update live). ROM games use the public
+  [libretro thumbnails](https://thumbnails.libretro.com) server (`Named_Boxarts`, with smart name matching: `(USA)`, `(Rev 1)`, `[!]` etc.),
+  Steam games use Steam's own local art first, then Steam's public CDN. Pictures are cached in `~/.local/share/atari/covers/`;
+  your own pictures are never overwritten. It copes with being offline (tries again next time), has timeouts/retries and is polite
+  (one request at a time). Turn the automatic run off in **Settings → Download covers automatically**. No account or API key needed.
+* **Install everything.** **Settings → Emulators → Install emulators and apps** opens a terminal and runs `scripts/install-everything.sh`
+  (also `atari-install-everything`): installs Flatpak if missing (apt, asks for your password first), adds Flathub for your user,
+  then installs every emulator on Flathub plus RetroArch cores, and the PC apps below. Plain-English progress, carries on when one fails,
+  prints a summary, safe to run again. All Flatpak IDs were checked against Flathub.
+* **Add BIOS files** (next to **Add Games**, same USB picker). It finds *your own* BIOS / firmware files on a stick or folder by name (and known
+  MD5 where there is one), shows a checklist and copies them to the right place for each emulator (RetroArch native/Flatpak, DuckStation,
+  PCSX2, Flycast, melonDS, mGBA, xemu, Mednafen, Ryujinx/Eden keys…). **Atari never downloads or includes BIOS files, firmware, keys or games** —
+  only use files from consoles you own. PS3 firmware (`PS3UPDAT.PUP`) and Switch `prod.keys` get a short how-to. **Settings → Emulators** says in
+  plain English what each console still needs ("PlayStation needs a BIOS file from your own console - use Add BIOS files").
+* **Keyboard works in emulators.** Atari now writes sane default keyboard bindings the first time it starts **Flycast** (arrows = D-pad, Z/X/C/V = A/B/X/Y,
+  Enter = Start, WASD = stick, Q/E = triggers) — only when Flycast has no keyboard mapping yet, never overwriting yours — and **steps aside while a game
+  runs** (its full-screen window is minimised and restored, raised and focused when the game quits) so the emulator gets the keyboard.
+  A new **Controls** screen (Options → Controls, or Settings → Emulators) lists the keys for each emulator, and the main keys are shown briefly when a game starts.
+* **PC Apps / Stores.** One tile with Roblox (through **Sober**, an *unofficial* community runner — it may break after Roblox updates and you sign in to your own
+  Roblox account), Heroic Games Launcher, Lutris, Bottles, itch.io, Prism Launcher, Minecraft Launcher and Moonlight. Each is detected automatically
+  (Flatpak or installed program), shows an install hint if missing, and its command can be overridden under `[emulators]` in the config file
+  (e.g. `heroic = "flatpak run com.heroicgameslauncher.hgl"`). Games you installed in **Heroic** and **Lutris** also appear in your library
+  (read from their own files, never changed) and start through those apps.
+* **Update Atari from inside Atari** (**Settings → Update Atari**, or the green badge on the top bar): checks GitHub Releases (at most once a day, silently;
+  turn it off in Settings), shows the release notes, downloads the new version, **verifies its SHA256** against the release's `SHA256SUMS.txt`, installs it
+  (your settings, favourites and history are never touched; the old files are put back if anything fails) and offers to restart. No terminal needed.
+  *0.3.0 is the first version that has this, so install 0.3.0 by hand once (steps below); later versions can update themselves.*
+* Upgrading from 0.2.x is safe: config and state are kept and new settings have defaults.
+
 ## What's new in 0.2.1
 
 * **Fixed: could not leave the first-start setup screen.** Esc / B (and Enter on the new **DONE / CONTINUE** rows or the button in the top corner)
@@ -42,7 +74,7 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
   copies with a progress bar, skips duplicates, and never changes the USB stick.
 * **Many more consoles** from one data-driven table, including **PlayStation 3 (RPCS3)** and **Xbox Classic (xemu)**, with native *and*
   Flatpak emulator detection. A new **Settings → Emulators** page shows what is installed and how to install the rest;
-  `atari-install-emulators` (or `scripts/install-emulators.sh`) installs them from a terminal.
+  `atari-install-everything` (or `scripts/install-everything.sh`) installs them from a terminal.
 * Sort (A-Z, Z-A, Recently played, Recently added), "Show all systems" option, better covers (Steam library art, your own pictures).
 * Your settings, favourites and play history carry over from 0.1.0 automatically.
 
@@ -52,13 +84,13 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.2.1.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
+1. Download **`atari-0.3.0.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
 2. Open a **Terminal** and type:
 
    ```bash
    cd ~/Downloads
-   tar xzf atari-0.2.1.tar.gz
-   cd atari-0.2.1
+   tar xzf atari-0.3.0.tar.gz
+   cd atari-0.3.0
    ./install.sh
    ```
 
@@ -124,7 +156,8 @@ and starts them with Steam itself (`steam steam://rungameid/<id>`). Steam must b
 * **Steam games:** the artwork Steam already stored locally (`~/.steam/steam/appcache/librarycache/<appid>/library_600x900.jpg`, `header.jpg`).
 * **Other games:** put a PNG or JPG named like the game (without extension) in `~/.local/share/atari/covers/`, e.g. `~/.local/share/atari/covers/Super Game.png`.
   (The older `~/.config/atari/covers/<console>/` folder still works.)
-* Otherwise Atari draws a coloured placeholder cover. Nothing is downloaded from the internet.
+* **Downloaded covers** (see *What's new in 0.3.0*) are saved under `~/.local/share/atari/covers/` too: `<console>/<game file name>.png` for ROMs and `steam/<appid>_cover.jpg` for Steam. Your own pictures always win and are never replaced.
+* Otherwise Atari draws a coloured placeholder cover. Nothing is downloaded unless you press **Download covers** or leave the automatic option on.
 * Optional details (genre, players, release, rating) can be given in `~/.local/share/atari/metadata.json`:
   `{"Super Game": {"genre": "Platformer", "players": "1-2", "release": "1993", "rating": 4.5}}`.
 
@@ -135,9 +168,9 @@ and Atari uses the first one it finds. Consoles without an emulator still show, 
 (press Enter on a console to cycle the emulator or see how to install it), or in a terminal:
 
 ```bash
-atari-install-emulators --list              # what's installed, and how to get the rest
-atari-install-emulators duckstation pcsx2   # install some via Flatpak (per-user, no sudo)
-atari-install-emulators --all
+atari-install-everything --list              # what's installed, and how to get the rest
+atari-install-everything duckstation pcsx2   # install only some via Flatpak (per-user, no sudo)
+atari-install-everything                     # everything: emulators, cores and PC apps (the old name atari-install-emulators still works)
 ```
 
 | Console | Default emulator candidates (Flatpak ID) |
@@ -157,7 +190,13 @@ atari-install-emulators --all
 **PlayStation 3:** started as `rpcs3 --no-gui <EBOOT.BIN | game folder | iso>`. Install with `flatpak install flathub net.rpcs3.RPCS3`.
 You must install RPCS3's **firmware** and supply your own games; PS3 emulation is heavy on integrated graphics.
 **Xbox Classic:** started as `xemu -dvd_path <iso>`. You supply your own BIOS/HDD image/games in xemu's settings.
-**You must supply your own BIOS, firmware, keys and games for any emulator that needs them.**
+**You must supply your own BIOS, firmware, keys and games for any emulator that needs them** — **Add BIOS files** (Options menu, Settings, or Settings → Emulators)
+copies them from a USB stick for you, from consoles you own. Atari never downloads them.
+
+### Keyboard keys in emulators
+Atari steps aside while a game runs. **Options → Controls** shows each emulator's keys. Flycast gets default keyboard bindings the first time (only if it has none).
+RetroArch, DuckStation, PPSSPP, mGBA and PCSX2 use their own built-in keyboard defaults (listed on the Controls screen; change them inside the emulator).
+Dolphin, melonDS and Switch emulators need a one-time setup inside the emulator.
 
 Override anything in `~/.config/atari/config.toml` (or via the Settings page):
 

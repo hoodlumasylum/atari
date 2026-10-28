@@ -4,7 +4,9 @@ Every console lists its emulators in order of preference. Each emulator can be a
 or a Flatpak; Atari picks the first one that is installed (or the one you chose in Settings > Emulators).
 Nothing here bundles emulators, firmware/BIOS, keys or games - you bring your own.
 
-Run  python -m atarilauncher.emulators --help  (or scripts/install-emulators.sh) to list / install them.
+Flatpak IDs below were checked against Flathub (https://flathub.org/api/v2/appstream/<id>) on 2026-10-28;
+apt names against the Ubuntu 22.04 / 24.04 archives (Linux Mint 21 / 22).
+Run  scripts/install-everything.sh --help  (or Settings > Emulators > Install emulators and apps) to install them.
 """
 from __future__ import annotations
 
@@ -38,13 +40,13 @@ EMUS: dict[str, Emu] = {e.id: e for e in [
     Emu("rpcs3", "RPCS3", ("rpcs3",), "net.rpcs3.RPCS3", "", "{exe} --no-gui {rom}",
         note="Needs your own PS3 firmware and games. Very heavy on integrated graphics."),
     Emu("ppsspp", "PPSSPP", ("PPSSPPSDL", "ppsspp", "PPSSPPQt"), "org.ppsspp.PPSSPP", "", "{exe} {rom} --fullscreen"),
-    Emu("dolphin", "Dolphin", ("dolphin-emu",), "org.DolphinEmu.dolphin-emu", "dolphin-emu", "{exe} -b -e {rom}"),
+    Emu("dolphin", "Dolphin", ("dolphin-emu",), "org.DolphinEmu.dolphin-emu", "", "{exe} -b -e {rom}"),
     Emu("cemu", "Cemu", ("cemu", "Cemu"), "info.cemu.Cemu", "", "{exe} -f -g {rom}",
         note="Needs your own Wii U keys/online files if a game requires them."),
-    Emu("ryujinx", "Ryujinx", ("ryujinx", "Ryujinx"), "", "", "{exe} {rom}",
-        note="Needs your own Switch firmware and keys. Install it yourself, or set the command in Settings."),
-    Emu("switchfork", "Switch emulator (Eden / Citron / yuzu fork)", ("eden", "citron", "suyu", "yuzu"), "", "",
-        "{exe} -f -g {rom}", note="Needs your own Switch firmware and keys. Set the command in Settings if needed."),
+    Emu("ryujinx", "Ryujinx (Ryubing)", ("ryujinx", "Ryujinx"), "io.github.ryubing.Ryujinx", "", "{exe} {rom}",
+        note="Needs your own Switch firmware and keys (use Add BIOS files for prod.keys)."),
+    Emu("switchfork", "Eden (Switch)", ("eden", "citron", "suyu", "yuzu"), "dev.eden_emu.eden", "",
+        "{exe} -f -g {rom}", note="Needs your own Switch firmware and keys (use Add BIOS files for prod.keys)."),
     Emu("azahar", "Azahar / Lime3DS / Citra", ("azahar", "azahar-qt", "lime3ds", "lime3ds-gui", "citra-qt", "citra"),
         "org.azahar_emu.Azahar", "", "{exe} {rom}"),
     Emu("melonds", "melonDS", ("melonDS", "melonds"), "net.kuribo64.melonDS", "", "{exe} -f {rom}"),
@@ -56,7 +58,7 @@ EMUS: dict[str, Emu] = {e.id: e for e in [
         note="Sega Saturn needs your own Saturn BIOS in ~/.mednafen/firmware."),
     Emu("flycast", "Flycast", ("flycast",), "org.flycast.Flycast", "", "{exe} {rom}"),
     Emu("rmg", "Rosalie's Mupen GUI", ("RMG",), "com.github.Rosalie241.RMG", "", "{exe} -f {rom}"),
-    Emu("mupen64plus", "mupen64plus", ("mupen64plus",), "", "mupen64plus", "{exe} --fullscreen {rom}"),
+    Emu("mupen64plus", "mupen64plus", ("mupen64plus",), "", "mupen64plus-ui-console", "{exe} --fullscreen {rom}"),
     Emu("mame", "MAME", ("mame",), "org.mamedev.MAME", "mame", "{exe} -rompath {rom_dir} {rom_name}",
         note="MAME needs the matching ROM sets; keep them together in one folder."),
     Emu("dosbox", "DOSBox", ("dosbox", "dosbox-staging"), "io.github.dosbox-staging", "dosbox",
@@ -66,8 +68,7 @@ EMUS: dict[str, Emu] = {e.id: e for e in [
         note="Put a small <game>.scummvm text file in the game folder containing the ScummVM game id."),
     Emu("fsuae", "FS-UAE", ("fs-uae",), "net.fsuae.FS-UAE", "fs-uae", "{exe} --fullscreen --floppy_drive_0={rom}",
         note="Needs your own Amiga Kickstart ROM."),
-    Emu("vice", "VICE", ("x64sc", "x64"), "net.sf.VICE", "vice", "{exe} -fullscreen -autostart {rom}",
-        flatpak_opts=("--command=x64sc",)),
+    Emu("vice", "VICE", ("x64sc", "x64"), "net.sf.VICE", "vice", "{exe} -fullscreen -autostart {rom}"),
 ]}
 
 
@@ -147,18 +148,25 @@ SYSTEM_BY_ID = {s.id: s for s in SYSTEMS}
 
 # Consoles that cannot be launched from a file list (shown on the Emulators page only).
 NOTES = [
-    ("PlayStation Vita", "Vita3K (Flatpak org.vita3k.Vita3K) installs games inside its own window, so Atari cannot "
-                         "start Vita games by file. Run Vita3K from your application menu."),
+    ("PlayStation Vita", "Vita3K is not on Flathub. Download it from vita3k.org if you want it; it installs games "
+                         "inside its own window, so Atari cannot start Vita games by file."),
     ("Xbox 360", "The Xbox 360 emulator (Xenia) only runs on Windows, so it is not supported on Linux."),
 ]
 
 
 # ---------------------------------------------------------------- detection
 def flatpak_installed(app_id: str, home: Path | None = None) -> bool:
+    """True when the Flatpak is really installed (per-user or system-wide). The ~/.var/app/<id> data folder is NOT
+    a sign of an install (Atari's "Add BIOS files" can create it before the emulator is installed)."""
     home = home or Path.home()
-    return any(p.exists() for p in (home / ".var" / "app" / app_id,
-                                    Path("/var/lib/flatpak/app") / app_id,
-                                    home / ".local/share/flatpak/app" / app_id))
+    for base in (Path("/var/lib/flatpak/app"), home / ".local/share/flatpak/app"):
+        p = base / app_id
+        try:
+            if p.is_dir() and any(p.iterdir()):  # a real install has x86_64/ and current inside
+                return True
+        except OSError:
+            pass
+    return False
 
 
 def cores_dirs(cfg, home: Path | None = None) -> list[Path]:
@@ -265,10 +273,10 @@ def install_hint(system, home: Path | None = None) -> str:
         bits.append(f"sudo apt install {emu.apt}")
     if sd.emus[0] == "retroarch" and sd.core:
         core = sd.core.replace("_libretro", "")
-        text = (f"Install RetroArch (flatpak install flathub org.libretro.RetroArch) and its {core} core "
-                f"(RetroArch: Load Core > Download a Core)")
+        text = (f"Install RetroArch and its {core} core: open Settings > Emulators > Install emulators and apps "
+                f"(or run:  flatpak install flathub org.libretro.RetroArch)")
     elif bits:
-        text = f"Install {emu.name}:  " + "   or   ".join(bits)
+        text = f"Install {emu.name}: open Settings > Emulators > Install emulators and apps  (or run:  " + "   or   ".join(bits) + ")"
     else:
         text = f"Install {emu.name} (see its website) or set its command in Settings > Emulators"
     return text + ". " + (emu.note or sd.note)
@@ -324,6 +332,17 @@ def expand(template: str, cfg, system, rom: str, exe: list[str], core: str = "",
     return out
 
 
+def grant_rom_access(cmd: list[str], rom: str) -> list[str]:
+    """A Flatpak emulator can only see folders it was given. Several (DuckStation, PCSX2, Rosalie's Mupen GUI, Eden)
+    have no access to ~/Games or a USB drive, so give it read access to the game's folder for this launch only."""
+    if len(cmd) >= 2 and cmd[0] == "flatpak" and cmd[1] == "run" and rom and not any(
+            a.startswith("--filesystem=") for a in cmd[2:4]):
+        folder = str(Path(rom).parent)
+        if folder not in ("", ".", "/") and ":" not in folder and "," not in folder:
+            return [cmd[0], cmd[1], f"--filesystem={folder}:ro", *cmd[2:]]
+    return cmd
+
+
 def next_preference(cfg, system, home: Path | None = None) -> str:
     """Cycle the chosen emulator for a console: auto -> each emulator -> auto."""
     ids = [c.emu.id for c in candidates(cfg, system, home)]
@@ -335,72 +354,10 @@ def next_preference(cfg, system, home: Path | None = None) -> str:
     return ids[i + 1] if i + 1 < len(ids) else ""
 
 
-# ---------------------------------------------------------------- command line helper (install emulators)
+# ---------------------------------------------------------------- command line helper
 def _cli(argv=None) -> int:
-    import argparse
-    import subprocess
-    import sys
-
-    from .config import default_config
-
-    ap = argparse.ArgumentParser(prog="install-emulators", description=(
-        "List and install emulators for Atari. Uses Flatpak in your own account (no sudo). "
-        "Atari never includes BIOS/firmware/keys/games - bring your own."))
-    ap.add_argument("names", nargs="*", help="emulator ids to install, e.g. duckstation pcsx2 rpcs3 (see --list)")
-    ap.add_argument("--list", action="store_true", help="show emulators and whether each is installed")
-    ap.add_argument("--all", action="store_true", help="install every emulator that has a Flatpak")
-    ap.add_argument("--apt", action="store_true", help="print the apt command for the emulators that have a package")
-    args = ap.parse_args(argv)
-    cfg = default_config()
-
-    def installed(e: Emu) -> str:
-        cmd, how = find_emu(cfg, e.id)
-        return {"native": "installed", "flatpak": "installed (Flatpak)", "custom": "custom command"}.get(how, "-")
-
-    used = {eid for s in SYSTEMS for eid in s.emus}
-    print(f"{'id':12} {'emulator':44} {'status':20} how to install")
-    for e in EMUS.values():
-        if e.id not in used:
-            continue
-        how = []
-        if e.flatpak:
-            how.append("flatpak " + e.flatpak)
-        if e.apt:
-            how.append("apt " + e.apt)
-        print(f"{e.id:12} {e.name[:44]:44} {installed(e):20} {' | '.join(how) or 'see its website'}")
-    for name, text in NOTES:
-        print(f"\n{name}: {text}")
-    if args.list or (not args.names and not args.all and not args.apt):
-        if not args.list:
-            print("\nExamples:  scripts/install-emulators.sh duckstation pcsx2 rpcs3      scripts/install-emulators.sh --all")
-        return 0
-    if args.apt:
-        pk = sorted({e.apt for e in EMUS.values() if e.apt})
-        print("\nsudo apt install " + " ".join(pk))
-        return 0
-    want = [e for e in EMUS.values() if e.id in used and e.flatpak] if args.all else []
-    for n in args.names:
-        if n not in EMUS:
-            print(f"Unknown emulator '{n}'. Run with --list.", file=sys.stderr)
-            return 2
-        want.append(EMUS[n])
-    if not shutil.which("flatpak"):
-        print("\nFlatpak is not installed. On Linux Mint it is built in; otherwise:  sudo apt install flatpak",
-              file=sys.stderr)
-        return 1
-    subprocess.run(["flatpak", "remote-add", "--user", "--if-not-exists", "flathub",
-                    "https://dl.flathub.org/repo/flathub.flatpakrepo"])
-    rc = 0
-    for e in want:
-        if not e.flatpak:
-            print(f"\n{e.name}: no Flatpak known - install it from its website or with apt "
-                  f"({e.apt or 'no package'}).")
-            continue
-        print(f"\n==> Installing {e.name} ({e.flatpak})")
-        r = subprocess.run(["flatpak", "install", "--user", "-y", "flathub", e.flatpak])
-        rc = rc or r.returncode
-    print("\nDone. Open Atari > Settings > Emulators to check. Remember: bring your own BIOS/firmware/games.")
-    return rc
+    from .installer import main
+    return main(argv)
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from . import emulators, paths
+from . import apps, controls, emulators, paths
 from .config import Config, SystemConfig
 from .library import Game
 
@@ -49,12 +49,26 @@ def build_rom_command(cfg: Config, system: SystemConfig, rom: str, home: Path | 
     choice = emulators.choose(cfg, system, home)
     if choice is None:
         raise LaunchError(f"No launch command is set for {system.name}. Edit {paths.config_file()}.")
-    return emulators.expand(choice.emu.template, cfg, system, rom, choice.cmd, choice.core, home)
+    cmd = emulators.expand(choice.emu.template, cfg, system, rom, choice.cmd, choice.core, home)
+    if choice.how == "flatpak":  # sandboxed emulators only see folders they were given
+        cmd = emulators.grant_rom_access(cmd, rom)
+    return cmd
 
 
 flatpak_installed = emulators.flatpak_installed
 cores_dirs = emulators.cores_dirs
 resolve_core_path = emulators.resolve_core_path
+
+
+def controls_hint(cfg: Config, game: Game) -> str:
+    """One line of keyboard keys for the emulator that would run this game ('' for Steam / unknown)."""
+    if game.platform == "steam":
+        return ""
+    system = cfg.systems.get(game.platform)
+    if system is None or system.command.strip():
+        return ""
+    choice = emulators.choose(cfg, system)
+    return controls.hint_for(choice.emu.id, system.id) if choice else ""
 
 
 def steam_base_command(cfg: Config, home: Path | None = None) -> list[str]:
@@ -119,6 +133,8 @@ def run_game(cfg: Config, game: Game, on_started: Callable[[], None],
     """
     if game.platform == "steam":
         return _run_steam(cfg, game, on_started, poll, steam_start_timeout)
+    if game.platform == apps.APPS or game.launch:
+        return _run_app(cfg, game, on_started)
     system = cfg.systems.get(game.platform)
     if system is None:
         raise LaunchError(f"Unknown system '{game.platform}'.")
@@ -134,6 +150,11 @@ def run_game(cfg: Config, game: Game, on_started: Callable[[], None],
         if not ready:
             raise LaunchError(f"{system.name} needs an emulator that is not installed yet. {hint}")
     _check_executable(cmd, system.name)
+    if not is_pkg and not system.command.strip():
+        choice = emulators.choose(cfg, system)
+        if choice is not None:  # make sure the keyboard works the first time (only when the emulator has no keys yet)
+            for made in controls.ensure_keyboard_defaults(choice.emu.id, choice.how):
+                _log("keyboard defaults written: " + made)
     _log("launch: " + shlex.join(cmd))
     try:
         paths.data_dir().mkdir(parents=True, exist_ok=True)
@@ -155,6 +176,41 @@ def run_game(cfg: Config, game: Game, on_started: Callable[[], None],
     if code != 0 and elapsed < 5:
         return 0.0, (f"The emulator closed right away (code {code}). Check the emulator and core are "
                      f"installed; details are in {paths.log_file()}")
+    return elapsed, ""
+
+
+def _run_app(cfg: Config, game: Game, on_started):
+    """A PC app (Roblox, Heroic, Lutris, ...) or a game imported from Heroic / Lutris. Blocks until it closes."""
+    if game.launch:                       # imported game: ask its launcher to start it
+        store = game.platform if game.platform in apps.BY_ID else ""
+        app = apps.BY_ID.get(store)
+        cmd, how = apps.store_command(cfg, game.launch, store) if app else ([], "")
+    else:
+        app = next((a for a in apps.APP_DEFS if a.gid == game.gid), None)
+        if app is None:
+            raise LaunchError(f"Unknown app '{game.title}'.")
+        cmd, how = apps.app_command(cfg, app)
+    if app is None or not how:
+        raise LaunchError(apps.install_hint(app) if app else "That app is not available.")
+    _check_executable(cmd, app.title)
+    _log("launch: " + shlex.join(cmd))
+    try:
+        paths.data_dir().mkdir(parents=True, exist_ok=True)
+        logfh = open(paths.log_file(), "ab")
+    except OSError:
+        logfh = subprocess.DEVNULL
+    started = time.time()
+    try:
+        proc = subprocess.Popen(cmd, env=clean_env(), stdout=logfh, stderr=logfh, stdin=subprocess.DEVNULL)
+    except OSError as exc:
+        raise LaunchError(f"Could not start {app.title}: {exc}")
+    on_started()
+    code = proc.wait()
+    elapsed = time.time() - started
+    if code != 0 and elapsed < 5:
+        extra = (" Sober is unofficial and can break after a Roblox update: reinstall it with Settings > Emulators "
+                 "> Install emulators and apps." if app.id == "roblox" else "")
+        return 0.0, (f"{app.title} closed right away (code {code}).{extra} Details: {paths.log_file()}")
     return elapsed, ""
 
 

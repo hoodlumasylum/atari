@@ -1,3 +1,4 @@
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -5,6 +6,10 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# tests never touch the internet, minimise the window or open terminals unless a test opts in
+os.environ.setdefault("ATARI_NO_COVERS", "1")
+os.environ.setdefault("ATARI_NO_MINIMIZE", "1")
+os.environ.setdefault("ATARI_NO_UPDATE_CHECK", "1")
 FIX = Path(__file__).parent / "fixtures"
 
 

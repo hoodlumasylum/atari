@@ -44,6 +44,8 @@ class Config:
     cores_dir: str = ""  # empty = auto
     emulator_commands: dict[str, str] = field(default_factory=dict)  # e.g. {"rpcs3": "flatpak run net.rpcs3.RPCS3"}
     systems: dict[str, SystemConfig] = field(default_factory=dict)
+    update_check: bool = True  # look for a newer Atari release at most once a day (Settings)
+    covers_auto: bool = True  # download missing cover art in the background after a scan (Settings)
     first_run: bool = False
     path: Path | None = None
 
@@ -82,6 +84,12 @@ def load_config(path: Path | None = None) -> Config:
     cfg.steam_root = str(s.get("root", ""))
     cfg.steam_extra_libraries = _as_list(s.get("extra_libraries", []))
     cfg.steam_command = str(s.get("command", ""))
+    cv = data.get("covers", {})
+    if isinstance(cv, dict):
+        cfg.covers_auto = bool(cv.get("auto", True))
+    up = data.get("updates", {})
+    if isinstance(up, dict):
+        cfg.update_check = bool(up.get("check", True))
     r = data.get("retroarch", {})
     cfg.retroarch_command = str(r.get("command", ""))
     cfg.cores_dir = str(r.get("cores_dir", ""))
@@ -130,6 +138,14 @@ def dump_config(cfg: Config) -> str:
         '# command = ""  means: use `steam`, or the Flatpak version if that is what you have.',
         "command = " + _q(cfg.steam_command),
         "",
+        "[covers]",
+        "# Download missing box art from the internet in the background after a scan (Settings > Covers).",
+        "auto = " + ("true" if cfg.covers_auto else "false"),
+        "",
+        "[updates]",
+        "# Look for a newer Atari release (once a day, quietly) and show a badge (Settings > Updates).",
+        "check = " + ("true" if cfg.update_check else "false"),
+        "",
         "[retroarch]",
         '# Leave empty to auto-detect. Example: command = "flatpak run org.libretro.RetroArch"',
         "command = " + _q(cfg.retroarch_command),
@@ -137,7 +153,7 @@ def dump_config(cfg: Config) -> str:
         "",
         "# Emulator programs. Leave a line out to auto-detect (a program on your PATH or a Flatpak).",
         "# Use it to point at your own copy, e.g.   rpcs3 = \"flatpak run net.rpcs3.RPCS3\"",
-        "# Emulator ids: see Settings > Emulators, or run scripts/install-emulators.sh --list",
+        "# Emulator ids: see Settings > Emulators, or run scripts/install-everything.sh --list",
         "[emulators]",
     ]
     for eid, cmd in sorted(cfg.emulator_commands.items()):

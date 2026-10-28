@@ -3,7 +3,7 @@
 set -u
 DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 APP_DIR="${ATARI_INSTALL_DIR:-$DATA_HOME/atari-launcher}"
-rm -f "$HOME/.local/bin/atari" "$HOME/.local/bin/atari-install-emulators" \
+rm -f "$HOME/.local/bin/atari" "$HOME/.local/bin/atari-install-emulators" "$HOME/.local/bin/atari-install-everything" \
       "$DATA_HOME/applications/atari.desktop" \
       "$DATA_HOME/icons/hicolor/scalable/apps/atari-launcher.svg" \
       "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/atari.desktop"

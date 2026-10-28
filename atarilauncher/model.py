@@ -34,7 +34,8 @@ def filter_games(games: list[Game], store: Store, key: str, query: str, sort: st
         pool = [g for g in pool if all(w in g.title.lower() or w in g.platform_name.lower() for w in words)]
         return sort_games(pool, store, sort)
     if key == "all":
-        return sort_games(games, store, sort)
+        # the PC Apps / Stores launchers (Roblox, Heroic, ...) have their own tile; "All Games" is games only
+        return sort_games([g for g in games if g.platform != "apps"], store, sort)
     if key == "favorites":
         return sort_games([g for g in games if store.is_favorite(g.gid)], store, sort)
     if key == "recent":
@@ -126,6 +127,14 @@ class GameModel(QAbstractListModel):
 
     def game_at(self, row: int) -> Game | None:
         return self._visible[row] if 0 <= row < len(self._visible) else None
+
+    def cover_updated(self, gid: str) -> None:
+        """A cover file arrived for this game: refresh its tile (if it is on screen) without resetting the grid."""
+        for row, g in enumerate(self._visible):
+            if g.gid == gid:
+                idx = self.index(row)
+                self.dataChanged.emit(idx, idx, [Qt.UserRole + 1 + self.ROLES.index("cover")])
+                return
 
     def row_changed(self, row: int) -> None:
         idx = self.index(row)

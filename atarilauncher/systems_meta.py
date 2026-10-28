@@ -11,6 +11,9 @@ import hashlib
 # id -> (short name, glyph, colour 1 (top), colour 2 (bottom))
 SYSTEM_LOOK = {
     "steam": ("Steam", "monitor", "#1c4f7a", "#0b1a30"),
+    "apps": ("PC Apps", "monitor", "#2d6a4a", "#0b2016"),
+    "heroic": ("Heroic", "pad", "#1f3f7a", "#0a1530"),
+    "lutris": ("Lutris", "pad", "#8a5a1c", "#2a1a08"),
     "atari2600": ("Atari 2600", "bars", "#9b1b22", "#2a0609"),
     "atari7800": ("Atari 7800", "bars", "#a8381c", "#2d0e06"),
     "atarijaguar": ("Atari Jaguar", "bars", "#a02a2a", "#2b0a0a"),

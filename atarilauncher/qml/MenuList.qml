@@ -90,7 +90,7 @@ Item {
                 height: row.two ? 36 * ml.u : parent.height
                 verticalAlignment: Text.AlignVCenter
                 text: modelData.value ? modelData.value : ""
-                color: modelData.value === "Not installed" ? Theme.yellow : (modelData.value === "Ready" ? Theme.green : Theme.redBright)
+                color: (modelData.value === "Not installed" || modelData.value === "Needs BIOS") ? Theme.yellow : (modelData.value === "Ready" ? Theme.green : Theme.redBright)
                 font.pixelSize: 20 * ml.u
                 font.bold: true
             }
@@ -105,7 +105,7 @@ Item {
                 anchors.bottomMargin: 9 * ml.u
                 text: modelData.detail ? modelData.detail : ""
                 wrapMode: Text.Wrap
-                maximumLineCount: 3
+                maximumLineCount: modelData.kind === "ctl" ? 8 : 3
                 elide: Text.ElideRight
                 color: Theme.dim
                 font.pixelSize: 16 * ml.u

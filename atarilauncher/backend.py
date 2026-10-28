@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -10,7 +11,8 @@ from pathlib import Path
 from PySide6.QtCore import Property, QObject, QProcess, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QKeyEvent
 
-from . import emulators, importer, launcher, paths, roms
+from . import apps, bios, controls, covers, emulators, importer, installer, launcher, paths, roms, updater
+from . import __version__
 from .config import Config, load_config, save_config
 from .import_model import ImportModel
 from .library import STEAM, LibraryResult, build_library, demo_library
@@ -50,6 +52,15 @@ class Backend(QObject):
     importFinished = Signal(object)   # CopyResult (from worker thread)
     sessionEnded = Signal(str, str, float, str)  # gid, title, seconds, error (from worker thread)
     gamepadNote = Signal(str)
+    coversChanged = Signal()
+    coverArrived = Signal(str, str, str)   # gid, file, kind (from worker thread)
+    coverProgressed = Signal(int, int, int)  # done, total, got
+    coversFinished = Signal(object)         # covers.Report
+    sessionStarted = Signal()               # the emulator process is up (from worker thread)
+    runningHintChanged = Signal()
+    updateChanged = Signal()
+    updateEvent = Signal(str, str, float)       # state, text, fraction (from the worker thread)
+    updateChecked = Signal(object, str, bool)   # release or None, error text, was it asked for by the user
 
     def __init__(self, cfg: Config | None = None, store: Store | None = None, demo: bool = False,
                  enable_gamepad: bool = True):
@@ -73,6 +84,7 @@ class Backend(QObject):
         self._imp_file = ""
         self._imp_source = ""
         self._imp_cancel = threading.Event()
+        self._imp_kind = "games"          # "games" | "bios" - the same USB picker serves both
         self.importScanned.connect(self._on_import_scanned, Qt.QueuedConnection)
         self.importProgressed.connect(self._on_import_progress, Qt.QueuedConnection)
         self.importFinished.connect(self._on_import_finished, Qt.QueuedConnection)
@@ -91,6 +103,40 @@ class Backend(QObject):
         self._toast_timer = QTimer(self, singleShot=True, interval=5000)
         self._toast_timer.timeout.connect(lambda: self._set_toast(""))
         self.sessionEnded.connect(self._on_session_ended, Qt.QueuedConnection)
+        self.sessionStarted.connect(self._on_session_started, Qt.QueuedConnection)
+        self._running_hint = ""
+        self._minimized_for_game = False
+        # covers (background download)
+        self._cover_busy = False
+        self._cover_text = ""
+        self._cover_cancel = threading.Event()
+        self._cover_rerun = False
+        self._cover_by_gid: dict[str, object] = {}
+        self.coverArrived.connect(self._on_cover_arrived, Qt.QueuedConnection)
+        self.coverProgressed.connect(self._on_cover_progress, Qt.QueuedConnection)
+        self.coversFinished.connect(self._on_covers_finished, Qt.QueuedConnection)
+        self._cover_timer = QTimer(self, singleShot=True, interval=2500)
+        self._cover_timer.timeout.connect(lambda: self.startCovers(auto=True))
+        # self-update
+        self._upd_state = "idle"
+        self._upd_text = ""
+        self._upd_frac = -1.0
+        self._upd_cancel = threading.Event()
+        self._upd_release = None
+        self._restart_spawn = subprocess.Popen
+        rel = updater.Release.from_dict(self.store.get_pref("update_latest") or {})
+        if rel and updater.is_newer(rel.version, __version__):
+            self._upd_release = rel
+        self.updateEvent.connect(self._on_update_event, Qt.QueuedConnection)
+        self.updateChecked.connect(self._on_update_checked, Qt.QueuedConnection)
+        self._upd_timer = QTimer(self, singleShot=True, interval=8000)
+        self._upd_timer.timeout.connect(self._auto_check_update)
+        if (self.cfg.update_check and not self._demo and not self._first_run
+                and not os.environ.get("ATARI_NO_UPDATE_CHECK")
+                and updater.due(self.store.get_pref("update_last_check", 0))):
+            self._upd_timer.start()
+        self._hide_timer = QTimer(self, singleShot=True, interval=2500)
+        self._hide_timer.timeout.connect(self._hide_for_game)
         if self._first_run:
             self._prefill_first_run()
         self.rescan(initial=True)
@@ -181,7 +227,11 @@ class Backend(QObject):
 
     @Property(int, notify=libraryChanged)
     def totalGames(self):
-        return len(self._all)
+        return self._real_count()
+
+    def _real_count(self) -> int:
+        """Games from Steam / ROM folders (the always-present PC / Apps entry does not count)."""
+        return sum(1 for g in self._all if g.platform != apps.APPS)
 
     @Property(str, notify=statusChanged)
     def steamStatus(self):
@@ -292,7 +342,9 @@ class Backend(QObject):
         self.statusChanged.emit()
         self.libraryChanged.emit()
         if not initial and toast:
-            self.show_toast(f"Library updated: {len(self._all)} game" + ("" if len(self._all) == 1 else "s"))
+            n = self._real_count()
+            self.show_toast(f"Library updated: {n} game" + ("" if n == 1 else "s"))
+        self._schedule_covers()
 
     def _rebuild_filters(self) -> None:
         counts: dict[str, int] = {}
@@ -350,7 +402,7 @@ class Backend(QObject):
         """Friendly text for an empty grid."""
         if self._query:
             return f'No games match "{self._query}".'
-        if not self._all:
+        if self._real_count() == 0 and self._filter in ("all", "favorites", "recent"):
             if self._demo:
                 return "Demo mode"
             return ("No games yet!\n\nChoose \"Add Games\" to copy games from a USB stick, or open Settings "
@@ -361,6 +413,8 @@ class Backend(QObject):
             return "Nothing played yet.\n\nGames you play will show up here."
         if self._filter == STEAM:
             return self._lib.steam_note or "No Steam games found."
+        if self._filter == apps.APPS:
+            return "No apps found."
         sc = self.cfg.systems.get(self._filter)
         if sc is not None:
             _ready, label, hint = emulators.status_line(self.cfg, sc)
@@ -393,13 +447,20 @@ class Backend(QObject):
             return
         self._running = True
         self._running_title = g.title
+        self._running_is_rom = g.platform != "steam"
+        self._running_hint = launcher.controls_hint(self.cfg, g)
+        self.runningHintChanged.emit()
         self.runningChanged.emit()
         cfg = self.cfg
+
+        def started():
+            self.store.mark_launched(g.gid)
+            self.sessionStarted.emit()
 
         def worker():
             err, secs = "", 0.0
             try:
-                secs, err = launcher.run_game(cfg, g, on_started=lambda: self.store.mark_launched(g.gid))
+                secs, err = launcher.run_game(cfg, g, on_started=started)
             except launcher.LaunchError as exc:
                 err = str(exc)
             except Exception as exc:  # pragma: no cover - safety net
@@ -408,18 +469,48 @@ class Backend(QObject):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    @Property(str, notify=runningHintChanged)
+    def runningHint(self):
+        return self._running_hint
+
+    @Slot()
+    def _on_session_started(self) -> None:
+        """The emulator process is up. Atari's own (full screen) window must not sit between the keyboard and the
+        emulator, so after a moment it is minimised; it comes back when the game ends."""
+        if getattr(self, "_running_is_rom", False) and not os.environ.get("ATARI_NO_MINIMIZE") and self._window is not None:
+            self._hide_timer.start()
+
+    def _hide_for_game(self) -> None:
+        if self._running and self._window is not None and not self._minimized_for_game:
+            self._minimized_for_game = True
+            self._window.showMinimized()
+
+    def _restore_window(self) -> None:
+        win = self._window
+        if win is None:
+            return
+        if self._minimized_for_game:
+            self._minimized_for_game = False
+            if self.cfg.fullscreen:
+                win.showFullScreen()
+            else:
+                win.showNormal()
+        win.raise_()
+        win.requestActivate()
+
     @Slot(str, str, float, str)
     def _on_session_ended(self, gid: str, title: str, secs: float, err: str) -> None:
         if secs >= MIN_PLAYTIME_SEC:
             self.store.add_playtime(gid, secs)
+        self._hide_timer.stop()
         self._running = False
         self._running_title = ""
+        self._running_hint = ""
+        self.runningHintChanged.emit()
         self.runningChanged.emit()
         self._rebuild_filters()
         self._apply()
-        if self._window is not None:
-            self._window.raise_()
-            self._window.requestActivate()
+        self._restore_window()
         self.show_toast(err or f"Welcome back! You played {title} for {max(1, int(secs // 60))} min.", 8000)
 
     @Slot()
@@ -439,7 +530,17 @@ class Backend(QObject):
                                           "(installed programs and Flatpaks).", "value": "", "detail": ""},
                 {"kind": "info", "title": "Press Enter on a console to switch between its emulators. "
                                           "Atari never includes BIOS, firmware, keys or games - bring your own.",
-                 "value": "", "detail": ""}]
+                 "value": "", "detail": ""},
+                {"kind": "install", "title": "Install emulators and apps",
+                 "value": "",
+                 "detail": "Opens a window that installs every emulator and PC app Atari knows (safe to run again). "
+                           "Needs an internet connection and takes a while."},
+                {"kind": "bios", "title": "Add BIOS files",
+                 "value": "",
+                 "detail": "Copy BIOS / firmware files from your own consoles (USB stick or folder) to the right places. "
+                           "Only use files from consoles you own."},
+                {"kind": "controls", "title": "Controls (keyboard keys)", "value": "",
+                 "detail": "Which keys to press in each emulator."}]
         counts = {}
         for g in self._all:
             counts[g.platform] = counts.get(g.platform, 0) + 1
@@ -448,15 +549,37 @@ class Backend(QObject):
             ready, label, hint = emulators.status_line(self.cfg, sc)
             n = counts.get(sc.id, 0)
             games = f"{n} game{'s' if n != 1 else ''}  \u00b7  " if n else ""
-            rows.append({"kind": "emu", "id": sc.id, "title": sc.name,
-                         "value": "Ready" if ready else "Not installed",
+            bstate, btext = bios.missing_for(sc.id)
+            bios_line = ""
+            if bstate in ("missing", "recommended", "note"):
+                bios_line = "   BIOS: " + btext
+            elif bstate == "ok":
+                bios_line = "   BIOS: found."
+            value = "Ready" if ready else "Not installed"
+            if ready and bstate == "missing":
+                value = "Needs BIOS"
+            rows.append({"kind": "emu", "id": sc.id, "title": sc.name, "value": value,
                          "detail": games + (label if ready else (label + ": " + hint))
-                                   + (f"   [{hint}]" if ready and hint else "")})
+                                   + (f"   [{hint}]" if ready and hint else "") + bios_line})
+        for app in apps.APP_DEFS:
+            ready, text = apps.app_status(self.cfg, app)
+            rows.append({"kind": "app", "title": app.title + "  (PC Apps)", "value": "Ready" if ready else "Not installed",
+                         "detail": app.note if ready else text})
         for name, text in emulators.NOTES:
             rows.append({"kind": "info", "title": f"{name}: {text}", "value": "", "detail": ""})
         rows.append({"kind": "back", "title": "Back to Settings", "value": "",
                      "detail": "To use your own program or Flatpak, edit [emulators] in " + self.configPath})
         return rows
+
+    @Slot(result="QVariantList")
+    def controlsRows(self):
+        return controls.cheat_rows()
+
+    @Slot()
+    def installEmulators(self) -> None:
+        """Open a terminal window that runs the emulator installer (needs the user's own Flatpak setup)."""
+        ok, msg = installer.open_in_terminal()
+        self.show_toast(msg, 9000)
 
     @Slot(str)
     def cycleEmulator(self, system_id: str) -> None:
@@ -495,8 +618,17 @@ class Backend(QObject):
     def importSource(self):
         return self._imp_source
 
+    @Property(str, notify=importChanged)
+    def importKind(self):
+        return self._imp_kind
+
     @Slot()
     def openImport(self) -> None:
+        self.openImportKind("games")
+
+    @Slot(str)
+    def openImportKind(self, kind: str) -> None:
+        self._imp_kind = "bios" if kind == "bios" else "games"
         self._imp_state = "drives"
         self._imp_msg = ""
         self._imp_source = ""
@@ -525,16 +657,19 @@ class Backend(QObject):
             return
         self._imp_source = path
         self._imp_state = "scanning"
-        self._imp_msg = "Looking for games on " + path + " ..."
+        self._imp_msg = ("Looking for BIOS files on " if self._imp_kind == "bios" else "Looking for games on ") + path + " ..."
         self._imp_cancel = threading.Event()
         self.importChanged.emit()
-        cancel, cfg = self._imp_cancel, self.cfg
+        cancel, cfg, kind = self._imp_cancel, self.cfg, self._imp_kind
 
         def worker():
             try:
-                res = importer.scan_for_roms(path, cfg, cancel)
+                if kind == "bios":
+                    res = bios.scan_for_bios(path, cancel)
+                else:
+                    res = importer.scan_for_roms(path, cfg, cancel)
             except Exception as exc:  # pragma: no cover - safety net
-                res = importer.ScanResult()
+                res = bios.BiosScan() if kind == "bios" else importer.ScanResult()
                 res.unclear = -1
                 print(f"[atari] import scan failed: {exc}")
             self.importScanned.emit(res)
@@ -550,6 +685,15 @@ class Backend(QObject):
             self.importChanged.emit()
             return
         names = {sid: sc.name for sid, sc in self.cfg.systems.items()}
+        if isinstance(res, bios.BiosScan):
+            self.import_model.set_items(res.items, names, kind="bios")
+            self._imp_state = "list"
+            n = len(res.items)
+            self._imp_msg = (f"Found {n} BIOS / firmware file{'s' if n != 1 else ''} on {self._imp_source}. "
+                             "Tick the ones to copy - they go to each emulator's own folder. "
+                             if n else f"No known BIOS files found on {self._imp_source}. ") + bios.LEGAL
+            self.importChanged.emit()
+            return
         self.import_model.set_items(res.items, names)
         self._imp_state = "list"
         extra = ""
@@ -580,12 +724,26 @@ class Backend(QObject):
         self._imp_state = "copying"
         self._imp_progress = 0.0
         self._imp_file = ""
-        self._imp_msg = f"Copying {len(items)} game{'s' if len(items) != 1 else ''}..."
+        what = "BIOS file" if self._imp_kind == "bios" else "game"
+        self._imp_msg = f"Copying {len(items)} {what}{'s' if len(items) != 1 else ''}..."
         self._imp_cancel = threading.Event()
         self.importChanged.emit()
         self.importProgressChanged.emit()
         cancel, cfg = self._imp_cancel, self.cfg
         last = [0.0]
+        if self._imp_kind == "bios":
+            def bios_progress(done, total, name):
+                self.importProgressed.emit(done / total if total else 1.0, name)
+
+            def bios_worker():
+                try:
+                    res = bios.copy_items(items, cfg, None, bios_progress, cancel)
+                except Exception as exc:  # pragma: no cover - safety net
+                    res = bios.BiosCopyResult(error=f"Something went wrong: {exc}")
+                self.importFinished.emit(res)
+
+            threading.Thread(target=bios_worker, daemon=True).start()
+            return
 
         def progress(done, total, name, files):
             now = time.monotonic()
@@ -610,6 +768,9 @@ class Backend(QObject):
 
     @Slot(object)
     def _on_import_finished(self, res) -> None:
+        if isinstance(res, bios.BiosCopyResult):
+            self._on_bios_finished(res)
+            return
         # make sure the library looks into the folders the games went to
         changed = False
         for sid, folder in res.systems.items():
@@ -641,6 +802,29 @@ class Backend(QObject):
         self.importProgressChanged.emit()
         self.rescan(toast=False)
 
+    def _on_bios_finished(self, res) -> None:
+        if res.error:
+            msg = res.error
+        else:
+            msg = (f"Copied {res.copied} BIOS file{'s' if res.copied != 1 else ''}." if res.copied
+                   else "Nothing new to copy." if res.skipped_same else "Nothing was copied.")
+            if res.skipped_same:
+                msg += f" {res.skipped_same} already in place."
+            if res.failed:
+                msg += f" {len(res.failed)} could not be copied: " + "; ".join(res.failed[:2])
+            if res.cancelled:
+                msg = "Cancelled. " + msg
+            for note in res.notes:
+                msg += "  " + note
+            if res.copied:
+                msg += "  Your USB stick can be removed safely."
+        self._imp_msg = msg
+        self._imp_state = "done"
+        self._imp_progress = 1.0
+        self.importChanged.emit()
+        self.importProgressChanged.emit()
+        self.show_toast("BIOS files copied" if res.copied else "No BIOS files were copied", 4000)
+
     @Slot()
     def cancelImport(self) -> None:
         """Cancel a scan or copy in progress."""
@@ -660,7 +844,288 @@ class Backend(QObject):
 
     @Slot()
     def backToDrives(self) -> None:
-        self.openImport()
+        self.openImportKind(self._imp_kind)
+
+    # ----- self-update ---------------------------------------------------------
+    @Property(str, constant=True)
+    def version(self):
+        return __version__
+
+    @Property(str, notify=updateChanged)
+    def updateState(self):
+        """idle | checking | uptodate | available | downloading | verifying | installing | done | error"""
+        return self._upd_state
+
+    @Property(str, notify=updateChanged)
+    def updateText(self):
+        return self._upd_text
+
+    @Property(float, notify=updateChanged)
+    def updateFraction(self):
+        return self._upd_frac
+
+    @Property(str, notify=updateChanged)
+    def updateVersion(self):
+        return self._upd_release.version if self._upd_release else ""
+
+    @Property(str, notify=updateChanged)
+    def updateNotes(self):
+        return self._upd_release.notes if self._upd_release else ""
+
+    @Property(bool, notify=updateChanged)
+    def updateAvailable(self):
+        """A newer release is known (checked quietly in the background): drives the badge on the top bar."""
+        return self._upd_release is not None and self._upd_state != "done"
+
+    @Property(bool, notify=updateChanged)
+    def updateBusy(self):
+        return self._upd_state in ("checking", "downloading", "verifying", "installing")
+
+    @Property(bool, notify=updateChanged)
+    def updateAuto(self):
+        return self.cfg.update_check
+
+    def _set_update(self, state: str, text: str = "", frac: float = -1.0) -> None:
+        self._upd_state, self._upd_text, self._upd_frac = state, text, frac
+        self.updateChanged.emit()
+
+    @Slot()
+    def toggleUpdateCheck(self) -> None:
+        self.cfg.update_check = not self.cfg.update_check
+        if not self._demo and not self._first_run:
+            try:
+                save_config(self.cfg)
+            except OSError as exc:
+                self.show_toast(f"Could not save settings: {exc}", 8000)
+        self.updateChanged.emit()
+
+    def _auto_check_update(self) -> None:
+        if self.cfg.update_check and self._upd_state == "idle":
+            self._start_check(manual=False)
+
+    def _start_check(self, manual: bool) -> None:
+        if manual:
+            self._set_update("checking", "Looking for a newer version ...")
+
+        def worker():
+            rel, err = None, ""
+            try:
+                rel = updater.check(__version__)
+            except updater.UpdateError as exc:
+                err = str(exc)
+            except Exception as exc:  # pragma: no cover - safety net
+                err = f"Could not check for updates ({exc})."
+            self.updateChecked.emit(rel, err, manual)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    @Slot(object, str, bool)
+    def _on_update_checked(self, rel, err: str, manual: bool) -> None:
+        if not err:   # remember that we looked (also "nothing new"): at most one silent check a day
+            self.store.set_pref("update_last_check", time.time())
+            self.store.set_pref("update_latest", rel.as_dict() if rel else {})
+        if rel:
+            self._upd_release = rel
+        elif not err:
+            self._upd_release = None
+        if not manual:
+            if self._upd_state == "idle":
+                self.updateChanged.emit()
+            return
+        if err:
+            self._set_update("error", err)
+        elif rel:
+            self._set_update("available", f"Atari {rel.version} is available (you have {__version__}).")
+        else:
+            self._set_update("uptodate", f"You have the newest version ({__version__}).")
+
+    @Slot()
+    def openUpdate(self) -> None:
+        """The Update screen was opened: show what is known, or look now."""
+        if self.updateBusy or self._upd_state == "done":
+            return
+        ok, why = updater.can_self_update(Path(os.environ.get("ATARI_UPDATE_ROOT") or updater.app_dir()))
+        if not ok:
+            self._set_update("error", why)
+            return
+        if self._upd_release is not None:
+            self._set_update("available", f"Atari {self._upd_release.version} is available (you have {__version__}).")
+        else:
+            self._start_check(manual=True)
+
+    @Slot()
+    def recheckUpdate(self) -> None:
+        if not self.updateBusy and self._upd_state != "done":
+            self._start_check(manual=True)
+
+    @Slot()
+    def startUpdate(self) -> None:
+        rel = self._upd_release
+        if rel is None or self.updateBusy or self._running:
+            return
+        root = Path(os.environ.get("ATARI_UPDATE_ROOT") or updater.app_dir())
+        self._upd_cancel = threading.Event()
+        cancel = self._upd_cancel
+        self._set_update("downloading", "Starting ...")
+
+        def worker():
+            try:
+                updater.perform(rel, root, lambda st, tx, fr: self.updateEvent.emit(st, tx, fr), cancel)
+                self.updateEvent.emit("done", f"Atari {rel.version} is installed. Restart Atari to use it.", 1.0)
+            except updater.Cancelled:
+                self.updateEvent.emit("available", f"Cancelled. Atari {rel.version} is still available.", -1.0)
+            except updater.UpdateError as exc:
+                self.updateEvent.emit("error", str(exc), -1.0)
+            except Exception as exc:  # pragma: no cover - safety net
+                self.updateEvent.emit("error", f"The update did not work ({exc}). Nothing of yours was changed.", -1.0)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    @Slot(str, str, float)
+    def _on_update_event(self, state: str, text: str, frac: float) -> None:
+        self._set_update(state, text, frac)
+        if state == "done":
+            self.store.set_pref("update_latest", {})
+
+    @Slot()
+    def cancelUpdate(self) -> None:
+        if self._upd_state == "downloading":
+            self._upd_cancel.set()
+
+    @Slot()
+    def restartAtari(self) -> None:
+        """Start the new Atari a moment after this one has quit."""
+        root = Path(os.environ.get("ATARI_UPDATE_ROOT") or updater.app_dir())
+        cmd = updater.restart_command(root, sys.argv[1:])
+        try:
+            self._restart_spawn(cmd, start_new_session=True, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as exc:
+            self.show_toast(f"Could not restart: {exc}. Please start Atari again yourself.", 8000)
+            return
+        self.quit()
+
+    # ----- cover art (background download) -------------------------------------
+    @Property(str, notify=coversChanged)
+    def coverStatus(self):
+        """'Covers 12/80' while downloading, else the last result ('' when there is nothing to say)."""
+        return self._cover_text
+
+    @Property(bool, notify=coversChanged)
+    def coversBusy(self):
+        return self._cover_busy
+
+    @Property(bool, notify=coversChanged)
+    def coversAuto(self):
+        return self.cfg.covers_auto
+
+    def _covers_allowed(self) -> bool:
+        return not self._demo and not os.environ.get("ATARI_NO_COVERS")
+
+    def _schedule_covers(self) -> None:
+        """After a scan: look for missing covers a moment later, if the toggle is on."""
+        if self.cfg.covers_auto and self._covers_allowed() and not self._first_run:
+            self._cover_timer.start()
+
+    def _set_cover_text(self, text: str) -> None:
+        if text != self._cover_text:
+            self._cover_text = text
+        self.coversChanged.emit()
+
+    @Slot()
+    def toggleCoversAuto(self) -> None:
+        self.cfg.covers_auto = not self.cfg.covers_auto
+        if not self._demo and not self._first_run:
+            try:
+                save_config(self.cfg)
+            except OSError as exc:
+                self.show_toast(f"Could not save settings: {exc}", 8000)
+        self.coversChanged.emit()
+
+    @Slot()
+    def downloadCoversNow(self) -> None:
+        """The Settings button: start (or stop, if already running) and retry games that had no cover before."""
+        if self._cover_busy:
+            self.stopCovers()
+            return
+        if not self._covers_allowed():
+            self.show_toast("Cover download is not available in demo mode.")
+            return
+        self.startCovers(auto=False, force=True)
+
+    @Slot()
+    def stopCovers(self) -> None:
+        self._cover_cancel.set()
+
+    def startCovers(self, auto: bool = True, force: bool = False) -> None:
+        if not self._covers_allowed():
+            return
+        if self._cover_busy:
+            self._cover_rerun = True
+            return
+        games = list(self._all)
+        jobs = covers.jobs_for_games(games)
+        self._cover_by_gid = {g.gid: g for g in games}
+        if not jobs:
+            if not auto:
+                self._set_cover_text("All games already have a cover.")
+            return
+        self._cover_busy = True
+        self._cover_cancel = threading.Event()
+        self._cover_rerun = False
+        self._set_cover_text(f"Covers 0/{len(jobs)}")
+        cancel = self._cover_cancel
+        base = os.environ.get("ATARI_COVERS_THUMBS_URL") or covers.THUMBS_URL
+        steam_base = os.environ.get("ATARI_COVERS_STEAM_URL") or covers.STEAM_URL
+        fast = bool(os.environ.get("ATARI_COVERS_FAST"))   # testing aid: no polite pauses
+
+        def worker():
+            try:
+                http = covers.Http(pause=0.0 if fast else 0.25, backoff=0.01 if fast else 1.0,
+                                   timeout=5 if fast else 15, cancel=cancel)
+                dl = covers.CoverDownloader(base, steam_base, http=http, force=force)
+                rep = dl.run(jobs, progress=lambda d, t, g: self.coverProgressed.emit(d, t, g),
+                             on_cover=lambda j: self.coverArrived.emit(j.gid, str(j.dest), j.kind), cancel=cancel)
+            except Exception as exc:  # pragma: no cover - safety net
+                print(f"[atari] cover download failed: {exc}")
+                rep = covers.Report(offline=True)
+            self.coversFinished.emit(rep)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    @Slot(int, int, int)
+    def _on_cover_progress(self, done: int, total: int, got: int) -> None:
+        self._set_cover_text(f"Covers {done}/{total}")
+
+    @Slot(str, str, str)
+    def _on_cover_arrived(self, gid: str, path: str, kind: str) -> None:
+        """A picture is on disk: show it on the tile right away."""
+        g = self._cover_by_gid.get(gid)
+        # the library may have been rescanned meanwhile: use the current object for that game
+        for cur in self._all:
+            if cur.gid == gid:
+                g = cur
+                break
+        if g is None:
+            return
+        if kind == "steam-header":
+            g.header = path
+        else:
+            g.cover = path
+            if not g.platform == "steam":
+                g.header = path
+            elif not g.header:
+                g.header = path
+        self.model.cover_updated(gid)
+
+    @Slot(object)
+    def _on_covers_finished(self, rep) -> None:
+        self._cover_busy = False
+        self._set_cover_text(rep.text() if (rep.got or rep.offline or rep.cancelled or rep.failed) else
+                             (rep.text() if rep.total else ""))
+        if self._cover_rerun:
+            self._cover_rerun = False
+            self._schedule_covers()
 
     # ----- setup screen ----------------------------------------------------
     @Slot(result="QVariantList")
@@ -680,8 +1145,25 @@ class Backend(QObject):
                          "detail": "Only needed if a drive Steam knows about is not listed above."})
         rows.append({"kind": "import", "title": "Add games from a USB stick or folder", "value": "",
                      "detail": "Copies games into your library. The USB stick is never changed."})
+        rows.append({"kind": "bios", "title": "Add BIOS files (from your own consoles)", "value": "",
+                     "detail": "Finds BIOS / firmware files on a USB stick or folder and copies them to the emulators. "
+                               "Only use files from consoles you own."})
+        rows.append({"kind": "covers", "title": "Download covers",
+                     "value": self._cover_text if self._cover_busy else "",
+                     "detail": (self._cover_text if (self._cover_text and not self._cover_busy) else
+                                "Fetches box art from the internet for games without a picture (press again to stop).")})
+        rows.append({"kind": "coversauto", "title": "Download covers automatically after a scan",
+                     "value": "ON" if self.cfg.covers_auto else "OFF",
+                     "detail": "Only when the internet is reachable; runs quietly in the background."})
+        rows.append({"kind": "update", "title": "Update Atari",
+                     "value": ("New: " + self._upd_release.version) if self._upd_release else "Version " + __version__,
+                     "detail": ("A newer version is ready to install." if self._upd_release else
+                                "Checks for a newer version and installs it. Your games and settings are kept.")})
+        rows.append({"kind": "updateauto", "title": "Check for updates automatically",
+                     "value": "ON" if self.cfg.update_check else "OFF",
+                     "detail": "At most once a day, quietly, only when the internet is reachable."})
         rows.append({"kind": "emulators", "title": "Emulators", "value": "",
-                        "detail": "See which emulators are installed, and how to install the missing ones."})
+                        "detail": "See what is installed, install emulators, and which consoles still need BIOS files."})
         for sc in self.cfg.systems.values():
             n = self._lib.rom_counts.get(sc.id, 0)
             folder = ", ".join(sc.roms) if sc.roms else "Not set - press Enter to choose a folder"

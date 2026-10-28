@@ -13,7 +13,7 @@ Window {
     // everything is drawn in "units" that scale with the window (1 unit = 1 pixel at 1920x1080)
     readonly property real u: Math.max(0.4, Math.min(width / 1920, height / 1080))
 
-    // library | search | menu | sort | setup | browse | emulators | import
+    // library | search | menu | sort | setup | browse | emulators | controls | update | import
     property string mode: backend.firstRun ? "setup" : "library"
     property string area: "grid"        // which part of the library has the highlight: tabs tiles side grid detail
     property int tabFocus: 0            // 0-4 tabs, 5 Add Games, 6 search
@@ -30,6 +30,9 @@ Window {
     property int oskRow: 0
     property int oskCol: 0
     property string importReturn: "library"
+    property string emuBack: "library"       // where Back from the Emulators page goes, while an import started there
+    property string updBack: "library"       // where Back from the Update screen goes: library | setup
+    property string ctlBack: "library"       // where Back from the Controls page goes: library | emulators
     property var browseTarget: ({})
     property var browseData: ({ path: "", parent: "", dirs: [] })
 
@@ -122,8 +125,11 @@ Window {
             { kind: "item", id: "resume", title: "Resume" },
             { kind: "item", id: "sort", title: "Sort: " + backend.sortLabel + "  (change)" },
             { kind: "item", id: "add", title: "Add Games (USB stick or folder)" },
+            { kind: "item", id: "bios", title: "Add BIOS files (USB stick or folder)" },
             { kind: "item", id: "rescan", title: "Rescan library" },
             { kind: "item", id: "emus", title: "Emulators" },
+            { kind: "item", id: "controls", title: "Controls (keyboard keys)" },
+            { kind: "item", id: "update", title: backend.updateAvailable ? "Update Atari  (" + backend.updateVersion + " is ready)" : "Update Atari" },
             { kind: "item", id: "settings", title: "Settings (Steam & ROM folders)" },
             { kind: "item", id: "full", title: "Toggle full screen" },
             { kind: "item", id: "quit", title: "Quit Atari" }
@@ -170,13 +176,62 @@ Window {
         else emuList.firstSelectable()
     }
     function openEmulators() { refreshEmus(false); mode = "emulators" }
-    function openImport(ret) {
+    function openImport(ret, kind) {
+        if (ret === "emus") emuBack = importReturn
         importReturn = ret
-        importScreen.open()
+        importScreen.open(kind || "games")
         mode = "import"
     }
+    function openControls(back) {
+        ctlBack = back
+        ctlList.model = backend.controlsRows()
+        ctlList.firstSelectable()
+        mode = "controls"
+    }
+    function openUpdate(back) {
+        updBack = back
+        backend.openUpdate()
+        updNotes.contentY = 0
+        mode = "update"
+    }
+    function leaveUpdate() {
+        if (updBack === "setup") { refreshSetup(true); mode = "setup" } else mode = "library"
+    }
+    function updPrimary() {
+        var st = backend.updateState
+        if (st === "available") backend.startUpdate()
+        else if (st === "done") backend.restartAtari()
+        else if (st === "error") backend.recheckUpdate()
+        else if (st === "uptodate") leaveUpdate()
+    }
+    function updKey(e) {
+        var k = e.key, st = backend.updateState
+        if (k === Qt.Key_Escape || k === Qt.Key_B) {
+            if (st === "downloading") backend.cancelUpdate()
+            else if (st === "verifying" || st === "installing") return     // too late to stop safely
+            else leaveUpdate()
+            return
+        }
+        if (k === Qt.Key_Up) updNotes.contentY = Math.max(0, updNotes.contentY - 60 * win.u)
+        else if (k === Qt.Key_Down) updNotes.contentY = Math.max(0, Math.min(updNotes.contentHeight - updNotes.height, updNotes.contentY + 60 * win.u))
+        else if (isEnter(k) || k === Qt.Key_Space) updPrimary()
+    }
+    function leaveControls() { if (ctlBack === "emulators") { refreshEmus(true); mode = "emulators" } else mode = "library" }
+    function ctlKey(e) {
+        var k = e.key
+        if (k === Qt.Key_Escape || k === Qt.Key_B) { leaveControls(); return }
+        if (k === Qt.Key_Up) ctlList.move(-1)
+        else if (k === Qt.Key_Down) ctlList.move(1)
+        else if (isEnter(k) || k === Qt.Key_Space) {
+            if (ctlList.model[ctlList.currentIndex].kind === "back") leaveControls()
+        }
+    }
+    function leaveEmus() {
+        if (importReturn === "setup") { refreshSetup(true); mode = "setup" } else mode = "library"
+    }
     function closeImport() {
-        if (importReturn === "setup") { refreshSetup(true); mode = "setup" }
+        if (importReturn === "emus") { importReturn = emuBack; refreshEmus(true); mode = "emulators" }
+        else if (importReturn === "setup") { refreshSetup(true); mode = "setup" }
         else { mode = "library"; buildLists(); area = grid.count > 0 ? "grid" : "tiles" }
     }
     function openBrowser(target, startPath) {
@@ -312,6 +367,9 @@ Window {
         if (id === "resume") mode = "library"
         else if (id === "sort") openSort()
         else if (id === "add") openImport("library")
+        else if (id === "bios") openImport("library", "bios")
+        else if (id === "controls") openControls("library")
+        else if (id === "update") openUpdate("library")
         else if (id === "rescan") { backend.rescan(); buildLists(); mode = "library" }
         else if (id === "emus") { importReturn = "library"; openEmulators() }
         else if (id === "settings") openSetup()
@@ -349,6 +407,11 @@ Window {
         if (r.kind === "steam") { backend.toggleSteam(); refreshSetup(true) }
         else if (r.kind === "steamlib") openBrowser({ kind: "steamlib" }, backend.homeDir())
         else if (r.kind === "import") openImport("setup")
+        else if (r.kind === "bios") openImport("setup", "bios")
+        else if (r.kind === "update") openUpdate("setup")
+        else if (r.kind === "updateauto") { backend.toggleUpdateCheck(); refreshSetup(true) }
+        else if (r.kind === "covers") { backend.downloadCoversNow(); refreshSetup(true) }
+        else if (r.kind === "coversauto") { backend.toggleCoversAuto(); refreshSetup(true) }
         else if (r.kind === "emulators") { importReturn = "setup"; openEmulators() }
         else if (r.kind === "system") {
             var cur = r.detail && r.detail.indexOf("Not set") !== 0 ? r.detail.split(", ")[0] : backend.homeDir()
@@ -361,14 +424,13 @@ Window {
     function overlayBack() {
         if (mode === "setup") leaveSetup()
         else if (mode === "browse") mode = browseTarget.kind === "import" ? "import" : "setup"
-        else if (mode === "emulators") {
-            if (importReturn === "setup") { refreshSetup(true); mode = "setup" } else mode = "library"
-        }
+        else if (mode === "emulators") leaveEmus()
+        else if (mode === "controls") leaveControls()
     }
 
     function emuKey(e) {
         var k = e.key
-        if (k === Qt.Key_Escape || k === Qt.Key_B) { if (importReturn === "setup") { refreshSetup(true); mode = "setup" } else mode = "library"; return }
+        if (k === Qt.Key_Escape || k === Qt.Key_B) { leaveEmus(); return }
         if (k === Qt.Key_Up) emuList.move(-1)
         else if (k === Qt.Key_Down) emuList.move(1)
         else if (isEnter(k) || k === Qt.Key_Space) emuActivate(emuList.currentIndex)
@@ -377,7 +439,10 @@ Window {
         var r = emuList.model[i]
         if (!r) return
         if (r.kind === "emu") { backend.cycleEmulator(r.id); refreshEmus(true) }
-        else if (r.kind === "back") { if (importReturn === "setup") { refreshSetup(true); mode = "setup" } else mode = "library" }
+        else if (r.kind === "install" || r.kind === "app") backend.installEmulators()
+        else if (r.kind === "bios") openImport("emus", "bios")
+        else if (r.kind === "controls") openControls("emulators")
+        else if (r.kind === "back") leaveEmus()
     }
 
     function browseKey(e) {
@@ -421,6 +486,8 @@ Window {
             else if (win.mode === "sort") sortKey(e)
             else if (win.mode === "setup") setupKey(e)
             else if (win.mode === "emulators") emuKey(e)
+            else if (win.mode === "controls") ctlKey(e)
+            else if (win.mode === "update") updKey(e)
             else if (win.mode === "browse") browseKey(e)
             else if (win.mode === "import") importScreen.handleKey(e)
         }
@@ -436,6 +503,7 @@ Window {
             activeTab: win.activeTab
             focusIndex: win.area === "tabs" && win.mode === "library" ? win.tabFocus : -1
             onActivated: function (i) { win.area = "tabs"; win.tabFocus = i; win.activateTab(i) }
+            onUpdateRequested: win.openUpdate("library")
         }
 
         // ------------------------------------------------------------ system tiles
@@ -479,6 +547,21 @@ Window {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             height: 56 * win.u
+        }
+        Rectangle {   // "Covers 12/80" while pictures download in the background
+            id: coverPill
+            visible: backend.coversBusy && win.mode === "library"
+            anchors.right: parent.right
+            anchors.rightMargin: 24 * win.u
+            anchors.verticalCenter: hints.verticalCenter
+            width: coverPillText.implicitWidth + 28 * win.u
+            height: 32 * win.u
+            radius: 16 * win.u
+            color: "#1a1d2c"
+            border.width: 1.5 * win.u
+            border.color: Theme.red
+            Text { id: coverPillText; anchors.centerIn: parent; text: backend.coverStatus; color: "#e6e8f2"
+                   font.pixelSize: 16 * win.u; font.bold: true }
         }
 
         // ------------------------------------------------------------ main area
@@ -928,7 +1011,7 @@ Window {
         Rectangle {
             anchors.fill: parent
             color: "#08090e"
-            visible: win.mode === "setup" || win.mode === "browse" || win.mode === "emulators"
+            visible: win.mode === "setup" || win.mode === "browse" || win.mode === "emulators" || win.mode === "controls"
             MouseArea { anchors.fill: parent }
             Item {
                 id: setupHead
@@ -951,7 +1034,7 @@ Window {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 6 * win.u
                     Text {
-                        text: win.mode === "emulators" ? "EMULATORS" : (backend.firstRun ? "WELCOME! LET'S SET UP YOUR GAMES" : "SETTINGS")
+                        text: win.mode === "emulators" ? "EMULATORS" : win.mode === "controls" ? "CONTROLS" : (backend.firstRun ? "WELCOME! LET'S SET UP YOUR GAMES" : "SETTINGS")
                         color: Theme.redBright
                         font.pixelSize: 42 * win.u
                         font.bold: true
@@ -961,7 +1044,9 @@ Window {
                         text: win.mode === "browse"
                               ? "Pick the folder, then choose \"Use this folder\".  Left = up, Esc / B = cancel."
                               : win.mode === "emulators"
-                              ? "Enter / A switches the emulator for a console.  Esc / B = back."
+                              ? "Enter / A switches the emulator for a console, or runs the action.  Esc / B = back."
+                              : win.mode === "controls"
+                              ? "Keyboard keys inside each emulator.  Up/Down to scroll.  Esc / B = back."
                               : backend.firstRun
                               ? "Up/Down to choose, Enter / A to change.  Choose DONE / CONTINUE (or press Esc / B) to go to your games."
                               : "Up/Down to choose, Enter / A to change.  Delete / X clears a folder.  Esc / B = back."
@@ -1020,6 +1105,34 @@ Window {
                 onClicked: function (i) { win.setupActivate(i) }
             }
             MenuList {
+                id: ctlList
+                u: win.u
+                anchors.top: setupLine.bottom
+                anchors.topMargin: 16 * win.u
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 20 * win.u
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: Math.min(parent.width - 100 * win.u, 1500 * win.u)
+                visible: win.mode === "controls"
+                model: []
+                onClicked: function (i) { if (ctlList.model[i].kind === "back") win.leaveControls() }
+            }
+            Connections {
+                target: backend
+                function onCoversChanged() {
+                    if (win.mode === "setup") win.refreshSetup(true)
+                }
+                function onUpdateChanged() {
+                    if (win.mode === "setup") win.refreshSetup(true)
+                }
+            }
+            Timer {   // the emulator list shows live "installed" state while the installer runs in its own window
+                interval: 3000
+                repeat: true
+                running: win.mode === "emulators"
+                onTriggered: win.refreshEmus(true)
+            }
+            MenuList {
                 id: emuList
                 u: win.u
                 anchors.top: setupLine.bottom
@@ -1067,6 +1180,118 @@ Window {
             onBrowseRequested: win.openBrowser({ kind: "import" }, backend.importBrowseStart())
         }
 
+        // ------------------------------------------------- overlay: update Atari
+        Rectangle {
+            id: updScreen
+            anchors.fill: parent
+            color: "#08090e"
+            visible: win.mode === "update"
+            z: 20
+            MouseArea { anchors.fill: parent }
+            readonly property string st: backend.updateState
+            readonly property bool working: st === "downloading" || st === "verifying" || st === "installing" || st === "checking"
+            Item {
+                id: updHead
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.right: parent.right
+                height: 128 * win.u
+                clip: true
+                Image { anchors.fill: parent; source: Qt.resolvedUrl("../assets/banner.jpg"); fillMode: Image.PreserveAspectCrop
+                        asynchronous: true; sourceSize.width: 1920 }
+                Rectangle { anchors.fill: parent; color: "#88000000" }
+                Column {
+                    anchors.left: parent.left
+                    anchors.leftMargin: 48 * win.u
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 6 * win.u
+                    Text { text: "UPDATE ATARI"; color: Theme.redBright; font.pixelSize: 42 * win.u; font.bold: true
+                           font.letterSpacing: 4 * win.u }
+                    Text { text: "You have version " + backend.version + ". Your games, settings and favourites are never touched."
+                           color: "#e6e8f2"; font.pixelSize: 21 * win.u }
+                }
+            }
+            Rectangle { id: updLine; anchors.top: updHead.bottom; width: parent.width; height: 3 * win.u; color: Theme.red }
+            Column {
+                anchors.top: updLine.bottom
+                anchors.topMargin: 24 * win.u
+                anchors.bottom: updButtons.top
+                anchors.bottomMargin: 20 * win.u
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: Math.min(parent.width - 100 * win.u, 1300 * win.u)
+                spacing: 16 * win.u
+                Text {
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    text: backend.updateText
+                    color: updScreen.st === "error" ? Theme.yellow : (updScreen.st === "done" ? Theme.green : "#e6e8f2")
+                    font.pixelSize: 28 * win.u
+                    font.bold: true
+                }
+                Rectangle {   // progress bar while downloading / installing
+                    visible: updScreen.working && updScreen.st !== "checking"
+                    width: parent.width; height: 14 * win.u; radius: 7 * win.u; color: "#1a1d2c"; clip: true
+                    Rectangle {
+                        id: updFill
+                        width: backend.updateFraction >= 0 ? parent.width * backend.updateFraction : 180 * win.u
+                        height: parent.height; radius: 7 * win.u; color: Theme.red
+                        SequentialAnimation on x {
+                            running: updScreen.visible && backend.updateFraction < 0 && updScreen.working
+                            loops: Animation.Infinite
+                            NumberAnimation { from: -180 * win.u; to: 1300 * win.u; duration: 1300; easing.type: Easing.InOutQuad }
+                        }
+                    }
+                }
+                Text {
+                    visible: updScreen.st === "available" || updScreen.st === "downloading" || updScreen.st === "verifying"
+                    text: "What's new in " + backend.updateVersion + "  (Up / Down to scroll)"
+                    color: Theme.dim; font.pixelSize: 18 * win.u; font.letterSpacing: 1 * win.u
+                }
+                Flickable {
+                    id: updNotes
+                    visible: updScreen.st === "available" || updScreen.st === "downloading" || updScreen.st === "verifying"
+                    width: parent.width
+                    height: parent.height - y
+                    clip: true
+                    contentWidth: width
+                    contentHeight: notesText.implicitHeight + 10 * win.u
+                    boundsBehavior: Flickable.StopAtBounds
+                    Text { id: notesText; width: updNotes.width; wrapMode: Text.Wrap; text: backend.updateNotes
+                           color: "#c4c8da"; font.pixelSize: 19 * win.u; lineHeight: 1.15 }
+                }
+            }
+            Row {
+                id: updButtons
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 30 * win.u
+                anchors.horizontalCenter: parent.horizontalCenter
+                spacing: 20 * win.u
+                Rectangle {
+                    visible: !updScreen.working || updScreen.st === "checking" ? true : false
+                    width: updPrimaryText.implicitWidth + 70 * win.u; height: 62 * win.u; radius: 10 * win.u
+                    gradient: Gradient { GradientStop { position: 0; color: "#ee2a34" } GradientStop { position: 1; color: "#a8121b" } }
+                    border.width: 3 * win.u; border.color: "white"
+                    opacity: updScreen.st === "checking" ? 0.4 : 1
+                    Text { id: updPrimaryText; anchors.centerIn: parent; color: "white"; font.pixelSize: 22 * win.u; font.bold: true
+                           text: updScreen.st === "available" ? "INSTALL UPDATE  (Enter)"
+                               : updScreen.st === "done" ? "RESTART ATARI NOW  (Enter)"
+                               : updScreen.st === "error" ? "TRY AGAIN  (Enter)"
+                               : updScreen.st === "uptodate" ? "OK  (Enter)" : "PLEASE WAIT ..." }
+                    MouseArea { anchors.fill: parent; onClicked: win.updPrimary() }
+                }
+                Rectangle {
+                    visible: updScreen.st !== "verifying" && updScreen.st !== "installing"
+                    width: updBackText.implicitWidth + 70 * win.u; height: 62 * win.u; radius: 10 * win.u
+                    color: "#1a1d2c"; border.width: 2 * win.u; border.color: "#3a3f58"
+                    Text { id: updBackText; anchors.centerIn: parent; color: "#e6e8f2"; font.pixelSize: 22 * win.u; font.bold: true
+                           text: updScreen.st === "downloading" ? "CANCEL  (Esc)"
+                               : updScreen.st === "done" ? "LATER  (Esc)"
+                               : updScreen.st === "available" ? "NOT NOW  (Esc)" : "BACK  (Esc)" }
+                    MouseArea { anchors.fill: parent; onClicked: { if (updScreen.st === "downloading") backend.cancelUpdate(); else win.leaveUpdate() } }
+                }
+            }
+        }
+
         // ------------------------------------------------- overlay: running
         Rectangle {
             anchors.fill: parent
@@ -1098,6 +1323,17 @@ Window {
                     text: "Starting up... this screen returns when you quit the game."
                     color: Theme.dim
                     font.pixelSize: 26 * win.u
+                }
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    visible: backend.runningHint !== ""
+                    width: Math.min(implicitWidth, root.width - 160 * win.u)
+                    wrapMode: Text.Wrap
+                    horizontalAlignment: Text.AlignHCenter
+                    text: backend.runningHint
+                    color: Theme.yellow
+                    font.pixelSize: 24 * win.u
+                    font.bold: true
                 }
             }
         }

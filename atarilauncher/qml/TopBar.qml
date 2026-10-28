@@ -7,6 +7,7 @@ Item {
     property int activeTab: 0
     property int focusIndex: -1      // 0-4 tabs, 5 Add Games, 6 search; -1 = nothing focused
     signal activated(int index)
+    signal updateRequested()
 
     readonly property var tabs: [
         { label: "ALL GAMES", icon: "home" }, { label: "FAVOURITES", icon: "star" }, { label: "RECENT", icon: "clock" },
@@ -113,6 +114,19 @@ Item {
         anchors.rightMargin: 36 * tb.u
         anchors.verticalCenter: parent.verticalCenter
         spacing: 26 * tb.u
+        Rectangle {   // a newer Atari release exists (found by the quiet daily check)
+            visible: backend.updateAvailable
+            anchors.verticalCenter: parent.verticalCenter
+            height: 34 * tb.u
+            width: updText.implicitWidth + 26 * tb.u
+            radius: height / 2
+            color: "#1d3a1f"
+            border.width: 1.5 * tb.u
+            border.color: Theme.green
+            Text { id: updText; anchors.centerIn: parent; text: "UPDATE " + backend.updateVersion; color: "#bff0c0"
+                   font.pixelSize: 14 * tb.u; font.bold: true; font.letterSpacing: 0.8 * tb.u }
+            MouseArea { anchors.fill: parent; onClicked: tb.updateRequested() }
+        }
         Rectangle {
             id: searchBtn
             width: 46 * tb.u
