@@ -1,0 +1,22 @@
+[project]
+name = "atari-launcher"
+version = "0.1.0"
+description = "Console-style game launcher for Linux (Steam + retro ROMs). Personal project; unaffiliated with any trademark owner."
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = ["PySide6-Essentials>=6.5", "tomli>=2.0; python_version < '3.11'"]
+
+[project.optional-dependencies]
+gamepad = ["pygame>=2.1"]
+
+[project.scripts]
+atari = "atarilauncher.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["atarilauncher*"]
+
+[tool.setuptools.package-data]
+atarilauncher = ["qml/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,2 @@
+# Optional: controller support (SDL2 comes bundled with this package). Keyboard works without it.
+pygame>=2.1

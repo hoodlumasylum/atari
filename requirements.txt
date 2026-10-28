@@ -1,0 +1,3 @@
+# Installed automatically by ./install.sh into a private virtual environment (.venv)
+PySide6-Essentials>=6.5
+tomli>=2.0; python_version < "3.11"

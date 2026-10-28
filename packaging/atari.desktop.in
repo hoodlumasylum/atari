@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Atari
+GenericName=Game Launcher
+Comment=Console-style launcher for your Steam and retro games
+Exec=@RUN@
+Icon=atari-launcher
+Terminal=false
+Categories=Game;
+Keywords=games;steam;retro;emulator;launcher;console;
+StartupNotify=false

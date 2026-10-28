@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Original artwork for a personal project. Not any company's logo. -->
+  <rect width="256" height="256" rx="44" fill="#0b0907"/>
+  <g>
+    <rect x="0" y="160" width="256" height="18" fill="#f7c244"/>
+    <rect x="0" y="178" width="256" height="18" fill="#f39a2b"/>
+    <rect x="0" y="196" width="256" height="18" fill="#e5602a"/>
+    <rect x="0" y="214" width="256" height="18" fill="#c8352c"/>
+  </g>
+  <path d="M128 36 L186 150 H158 L148 128 H108 L98 150 H70 Z M117 104 H139 L128 80 Z" fill="#f39a2b" fill-rule="evenodd"/>
+  <rect x="0" y="232" width="256" height="24" fill="#0b0907"/>
+  <rect x="0" y="0" width="256" height="256" rx="44" fill="none" stroke="#4a2c18" stroke-width="6"/>
+</svg>
