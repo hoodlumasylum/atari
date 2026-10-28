@@ -151,8 +151,8 @@ Rectangle {
             Row {
                 anchors.centerIn: parent
                 spacing: 12 * dp.u
-                Icon { name: "play"; size: 26 * dp.u; color: "white"; anchors.verticalCenter: parent.verticalCenter }
-                Text { text: "PLAY"; color: "white"; font.pixelSize: 24 * dp.u; font.bold: true
+                Icon { name: dp.has && dp.game.needsInstall ? "plus" : "play"; size: 26 * dp.u; color: "white"; anchors.verticalCenter: parent.verticalCenter }
+                Text { text: dp.has && dp.game.needsInstall ? "INSTALL" : "PLAY"; color: "white"; font.pixelSize: 24 * dp.u; font.bold: true
                        font.letterSpacing: 2 * dp.u; anchors.verticalCenter: parent.verticalCenter }
             }
             MouseArea { anchors.fill: parent; onClicked: { if (dp.has) dp.play() } }

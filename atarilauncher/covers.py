@@ -30,8 +30,11 @@ from typing import Callable
 from . import paths
 
 THUMBS_URL = "https://thumbnails.libretro.com"
+WIKI_API = "https://en.wikipedia.org/w/api.php"
+SGDB_API = "https://www.steamgriddb.com/api/v2"
+THUMB_KINDS = ("Named_Boxarts", "Named_Titles", "Named_Snaps")   # box art first; title / in-game screens only as a last resort
 STEAM_URL = "https://cdn.cloudflare.steamstatic.com/steam/apps"
-USER_AGENT = "Atari-Launcher/0.3.0 (+https://github.com/hoodlumasylum/atari; personal game launcher)"
+USER_AGENT = "Atari-Launcher/0.3.1 (+https://github.com/hoodlumasylum/atari; personal game launcher)"
 MISS_DAYS = 14          # a game with no cover is not asked for again for this long ("Download covers" forces it)
 INDEX_DAYS = 14         # how long a downloaded directory listing of a system is reused
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
@@ -65,6 +68,7 @@ LIBRETRO_SYSTEMS: dict[str, tuple] = {
     "vb": ("Nintendo - Virtual Boy",), "3do": ("The 3DO Company - 3DO",),
 }
 
+_FILE_ILLEGAL = re.compile(r'[\\/:*?"<>|]')
 _ILLEGAL = re.compile(r"[&*/:`<>?\\|]")
 _TAG = re.compile(r"\s*[\(\[][^\)\]]*[\)\]]")
 _REGION_WORDS = ("usa", "europe", "japan", "world", "australia", "korea", "china", "germany", "france", "spain",
@@ -104,6 +108,53 @@ def normalize(title: str) -> str:
     if m:
         t = f"{m.group(2)} {m.group(1)}"
     return re.sub(r"[^a-z0-9]", "", t)
+
+
+_DISC = re.compile(r"\b(?:disc|disk|cd|gd)\s*[-_.]?\s*\d+\b(?:\s*of\s*\d+)?", re.I)
+_JUNK = re.compile(r"\b(?:ntsc[- ]?[uj]?|pal|redump|v\d+(?:\.\d+)*|rev\s*\w+|track\s*\d+|multi\s*\d*|\d{6,})\b", re.I)
+_ROMAN = {"i": "1", "ii": "2", "iii": "3", "iv": "4", "v": "5", "vi": "6", "vii": "7", "viii": "8", "ix": "9", "x": "10"}
+_ARABIC = {v: k for k, v in _ROMAN.items() if k != "i"}
+
+
+def disc_number(stem: str) -> int:
+    """Disc number named in a file name (1 when none): 'shenmue_disc2.gdi' -> 2, 'Game (Disc 3)' -> 3."""
+    m = re.search(r"(?:disc|disk|cd|gd)\s*[-_.]?\s*(\d+)", stem.replace("_", " "), re.I)
+    return int(m.group(1)) if m else 1
+
+
+def strip_disc(title: str) -> str:
+    t = _DISC.sub(" ", title)
+    t = _JUNK.sub(" ", t)
+    return re.sub(r"\s+", " ", t).strip(" -_.")
+
+
+def _numeral_forms(words: str) -> list[str]:
+    """'final fantasy vii' <-> 'final fantasy 7' (only the last word, so 'a i robot' stays alone)."""
+    parts = words.split()
+    if len(parts) < 2:
+        return []
+    last = parts[-1].lower()
+    if last in _ROMAN and last != "i":
+        return [" ".join(parts[:-1] + [_ROMAN[last]])]
+    if last in _ARABIC:
+        return [" ".join(parts[:-1] + [_ARABIC[last]])]
+    return []
+
+
+def title_keys(stem: str) -> list[str]:
+    """Comparison keys for one file name, best first: as written, without disc / version junk, with roman <-> arabic numerals."""
+    spaced = re.sub(r"[_.]+", " ", stem)
+    spaced = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", spaced) if " " not in spaced.strip() else spaced
+    base = base_title(spaced)
+    out: list[str] = []
+    for variant in (base, strip_disc(base)):
+        if not variant:
+            continue
+        for t in [variant] + _numeral_forms(variant):
+            k = normalize(t)
+            if k and k not in out:
+                out.append(k)
+    return out
 
 
 def regions_in(stem: str) -> list[str]:
@@ -156,7 +207,10 @@ def _score(candidate: str, rom_stem: str) -> tuple:
             break
     bad = sum(1 for t in _BAD_TAGS if f"({t}" in cl or f"[{t}" in cl)
     exact = 0 if candidate.lower() == sanitize(rom_stem).lower() else 1
-    return (exact, bad, region_rank, len(candidate))
+    want_disc = disc_number(rom_stem)
+    cd = re.search(r"disc\s*(\d+)", candidate, re.I)
+    disc_rank = 0 if (not cd or int(cd.group(1)) == want_disc) else 1     # Disc 1 art for disc 1, and for no disc named
+    return (exact, bad, disc_rank, region_rank, len(candidate))
 
 
 class Index:
@@ -176,24 +230,37 @@ class Index:
             hit = self.by_exact.get(v.lower())
             if hit:
                 return hit
-        key = normalize(rom_stem)
-        hits = self.by_key.get(key)
-        if not hits:
-            base = base_title(rom_stem)
+        hits = self.all_matches(rom_stem, limit=1)
+        return hits[0] if hits else ""
+
+    def all_matches(self, rom_stem: str, limit: int = 4) -> list[str]:
+        """libretro names for this file name, best first (exact keys, then ones ignoring disc numbers / numerals, then close spellings)."""
+        keys = title_keys(rom_stem)
+        out: list[str] = []
+
+        def add(names):
+            for n in sorted(names, key=lambda n: _score(n, rom_stem)):
+                if n not in out:
+                    out.append(n)
+
+        for key in keys:
+            if key in self.by_key:
+                add(self.by_key[key])
+        if not out:
+            base = base_title(rom_stem.replace("_", " "))
             for alt in (base.split(" - ")[0], base.split(": ")[0]):
                 if alt and alt != base and len(alt) > 6:
-                    hits = self.by_key.get(normalize(alt))
-                    if hits:
-                        break
-        if not hits and len(key) >= 8:
+                    k = normalize(alt)
+                    if k in self.by_key:
+                        add(self.by_key[k])
+        if len(out) < limit:
             if self._keys is None:
                 self._keys = list(self.by_key)
-            close = difflib.get_close_matches(key, self._keys, n=1, cutoff=0.93)
-            if close:
-                hits = self.by_key[close[0]]
-        if not hits:
-            return ""
-        return sorted(hits, key=lambda n: _score(n, rom_stem))[0]
+            for key in keys[:2]:
+                if len(key) >= 8:
+                    for close in difflib.get_close_matches(key, self._keys, n=3, cutoff=0.93 if not out else 0.9):
+                        add(self.by_key[close])
+        return out[:limit]
 
 
 def parse_listing(page: str) -> list[str]:
@@ -234,7 +301,8 @@ class Http:
                 raise Cancelled()
             time.sleep(min(0.05, max(0.0, end - time.monotonic())))
 
-    def get(self, url: str, max_bytes: int = MAX_IMAGE_BYTES, timeout: float | None = None) -> bytes | None:
+    def get(self, url: str, max_bytes: int = MAX_IMAGE_BYTES, timeout: float | None = None,
+            headers: dict | None = None) -> bytes | None:
         """The body of url; None for 404/403/410 (not there); Offline if it cannot be reached after retries."""
         last_err: Exception | None = None
         for attempt in range(self.retries):
@@ -245,7 +313,7 @@ class Http:
                 self._wait(gap)
             self._last = time.monotonic()
             self.requests += 1
-            req = urllib.request.Request(url, headers={"User-Agent": self.ua, "Accept": "*/*"})
+            req = urllib.request.Request(url, headers={"User-Agent": self.ua, "Accept": "*/*", **(headers or {})})
             retry_after = 0.0
             try:
                 with urllib.request.urlopen(req, timeout=timeout or self.timeout) as resp:
@@ -337,6 +405,28 @@ def jobs_for_games(games, covers_root: Path | None = None) -> list[Job]:
     return out
 
 
+def dest_for_game(g, covers_root: Path | None = None) -> Path | None:
+    """Where this game's cover picture lives (the place the automatic download and your own pictures use), or None."""
+    root = covers_root or paths.user_covers_dir()
+    if g.platform == "steam" or (g.platform == "free" and g.steam_appid):
+        return steam_art_path(g.steam_appid, "cover", root) if g.steam_appid else None
+    if g.rom_path and g.platform in LIBRETRO_SYSTEMS:
+        stem = Path(g.rom_path).stem
+        if g.platform == "ps3" or not stem:
+            stem = g.title or stem
+        return root / g.platform / (_FILE_ILLEGAL.sub("_", stem) + ".png")
+    return None
+
+
+def job_for_game(g, covers_root: Path | None = None) -> Job | None:
+    dest = dest_for_game(g, covers_root)
+    if dest is None:
+        return None
+    if g.platform in ("steam", "free"):
+        return Job(g.gid, "steam-cover", "steam", g.title, g.steam_appid, dest)
+    return Job(g.gid, "rom", g.platform, g.title, Path(g.rom_path).stem or g.title, dest)
+
+
 @dataclass
 class Report:
     total: int = 0
@@ -363,11 +453,40 @@ class Report:
         return ", ".join(bits) + "."
 
 
+def not_found_list(cache_dir: Path | None = None) -> list[dict]:
+    """Games the last downloads found no cover for: [{gid, title, system, stem}] (shown under Help > Covers not found)."""
+    data = CoverDownloader._load_json((cache_dir or (paths.user_covers_dir() / ".cache")) / "notfound.json")
+    return [{"gid": g, **v} for g, v in data.items() if isinstance(v, dict)]
+
+
+def forget_not_found(gid: str = "", cache_dir: Path | None = None) -> None:
+    """Remove one game (or all, gid='') from the not-found list and from the 'do not retry yet' list, so the next run tries again."""
+    cache = cache_dir or (paths.user_covers_dir() / ".cache")
+    nf = CoverDownloader._load_json(cache / "notfound.json")
+    ms = CoverDownloader._load_json(cache / "misses.json")
+    for g, v in list(nf.items()):
+        if not gid or g == gid:
+            nf.pop(g, None)
+            ms.pop(f"rom:{v.get('system')}:{v.get('stem')}", None)
+    if not gid:
+        ms = {k: v for k, v in ms.items() if not k.startswith("rom:")}
+    try:
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / "notfound.json").write_text(json.dumps(nf), encoding="utf-8")
+        (cache / "misses.json").write_text(json.dumps(ms), encoding="utf-8")
+    except OSError:
+        pass
+
+
 class CoverDownloader:
     """Downloads missing covers. Create one per run; call run() from a background thread."""
 
     def __init__(self, thumbs_url: str = THUMBS_URL, steam_url: str = STEAM_URL, cache_dir: Path | None = None,
-                 http: Http | None = None, force: bool = False, now: Callable[[], float] = time.time):
+                 http: Http | None = None, force: bool = False, now: Callable[[], float] = time.time,
+                 wiki_url: str = WIKI_API, sgdb_url: str = SGDB_API, sgdb_key: str = "", wikipedia: bool = False):
+        self.wiki_url, self.sgdb_url = wiki_url, sgdb_url.rstrip("/")
+        self.sgdb_key = (sgdb_key or "").strip()       # optional, entered by the user in Settings; never required
+        self.wikipedia = wikipedia
         self.thumbs = thumbs_url.rstrip("/")
         self.steam = steam_url.rstrip("/")
         self.cache = cache_dir or (paths.user_covers_dir() / ".cache")
@@ -375,6 +494,7 @@ class CoverDownloader:
         self.force = force
         self.now = now
         self._misses = self._load_json(self.cache / "misses.json")
+        self._notfound = self._load_json(self.cache / "notfound.json")      # {gid: {title, system, ts}} for the Help screen
         self._indexes: dict[str, Index | None] = {}
 
     # -- small json caches
@@ -392,6 +512,9 @@ class CoverDownloader:
             tmp = self.cache / "misses.json.tmp"
             tmp.write_text(json.dumps(self._misses), encoding="utf-8")
             os.replace(tmp, self.cache / "misses.json")
+            tmp = self.cache / "notfound.json.tmp"
+            tmp.write_text(json.dumps(self._notfound), encoding="utf-8")
+            os.replace(tmp, self.cache / "notfound.json")
         except OSError:
             pass
 
@@ -402,16 +525,17 @@ class CoverDownloader:
         return isinstance(ts, (int, float)) and self.now() - ts < MISS_DAYS * 86400
 
     # -- libretro directory listing (one request per system, cached on disk)
-    def index_for(self, folder: str) -> Index | None:
-        if folder in self._indexes:
-            return self._indexes[folder]
-        slug = re.sub(r"[^A-Za-z0-9]+", "_", folder).strip("_")
+    def index_for(self, folder: str, kind: str = "Named_Boxarts") -> Index | None:
+        ck = f"{folder}/{kind}"
+        if ck in self._indexes:
+            return self._indexes[ck]
+        slug = re.sub(r"[^A-Za-z0-9]+", "_", folder).strip("_") + ("" if kind == "Named_Boxarts" else "." + kind)
         cache_file = self.cache / "index" / f"{slug}.json"
         data = self._load_json(cache_file)
         names = data.get("names") if isinstance(data.get("names"), list) else None
         fresh = names is not None and self.now() - float(data.get("fetched", 0) or 0) < INDEX_DAYS * 86400
         if not fresh:
-            url = f"{self.thumbs}/{urllib.parse.quote(folder)}/Named_Boxarts/"
+            url = f"{self.thumbs}/{urllib.parse.quote(folder)}/{kind}/"
             body = self.http.get(url, max_bytes=40 * 1024 * 1024, timeout=60)
             if body is not None:
                 got = parse_listing(body.decode("utf-8", "replace"))
@@ -423,43 +547,154 @@ class CoverDownloader:
                     except OSError:
                         pass
         idx = Index(names) if names else None
-        self._indexes[folder] = idx
+        self._indexes[ck] = idx
         return idx
 
-    def _thumb_url(self, folder: str, name: str) -> str:
-        return (f"{self.thumbs}/{urllib.parse.quote(folder)}/Named_Boxarts/"
+    def _thumb_url(self, folder: str, name: str, kind: str = "Named_Boxarts") -> str:
+        return (f"{self.thumbs}/{urllib.parse.quote(folder)}/{kind}/"
                 f"{urllib.parse.quote(sanitize(name) + '.png', safe='()!' + chr(39))}")
 
     # -- one job
-    def _fetch_rom(self, job: Job) -> bool:
-        folders = LIBRETRO_SYSTEMS.get(job.system, ())
-        stems = [job.stem] + ([job.title] if job.title and job.title != job.stem else [])
-        for folder in folders:
-            idx = None
-            try:
-                idx = self.index_for(folder)
-            except Offline:
-                raise
+    def _stems(self, job: Job) -> list[str]:
+        return [job.stem] + ([job.title] if job.title and job.title != job.stem else [])
+
+    def _libretro(self, job: Job, kind: str) -> bool:
+        """One kind of libretro picture (box art / title screen / in-game screen) for this game."""
+        for folder in LIBRETRO_SYSTEMS.get(job.system, ()):
+            idx = self.index_for(folder, kind)
             if idx is not None:
-                for stem in stems:
+                for stem in self._stems(job):
                     hit = idx.match(stem)
                     if hit:
-                        data = self.http.get(self._thumb_url(folder, hit))
+                        data = self.http.get(self._thumb_url(folder, hit, kind))
                         if data and looks_like_image(data):
                             _write_atomic(job.dest, data)
                             return True
-            else:  # no listing available: guess the names directly (a few tries only)
+            elif kind == "Named_Boxarts":   # no listing available: guess the names directly (a few tries only)
                 tried = 0
-                for stem in stems:
+                for stem in self._stems(job):
                     for variant in name_variants(stem):
                         if tried >= 6:
                             break
                         tried += 1
-                        data = self.http.get(self._thumb_url(folder, variant))
+                        data = self.http.get(self._thumb_url(folder, variant, kind))
                         if data and looks_like_image(data):
                             _write_atomic(job.dest, data)
                             return True
         return False
+
+    def _fetch_rom(self, job: Job) -> bool:
+        """Sources, best picture first: libretro box art -> SteamGridDB (only with the user's own free key) ->
+        Wikipedia's article picture (the cover shown in the game's infobox) -> libretro title screen -> in-game screenshot."""
+        if self._libretro(job, "Named_Boxarts"):
+            return True
+        if self.sgdb_key and self._from_urls(job, [u for u, _l in self.sgdb_images(job.title or job.stem, 3)]):
+            return True
+        if self.wikipedia and self._from_urls(job, [u for u, _l in self.wikipedia_images(job.title or job.stem, job.system, 1)]):
+            return True
+        return self._libretro(job, "Named_Titles") or self._libretro(job, "Named_Snaps")
+
+    def _from_urls(self, job: Job, urls: list[str]) -> bool:
+        for u in urls:
+            data = self.http.get(u)
+            if data and looks_like_image(data):
+                _write_atomic(job.dest, data)
+                return True
+        return False
+
+    # -- optional / free extra sources
+    def wikipedia_images(self, title: str, system: str, limit: int = 3) -> list[tuple[str, str]]:
+        """[(image url, label)] - only the article's own picture (the infobox cover), found through Wikipedia's public API.
+        Pictures there are owned by the game's publisher and shown for identification; Atari keeps them on your PC only."""
+        base = base_title(strip_disc(title.replace("_", " ")) or title)
+        if not base:
+            return []
+        sysname = {"dreamcast": "Dreamcast", "ps1": "PlayStation", "ps2": "PlayStation 2", "psp": "PlayStation Portable",
+                   "saturn": "Sega Saturn", "gamecube": "GameCube", "n64": "Nintendo 64", "snes": "Super Nintendo",
+                   "nes": "NES", "genesis": "Mega Drive"}.get(system, "")
+        want = normalize(base)
+        found: list[tuple[str, str]] = []
+        for query in (f"{base} video game {sysname}".strip(), f"{base} video game"):
+            qs = urllib.parse.urlencode({"action": "query", "format": "json", "generator": "search", "gsrsearch": query,
+                                         "gsrlimit": 6, "prop": "pageimages", "piprop": "thumbnail", "pithumbsize": 600,
+                                         "redirects": 1})
+            body = self.http.get(f"{self.wiki_url}?{qs}", max_bytes=2_000_000)
+            try:
+                pages = (json.loads(body.decode("utf-8", "replace")).get("query") or {}).get("pages", {}) if body else {}
+            except ValueError:
+                pages = {}
+            for pg in sorted(pages.values(), key=lambda p: p.get("index", 99)):
+                title_ = str(pg.get("title", ""))
+                thumb = (pg.get("thumbnail") or {}).get("source")
+                # the page must really be about this game: the same name, or "Name (video game)"
+                paren = re.search(r"\(([^)]*)\)\s*$", title_)
+                stem_ = normalize(re.sub(r"\s*\(.*?\)\s*$", "", title_))
+                about_game = stem_ == want or (stem_.startswith(want) and bool(paren) and "game" in paren.group(1).lower())
+                if thumb and about_game and (thumb, title_) not in found:
+                    found.append((thumb, f"Wikipedia: {title_}"))
+            if len(found) >= limit:
+                break
+        return found[:limit]
+
+    def sgdb_images(self, title: str, limit: int = 3) -> list[tuple[str, str]]:
+        """[(image url, label)] from SteamGridDB (needs the user's own free API key, set in Settings)."""
+        if not self.sgdb_key:
+            return []
+        auth = {"Authorization": f"Bearer {self.sgdb_key}"}
+        term = base_title(strip_disc(title.replace("_", " ")) or title)
+        body = self.http.get(f"{self.sgdb_url}/search/autocomplete/{urllib.parse.quote(term)}", max_bytes=1_000_000, headers=auth)
+        try:
+            games = (json.loads(body.decode("utf-8", "replace")).get("data") or []) if body else []
+        except ValueError:
+            games = []
+        if not games:
+            return []
+        gid, gname = games[0].get("id"), games[0].get("name", term)
+        body = self.http.get(f"{self.sgdb_url}/grids/game/{gid}?dimensions=600x900,342x482,660x930&types=static",
+                             max_bytes=2_000_000, headers=auth)
+        try:
+            grids = (json.loads(body.decode("utf-8", "replace")).get("data") or []) if body else []
+        except ValueError:
+            grids = []
+        return [(g["url"], f"SteamGridDB: {gname}") for g in grids if g.get("url")][:limit]
+
+    # -- the "Pick cover" screen: several candidates from every source
+    def candidates(self, system: str, stem: str, title: str, limit: int = 8) -> list[dict]:
+        """[{source, label, url, kind}] up to ``limit``; ``url`` is a picture the user can choose. Never raises on a bad source."""
+        out: list[dict] = []
+
+        def add(source, label, url):
+            if url and all(o["url"] != url for o in out) and len(out) < limit:
+                out.append({"source": source, "label": label, "url": url})
+
+        stems = [stem] + ([title] if title and title != stem else [])
+        for kind, nice in (("Named_Boxarts", "Box art"), ("Named_Titles", "Title screen"), ("Named_Snaps", "In-game")):
+            per_kind = 3 if kind == "Named_Boxarts" else 1
+            try:
+                for folder in LIBRETRO_SYSTEMS.get(system, ()):
+                    idx = self.index_for(folder, kind)
+                    if idx is None:
+                        continue
+                    names: list[str] = []
+                    for s_ in stems:
+                        for n in idx.all_matches(s_, limit=per_kind + 1):
+                            if n not in names:
+                                names.append(n)
+                    for n in names[:per_kind]:
+                        add("libretro", f"{nice}: {n}", self._thumb_url(folder, n, kind))
+            except (Offline, Cancelled):
+                break
+            except OSError:
+                continue
+        for fn in (lambda: self.sgdb_images(title or stem, 3), lambda: self.wikipedia_images(title or stem, system, 2) if self.wikipedia else []):
+            try:
+                for url, label in fn():
+                    add("web", label, url)
+            except (Offline, Cancelled):
+                continue
+            except OSError:
+                continue
+        return out
 
     def _fetch_steam(self, job: Job) -> bool:
         appid = job.stem
@@ -519,11 +754,14 @@ class CoverDownloader:
             if ok:
                 rep.got += 1
                 self._misses.pop(job.key, None)
+                self._notfound.pop(job.gid, None)
                 if on_cover:
                     on_cover(job)
             else:
                 rep.missing += 1
                 self._misses[job.key] = self.now()
+                if job.kind == "rom":
+                    self._notfound[job.gid] = {"title": job.title, "system": job.system, "stem": job.stem, "ts": self.now()}
             if progress:
                 progress(rep.done, rep.total, rep.got)
         self._save_misses()

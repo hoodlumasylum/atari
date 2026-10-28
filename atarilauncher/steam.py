@@ -76,6 +76,39 @@ def read_mounts(mounts_file: str = "/proc/mounts") -> list[tuple[str, str]]:
     return out
 
 
+LINUX_FS = {"ext4", "ext3", "ext2", "btrfs", "xfs", "f2fs"}
+BAD_FS = NTFS_FSTYPES | {"exfat", "vfat", "msdos"}
+
+
+def drive_advice(mounts: list[tuple[str, str]] | None = None, home: Path | None = None) -> list[dict]:
+    """Where to keep Steam games: one entry per mounted drive that matters, {path, fs, ok, text}.
+    Linux file systems (ext4, btrfs, xfs) are right for games; NTFS / exFAT / FAT drives (a Windows drive or a
+    USB stick) make Proton games fail or run badly."""
+    mounts = read_mounts() if mounts is None else mounts
+    home = home or Path.home()
+    roots = ("/media", "/mnt", "/run/media")
+    out: list[dict] = []
+    seen: set[str] = set()
+    for mp, fs in mounts:
+        mp_n = mp.rstrip("/") or "/"
+        user_drive = mp_n.startswith(roots) or mp_n == str(home) or mp_n == "/home"
+        if fs not in LINUX_FS | BAD_FS or mp_n in seen:
+            continue
+        if not user_drive and mp_n != "/":
+            continue
+        seen.add(mp_n)
+        label = "your main disk" if mp_n in ("/", "/home", str(home)) else mp_n
+        if fs in LINUX_FS:
+            out.append({"path": mp_n, "fs": fs, "ok": True,
+                        "text": f"{label} ({fs}): good for Steam games."})
+        else:
+            out.append({"path": mp_n, "fs": fs, "ok": False,
+                        "text": f"{label} ({fs.upper()}): avoid for Steam games - Windows / USB-style drives often make Proton games fail. "
+                                "Keep games on a Linux (ext4) drive."})
+    out.sort(key=lambda d: (not d["ok"], d["path"]))
+    return out
+
+
 def filesystem_of(path: Path, mounts: list[tuple[str, str]]) -> str:
     real = os.path.realpath(path)
     best, best_len = "", -1

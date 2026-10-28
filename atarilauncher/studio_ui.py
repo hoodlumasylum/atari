@@ -11,6 +11,7 @@ from pathlib import Path
 from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 
 from . import paths
+from . import studio_fix
 from .studio import beatgen, numpy_available, recorder
 
 try:                                           # numpy is optional: without it the Studio only shows how to add it
@@ -20,14 +21,16 @@ except ImportError:                            # pragma: no cover - exercised by
 
 KEYS = beatgen.NOTE_NAMES
 LOUD_ORDER = ["quiet", "normal", "loud"]
-STUDIO_HELP = ("The Studio needs one extra library (numpy). Run ./install.sh again in the Atari folder, "
-               "or:  ~/.local/share/atari-launcher/.venv/bin/pip install numpy")
+STUDIO_HELP = ("The Studio needs one extra library (numpy). Press \"Fix Studio\" below and Atari adds it for you "
+               "(needs internet). Or run ./install.sh again in the Atari folder.")
 
 
 class StudioController(QObject):
     changed = Signal()                 # rows / grid / state changed: the screen redraws
     playingChanged = Signal()
     toastRequested = Signal(str)
+    availableChanged = Signal()
+    fixDone = Signal(bool, str)        # worker thread -> main thread: (worked, plain-English text)
 
     def __init__(self, backend, parent=None):
         super().__init__(parent)
@@ -60,11 +63,22 @@ class StudioController(QObject):
         self._rec_timer.timeout.connect(lambda: self.stop_record(auto=True))
         self._confirm = ""
         self.last_export = ""
+        self._fixing = False
+        self._fix_text = ""
+        self.fixDone.connect(self._fix_finished)
 
     # ------------------------------------------------------------------ helpers
-    @Property(bool, constant=True)
+    @Property(bool, notify=availableChanged)
     def available(self) -> bool:
-        return numpy_available()
+        return numpy_available() and mixer is not None
+
+    @Property(bool, notify=changed)
+    def fixing(self) -> bool:
+        return self._fixing
+
+    @Property(str, notify=availableChanged)
+    def fixText(self) -> str:
+        return self._fix_text
 
     @Property(str, constant=True)
     def helpText(self) -> str:
@@ -173,9 +187,76 @@ class StudioController(QObject):
 
     @Slot(str, result="QVariantList")
     def rows(self, page: str):
-        if not numpy_available():
-            return [{"kind": "info", "title": STUDIO_HELP}, {"kind": "item", "id": "back", "title": "Back"}]
+        if not self.available:
+            return self._fix_rows()
         return {"beat": self._beat_rows, "record": self._record_rows, "mix": self._mix_rows}.get(page, lambda: [])()
+
+    def _fix_rows(self) -> list:
+        ps = studio_fix.problems(numpy_available())
+        rows = [{"kind": "info", "title": "The Studio cannot start yet.  " + studio_fix.summary(ps)}]
+        if self._fix_text:
+            rows.append({"kind": "info", "title": self._fix_text})
+        rows.append({"kind": "done", "id": "fix", "title": "Working on it..." if self._fixing else "Fix Studio (install what is missing)"})
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    @Slot()
+    def fix(self) -> None:
+        """One press: install what the Studio is missing (numpy, recording tools), then switch it on - no restart needed."""
+        if self._fixing:
+            return
+        ps = studio_fix.problems(numpy_available(), sources=None)
+        if not any(p.fixable for p in ps):
+            self._fix_text = "Nothing can be fixed from here. " + studio_fix.summary(ps) + " Run ./install.sh again in the Atari folder."
+            self.availableChanged.emit()
+            self.changed.emit()
+            return
+        self._fixing, self._fix_text = True, "Installing - this can take a minute..."
+        studio_fix.log("Fix Studio pressed: " + ", ".join(p.id for p in ps))
+        self.availableChanged.emit()
+        self.changed.emit()
+
+        def work():
+            lines: list[str] = []
+
+            def out(line: str) -> None:
+                lines.append(line)
+                studio_fix.log("fix: " + line)
+            try:
+                ok, text = studio_fix.fix(ps, out)
+            except Exception as exc:       # never take Atari down
+                ok, text = False, f"The fix hit a problem: {exc}"
+                studio_fix.log(text)
+            self.fixDone.emit(ok, text)
+
+        import threading
+        threading.Thread(target=work, daemon=True, name="atari-studio-fix").start()
+
+    @Slot(bool, str)
+    def _fix_finished(self, ok: bool, text: str) -> None:
+        self._fixing = False
+        self._fix_text = text
+        if ok and numpy_available():
+            self._reload_modules()
+        studio_fix.log(f"Fix Studio finished ok={ok}: {text}")
+        self._say(text, 9000)
+        self.availableChanged.emit()
+        self.changed.emit()
+
+    def _reload_modules(self) -> None:
+        """numpy was installed while Atari was running: load the Studio's numpy parts now."""
+        global mixer, proj, synth
+        import importlib
+        importlib.invalidate_caches()
+        try:
+            from .studio import mixer as _m, project as _p, synth as _s
+        except Exception as exc:
+            studio_fix.log(f"reload failed: {exc!r}")
+            self._fix_text = f"numpy was added but the Studio still could not load ({exc}). Restart Atari once."
+            return
+        mixer, proj, synth = _m, _p, _s
+        if self.project is None:
+            self.project = proj.Project()
 
     def _row(self, rid, title, value="", detail="", kind="item", tone=""):
         r = {"kind": kind, "id": rid, "title": title, "value": value, "detail": detail}
@@ -203,13 +284,20 @@ class StudioController(QObject):
 
     def _sources_label(self) -> str:
         if not self.sources:
-            return "Default microphone"
+            return "Default microphone (none found)"
         return self.sources[self.source_i % len(self.sources)]["name"]
 
     def _record_rows(self) -> list:
         rows = []
         if self.project.pattern is None:
             rows.append({"kind": "info", "title": "Tip: make a beat first, then record over it. (You can also record without a beat.)"})
+        ps = studio_fix.problems(True, sources=self.sources)
+        for pr in ps:
+            rows.append({"kind": "info", "title": pr.text})
+        if any(pr.id == "audio-tools" and pr.fixable for pr in ps):
+            rows.append(self._row("fix", "Fix recording (install the recording tools)", "", "Asks for your password once."))
+        if self._fix_text and ps:
+            rows.append({"kind": "info", "title": self._fix_text})
         rows += [
             self._row("input", "Microphone", self._sources_label(), "Left / Right to choose.  Plug it in first."),
             self._row("monitor", "Hear myself in headphones", "ON" if self.monitor else "OFF",
@@ -374,7 +462,10 @@ class StudioController(QObject):
         if rid == "back":
             self.stop_play()
             return "back"
-        if not numpy_available():
+        if rid == "fix":
+            self.fix()
+            return ""
+        if not self.available:
             return ""
         keep = self._confirm
         self._confirm = ""
@@ -388,7 +479,9 @@ class StudioController(QObject):
             if page == "mix":
                 return self._act_mix(rid)
         except Exception as exc:                   # the Studio must never take Atari down with it
-            self._say(f"The Studio hit a problem: {exc}", 9000)
+            import traceback
+            studio_fix.log(f"{page}/{rid} failed: {exc!r} " + traceback.format_exc().replace("\n", " | "))
+            self._say(f"The Studio hit a problem: {exc}. Help > Copy log has the details.", 9000)
         return ""
 
     def _home(self, rid: str) -> str:
@@ -536,12 +629,14 @@ class StudioController(QObject):
         try:
             self.rec.start(path, src, self.monitor)
         except RuntimeError as exc:
+            studio_fix.log("record start failed: " + str(exc))
             self._say(str(exc), 10000)
             return
         time.sleep(0.15)
         problem = self.rec.failed_early()
         if problem:
             self.rec.stop()
+            studio_fix.log("microphone failed: " + problem)
             self._say("Could not use the microphone: " + problem, 10000)
             return
         self.recording = True
@@ -560,6 +655,7 @@ class StudioController(QObject):
         f = self.rec.stop()
         take, self._rec_take = self._rec_take, None
         if f is None or take is None:
+            studio_fix.log("nothing was recorded")
             self._say("Nothing was recorded. Is the microphone plugged in and chosen?", 9000)
         else:
             # the count-in and the microphone's delay are cut from the start so the voice lines up with the beat

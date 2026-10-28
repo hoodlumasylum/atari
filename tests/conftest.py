@@ -11,6 +11,8 @@ os.environ.setdefault("ATARI_NO_COVERS", "1")
 os.environ.setdefault("ATARI_NO_MINIMIZE", "1")
 os.environ.setdefault("ATARI_NO_UPDATE_CHECK", "1")
 os.environ.setdefault("ATARI_NO_SOUND", "1")   # no helper process / audio in tests unless a test asks for it
+os.environ.setdefault("ATARI_HINT_DELAY", "0")     # no pause for the "press Esc twice" screen
+os.environ.setdefault("ATARI_NO_NOTIFY", "1")
 FIX = Path(__file__).parent / "fixtures"
 
 

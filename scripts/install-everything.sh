@@ -4,6 +4,8 @@
 #   atari-install-everything --list       show what is installed
 #   atari-install-everything duckstation pcsx2     install only these
 #   atari-install-everything --help       all options
+#   atari-install-everything --essentials   only RetroArch+cores, PCSX2, Dolphin, PPSSPP, melonDS, mGBA, Flycast
+# DuckStation (its Flatpak is end-of-life) comes as the official AppImage, SHA-256 checked; ffmpeg is installed for the screen recorder.
 # (Roblox runs through Sober: unofficial, may break after Roblox updates, and you sign in yourself.)
 # It uses Flatpak in your own account (no sudo). Only installing Flatpak itself, or the two apt-only
 # emulators (mednafen, mupen64plus), asks for your password - and asks you first.

@@ -48,14 +48,14 @@ def log_lines(fp):
 def test_installs_adds_flathub_continues_after_failure_and_summarises(fp, monkeypatch, tmp_path):
     monkeypatch.setenv("FAKE_FP_FAIL", "net.pcsx2.PCSX2")
     out = []
-    sel = [EMUS["duckstation"], EMUS["pcsx2"], apps.BY_ID["roblox"], apps.BY_ID["heroic"]]
+    sel = [EMUS["mgba"], EMUS["pcsx2"], apps.BY_ID["roblox"], apps.BY_ID["heroic"]]
     rc = installer.run_install(sel, out=out.append, assume_yes=True, use_apt=False, with_cores=False, home=tmp_path)
     text = "\n".join(out)
     assert rc == 1                                                    # one failed
     log = log_lines(fp)
     assert any(l.startswith("remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo")
                for l in log)
-    for fid in ("org.duckstation.DuckStation", "org.vinegarhq.Sober", "com.heroicgameslauncher.hgl"):
+    for fid in ("io.mgba.mGBA", "org.vinegarhq.Sober", "com.heroicgameslauncher.hgl"):
         assert (fp / "installed" / fid).exists()
     assert not (fp / "installed" / "net.pcsx2.PCSX2").exists()
     assert "DID NOT INSTALL (1)" in text and "PCSX2" in text and "Installed now (3)" in text
@@ -64,7 +64,7 @@ def test_installs_adds_flathub_continues_after_failure_and_summarises(fp, monkey
 
 
 def test_second_run_is_idempotent(fp, tmp_path):
-    sel = [EMUS["duckstation"], apps.BY_ID["lutris"]]
+    sel = [EMUS["mgba"], apps.BY_ID["lutris"]]
     installer.run_install(sel, out=lambda s: None, assume_yes=True, use_apt=False, with_cores=False, home=tmp_path)
     n_installs = sum(1 for l in log_lines(fp) if l.startswith("install "))
     out = []

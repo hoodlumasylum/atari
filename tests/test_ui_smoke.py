@@ -75,7 +75,7 @@ def test_add_games_from_fake_usb_end_to_end(tmp_path, fake_system):
     os.environ.update(env_media)
     try:
         r = run(tmp_path, fake_system["home"], "--selftest",
-                keys="options,down,down,accept,wait,accept,wait:1000,accept,wait:2500")
+                keys="options,down,down,accept,wait,accept,wait,accept,wait:1000,accept,wait:2500")
     finally:
         os.environ.clear()
         os.environ.update(old)

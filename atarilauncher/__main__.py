@@ -59,6 +59,11 @@ def main(argv=None) -> int:
         return 1
     window = engine.rootObjects()[0]
     backend.set_window(window)
+    ind_engine = None
+    if not headless:
+        ind_engine = QQmlApplicationEngine()
+        ind_engine.rootContext().setContextProperty("backend", backend)
+        ind_engine.load(QUrl.fromLocalFile(str(Path(__file__).parent / "qml" / "RecIndicator.qml")))
     if not (args.selftest or args.screenshot):
         # make sure the window is raised and owns the keyboard focus on real X11 / Wayland sessions
         QTimer.singleShot(0, lambda: (window.raise_(), window.requestActivate()))
@@ -69,6 +74,7 @@ def main(argv=None) -> int:
             window.setHeight(h)
         except ValueError:
             pass
+    app.aboutToQuit.connect(backend.stop_all_helpers)
     app.aboutToQuit.connect(backend.stop_gamepad)
     app.aboutToQuit.connect(backend.stop_sound)
 

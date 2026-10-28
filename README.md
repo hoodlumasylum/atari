@@ -27,6 +27,61 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
+## What's new in 0.3.1
+
+### Get back from Netflix, YouTube, Kodi … with the keyboard
+Web-app tiles (Netflix, YouTube, Disney+, Prime Video, Twitch, Instagram, Facebook, TikTok) and **Kodi** open full screen. To get back to Atari press:
+
+| What | Keys |
+|---|---|
+| **Esc twice quickly** (within 0.6 s) | closes the app, Atari comes back |
+| **Hold Esc for 1 second** | same |
+| **Ctrl + Esc** | same, instantly |
+| **Controller: hold Guide / Home, press B** | same |
+
+**One single Esc still does what it always did** (leave video full screen). When the app or browser closes by itself, Atari is raised and focused again.
+A launch screen says *"Press Esc twice (or hold Esc for 1 second) to return to Atari"* for a moment before the app covers it, and the same text is in **Help**.
+Turn it off in **Settings → Esc returns to Atari**. How it works: a tiny watcher reads the keyboard state of the X11 session (no key grab, no root, no extra Python
+package), so it works on top of any full-screen window. A Chrome extension was rejected: Chrome 137+ ignores `--load-extension`, a page never sees the Esc that
+leaves video full screen, and it could not help Firefox, Kodi or the controller. *Wayland-only sessions:* the keyboard gestures need X11 (the Linux Mint default);
+the controller chord works everywhere.
+
+### One-press Install for everything
+Any tile whose program is missing shows **INSTALL** (a plus icon); one press installs it with progress and a plain-English result, then offers to open it.
+Flatpak in your own account first (no password); a graphical password window only for apt packages and Google Chrome's `.deb`. **Settings → Emulators → Install emulators and apps**
+has *Install essentials only* (RetroArch + cores, PCSX2, Dolphin, PPSSPP, melonDS, mGBA, Flycast) and *Install everything* (progress like "Step 2 of 32 — this can take 20+ minutes",
+end-of-life chatter hidden, final summary). The same code runs `atari-install-everything [--essentials]`.
+* **Steam**: a Steam tile with *Install Steam* (Flatpak `com.valvesoftware.Steam`, fallback `apt install steam-installer`), opens Steam for the first sign-in, finds Flatpak library paths,
+  **Rescan Steam**, and a drive helper (ext4/btrfs/xfs good; NTFS/exFAT Windows drives and USB sticks warned about). "Install a Steam game" in **Free Games** opens `steam://install/<id>`.
+* **Roblox (Sober)** has no official downloadable bundle — only Flathub. Opening a downloaded `.flatpak` by hand in Linux Mint gives **"Invalid Bundle"**; press **Install** on the tile instead.
+  Atari checks the computer first (x86-64, kernel 5.11+, SSE4.1; Vulkan is optional and `mesa-vulkan-drivers` can be added), explains the first start (Sober downloads Roblox itself; you sign in) and **Help** has an *Invalid Bundle* answer.
+* **DuckStation's Flatpak is end-of-life** — Atari installs DuckStation's official AppImage from GitHub into `~/.local/share/atari/emulators`, checked against GitHub's SHA-256, and no longer uses the Flatpak.
+  Every other Flatpak id in the table was checked against Flathub (`scripts/audit_flatpaks.py` repeats the check: end-of-life flag and runtime); OpenArena's old id was fixed.
+
+### Better covers
+Smarter name matching (disc numbers, roman numerals, "The …"; `Shenmue (USA) (Disc 1).cdi` and `shenmue_disc1.gdi` both find Shenmue), sources in order: libretro box art → SteamGridDB
+(only if *you* paste a free key in Settings) → Wikipedia's article picture (only the game's own infobox image, with an honest User-Agent; switch off in Settings) → libretro title screen → in-game screenshot.
+**Options → Pick cover for the highlighted game** shows about eight candidates (or choose a file from disk / USB). **Help → Covers not found** lists the games without one; *Settings → Download covers*
+retries. "Not found" is remembered for a few days and then tried again.
+
+### Real icons on app tiles (nothing third-party is bundled)
+Streaming & Social, PC Apps and Free Games tiles show each service's own icon, **downloaded to your computer on first use** and kept in `~/.local/share/atari/icons/`: the installed app's own icon first
+(Flatpak / Kodi), else the Flathub store icon, else the site's favicon / apple-touch-icon, and Steam's own art for Steam free games. Offline or nothing found: Atari's own coloured tile with the app's initials. *Settings → Download covers* re-checks.
+
+### Screen recorder
+**F9** (or controller **Guide + X**, the **Record screen** tile, or *Options → Record screen*) starts/stops recording the whole screen — it keeps going while a game or Netflix is full screen — with a red **REC** badge.
+MP4 files go to `~/Videos/Atari Recordings/Atari-<date>_<time>.mp4`. ffmpeg with x11grab + PulseAudio/PipeWire (libx264 ultrafast, or VAAPI via `[recording] encoder = "vaapi"`); on Wayland `wf-recorder`.
+**Settings**: audio (none / game sound / microphone / both), quality, 30 or 60 fps, folder. ffmpeg is part of *install everything* and has an Install button. **Recordings** (a Tools tile and menu entry) lists them and plays with mpv.
+
+### Studio first aid
+If the Studio cannot start (numpy missing, no recording program, no microphone) it now says why in plain English with a **Fix Studio** button (also *Help → Studio does not work? Fix Studio*) that installs what is missing and switches the Studio on without a restart.
+`install.sh` (and so the in-app updater) retries the numpy install and prints whether Studio support worked. Everything is logged to `~/.local/share/atari/logs/studio.log`, which **Help → Copy log** includes.
+
+### Easier "Add Games"
+*Options → Add Games* is a two-step wizard with big buttons: **From a USB stick**, **From a folder on this computer**, **A Windows game (.exe or .zip)** (and BIOS files), a visible **Back** button, Esc / B to go back, mouse, keyboard and controller. The folder picker starts at *USB sticks, Downloads, Home …* and has a *Back* row. Afterwards: **"Done - 12 games added"**, and the wizard remembers the last result.
+
+*Untested on real hardware by the author:* Wayland, Flatpak installs, `pkexec` password windows, the Guide+B / Guide+X controller chords, PipeWire audio capture and VAAPI. Everything else runs in the test-suite (Xvfb + xdotool, fake HTTP, stubbed installers).
+
 ## What's new in 0.3.0
 
 * **Covers download themselves.** After a scan (and from **Settings → Download covers**) Atari fetches box art in the background,
@@ -66,7 +121,7 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
   Works with keyboard and gamepad (the file picker, name keyboard and pick-list are all D-pad friendly). Atari downloads no games.
   *Example — the free fan game **Dreams of Saturn** (a Shenmue fan game; a Unity `.exe` inside a `.zip`; it needs a gamepad):* download the `.zip` yourself from the
   author's page, then Options → Add Windows game → choose the `.zip` → it finds the `.exe` → Add this game. Plug in a controller first.
-* **Made for beginners.** *Options → Help & getting started* has a four-step checklist (1 install emulators, 2 add games from USB, 3 add BIOS files, 4 download covers —
+* **Made for beginners.** *Options → Help & getting started* has a five-step checklist (1 install emulators, 2 add games from USB, 3 add BIOS files, 4 download covers, 5 Steam —
   each one press), a short FAQ, **Copy log** (puts Atari's recent messages and setup on the clipboard to send to a helper) and **Safe mode: reset my settings**
   (press twice; the old settings are saved next to the new ones, and your games, favourites and play time stay). *Options → Fix my game* checks the highlighted game
   (game file there? emulator installed? BIOS present? controller found?) and says in plain English what to do. Errors are written to `~/.local/share/atari/launch.log`
@@ -135,13 +190,13 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.3.0.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
+1. Download **`atari-0.3.1.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
 2. Open a **Terminal** and type:
 
    ```bash
    cd ~/Downloads
-   tar xzf atari-0.3.0.tar.gz
-   cd atari-0.3.0
+   tar xzf atari-0.3.1.tar.gz
+   cd atari-0.3.1
    ./install.sh
    ```
 
@@ -228,7 +283,7 @@ atari-install-everything                     # everything: emulators, cores and 
 |---|---|
 | Atari 2600/5200/7800/Lynx/Jaguar, NES, SNES, Genesis, Master System, Game Gear, Sega CD, Saturn, PC Engine, Neo Geo, GB/GBC/GBA, MSX, Amiga, etc. | RetroArch (`org.libretro.RetroArch`) + the right core, or a standalone emulator (e.g. mGBA, VICE) |
 | N64 | RMG, mupen64plus or RetroArch (mupen64plus-next) |
-| PlayStation 1 / 2 / 3 / PSP | DuckStation (`org.duckstation.DuckStation`) / PCSX2 (`net.pcsx2.PCSX2`) / RPCS3 (`net.rpcs3.RPCS3`) / PPSSPP (`org.ppsspp.PPSSPP`) |
+| PlayStation 1 / 2 / 3 / PSP | DuckStation (official AppImage, installed per user) / PCSX2 (`net.pcsx2.PCSX2`) / RPCS3 (`net.rpcs3.RPCS3`) / PPSSPP (`org.ppsspp.PPSSPP`) |
 | GameCube / Wii / Wii U | Dolphin (`org.DolphinEmu.dolphin-emu`) / Cemu (`info.cemu.Cemu`) |
 | Nintendo 3DS / DS | Azahar, Lime3DS or Citra / melonDS or DeSmuME |
 | Dreamcast | Flycast (`org.flycast.Flycast`) |

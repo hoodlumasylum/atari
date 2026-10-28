@@ -19,7 +19,7 @@ from typing import Callable
 from . import emulators
 
 APPS = "apps"                       # platform id of the "PC Apps / Stores" section
-NON_GAME = ("apps", "streaming", "free", "studio")    # tiles that are not games: hidden from "All Games" and the game counts
+NON_GAME = ("apps", "streaming", "free", "studio", "tools")    # tiles that are not games: hidden from "All Games" and the game counts
 APPS_NAME = "PC Apps / Stores"
 HEROIC = "heroic"
 LUTRIS = "lutris"
@@ -45,6 +45,9 @@ class AppDef:
 
 
 APP_DEFS: list[AppDef] = [
+    AppDef("steam", "Steam", "com.valvesoftware.Steam", ("steam",),
+           "Valve's game store. Press Install if it is missing; then sign in to your own Steam account. Installed games show up in Atari "
+           "(press Rescan Steam in Settings after installing one).", apt="steam-installer"),
     AppDef("roblox", "Roblox", "org.vinegarhq.Sober", ("sober",),
            "Runs through Sober, an unofficial community app (not made by Roblox). It can break after a Roblox "
            "update. The first start helps you install Roblox; sign in to your own Roblox account there."),
@@ -76,6 +79,7 @@ HELPERS: list[AppDef] = [
            ("google-chrome-stable", "google-chrome"), "Streaming web apps open in it. Has Widevine for Netflix & co."),
     AppDef("antimicrox", "AntiMicroX (optional: gamepad as mouse)", "io.github.antimicrox.antimicrox", ("antimicrox",),
            "Lets a controller move the mouse inside web apps. Optional."),
+    AppDef("ffmpeg", "FFmpeg (screen recorder)", "", ("ffmpeg",), "Records the screen to an MP4 file (F9).", apt="ffmpeg"),
     AppDef("7zip", "7-Zip (opens .7z / .rar game archives)", "", ("7z", "7zz", "7za"), "Opens .7z and .rar archives.",
            apt="p7zip-full"),
     AppDef("umu", "umu-launcher (runs Windows games with Proton)", "", ("umu-run",),

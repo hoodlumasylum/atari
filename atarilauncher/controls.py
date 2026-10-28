@@ -140,6 +140,9 @@ def cheat_rows() -> list[dict]:
         {"kind": "info", "title": "Keys in Atari itself: Arrow keys move, Enter plays, Esc goes back, F = favourite, "
                                   "Tab = next console, Q / E = previous / next tab, / = search, F10 = options.",
          "value": "", "detail": ""},
+        {"kind": "info", "title": "Back from Netflix, YouTube, Kodi...: press Esc twice quickly, or hold Esc for 1 second (Ctrl+Esc also works). "
+                                  "On a controller hold Guide / Home and press B. One Esc still leaves video full screen as normal.",
+         "value": "", "detail": ""},
         {"kind": "info", "title": "Inside a game the emulator's own keys apply (below). Atari steps aside (its window "
                                   "is minimised) while a game runs, and comes back when you quit the game.",
          "value": "", "detail": ""},

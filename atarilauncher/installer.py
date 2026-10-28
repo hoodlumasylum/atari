@@ -36,6 +36,14 @@ CORES_URL = "https://buildbot.libretro.com/nightly/linux/x86_64/latest/{core}.so
 RETROARCH_ID = "org.libretro.RetroArch"
 # Not installed by default (other emulators already cover those consoles); still installable by name.
 SKIP_BY_DEFAULT = {"desmume"}
+# "Install essentials only": RetroArch (with every core, which also covers PlayStation 1, Genesis, SNES, ...) and the
+# stand-alone emulators most people want. Everything else is one press away later.
+ESSENTIAL_IDS = ("retroarch", "pcsx2", "dolphin", "ppsspp", "melonds", "mgba", "flycast")
+GITHUB_API = "https://api.github.com"
+
+# lines flatpak prints about end-of-life apps / runtimes: true, but just noise to someone who wants to play
+_EOL_NOISE = ("end-of-life", "end of life", "no longer maintained", "no longer supported", "applications using this runtime",
+              "masked", "is eol")
 
 
 @dataclass
@@ -48,6 +56,11 @@ class Outcome:
 def used_emulators() -> list:
     used = {eid for s in SYSTEMS for eid in s.emus}
     return [e for e in EMUS.values() if e.id in used]
+
+
+def essential_selection() -> list:
+    by_id = {e.id: e for e in used_emulators()}
+    return [by_id[i] for i in ESSENTIAL_IDS if i in by_id]
 
 
 def default_selection() -> list:
@@ -74,6 +87,35 @@ def _run(cmd: list[str], quiet: bool = False) -> int:
                               stderr=subprocess.DEVNULL if quiet else None).returncode
     except OSError:
         return 127
+
+
+def is_noise(line: str) -> bool:
+    low = line.lower()
+    return any(w in low for w in _EOL_NOISE)
+
+
+def _run_friendly(cmd: list[str], out: Callable[[str], None]) -> int:
+    """Run a command and show its output without the end-of-life chatter and without a screenful of progress-bar redraws."""
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, bufsize=0)
+    except OSError:
+        return 127
+    buf = b""
+    last = ""
+    while True:
+        chunk = os.read(proc.stdout.fileno(), 4096)
+        if not chunk:
+            break
+        buf += chunk
+        *lines, buf = buf.split(b"\n")
+        for raw in lines:
+            line = raw.decode(errors="replace").split("\r")[-1].strip()
+            if not line or is_noise(line) or line == last:
+                continue
+            last = line
+            out("      " + line[:160])
+    proc.stdout.close()
+    return proc.wait()
 
 
 def flatpak_has(app_id: str) -> bool:
@@ -124,7 +166,7 @@ def install_flatpak(emu, out: Callable[[str], None], retries: int = 2, wait: flo
         out("   already installed - nothing to do")
         return Outcome(emu.name, "already")
     for attempt in range(1, retries + 1):
-        rc = _run(["flatpak", "install", "--user", "-y", "--noninteractive", "flathub", emu.flatpak])
+        rc = _run_friendly(["flatpak", "install", "--user", "-y", "--noninteractive", "flathub", emu.flatpak], out)
         if rc == 0 and flatpak_has(emu.flatpak):
             out("   installed")
             return Outcome(emu.name, "installed")
@@ -226,6 +268,47 @@ def install_umu(out: Callable[[str], None], home: Path | None = None, http: cove
         return Outcome(name, "failed", str(exc))
 
 
+def install_appimage(emu, out: Callable[[str], None], home: Path | None = None, http: covers.Http | None = None) -> Outcome:
+    """An emulator that is only maintained as a GitHub AppImage (DuckStation: its Flathub package is end-of-life).
+    Downloads the official file for your user into ~/.local/share/atari/emulators, checks it against the SHA256 that GitHub
+    publishes for the release asset, and makes it executable. Nothing else is touched."""
+    from .emulators import appimage_dir, appimage_path
+    repo, tag, fname = emu.appimage.split("|")
+    if appimage_path(emu, home):
+        out("   already installed - nothing to do")
+        return Outcome(emu.name, "already")
+    api = os.environ.get("ATARI_GITHUB_API") or GITHUB_API
+    http = http or covers.Http(timeout=60, retries=3, pause=0.2, backoff=2.0)
+    try:
+        meta = http.get(f"{api}/repos/{repo}/releases/tags/{tag}", max_bytes=5_000_000)
+        rel = json.loads(meta.decode("utf-8", "replace")) if meta else {}
+        asset = next((a for a in rel.get("assets", []) if a.get("name") == fname), None)
+        if not asset:
+            raise ValueError("the official download was not found on GitHub")
+        digest = str(asset.get("digest") or "")
+        if not digest.startswith("sha256:"):
+            raise ValueError("GitHub lists no checksum for it, so it was not installed")
+        out(f"   downloading {fname} ({int(asset.get('size') or 0) // (1024 * 1024)} MB) ...")
+        data = http.get(asset["browser_download_url"], max_bytes=400 * 1024 * 1024, timeout=300)
+        if not data:
+            raise ValueError("the download was not found")
+        import hashlib
+        if hashlib.sha256(data).hexdigest() != digest.split(":", 1)[1].lower():
+            raise ValueError("the download did not match its checksum, so it was not installed")
+        dest = appimage_dir(home)
+        dest.mkdir(parents=True, exist_ok=True)
+        target = dest / fname
+        tmp = target.with_name(fname + ".part")
+        tmp.write_bytes(data)
+        tmp.chmod(0o755)
+        os.replace(tmp, target)
+        out("   installed (checksum verified)")
+        return Outcome(emu.name, "installed")
+    except (covers.Offline, ValueError, OSError, KeyError) as exc:
+        out(f"   FAILED: {exc} - continuing")
+        return Outcome(emu.name, "failed", str(exc))
+
+
 def apt_only_emulators() -> list:
     return [e for e in used_emulators() if not e.flatpak and e.apt]
 
@@ -283,38 +366,52 @@ def summarize(results: list[Outcome], out: Callable[[str], None]) -> int:
 
 def run_install(selection: list, *, out: Callable[[str], None] = print, ask: Callable[[str], str] = input,
                 assume_yes: bool = False, use_apt: bool = True, with_cores: bool = True,
-                home: Path | None = None) -> int:
+                home: Path | None = None, title: str = "install everything (emulators and PC apps)") -> int:
     results: list[Outcome] = []
-    out("Atari - install everything (emulators and PC apps)")
-    out("This can download several gigabytes and take a while. You can run it again at any time.")
-    out("")
-    flatpak_ok = ensure_flatpak(out, ask, assume_yes) and ensure_flathub(out)
+    flatpak_ok_needed = any(e.flatpak for e in selection)
     fl = [e for e in selection if e.flatpak]
-    apt = [e for e in selection if not e.flatpak and e.apt]
-    other = [e for e in selection if not e.flatpak and not e.apt and e.id != "umu"]
+    img = [e for e in selection if not e.flatpak and getattr(e, "appimage", "")]
+    apt = [e for e in selection if not e.flatpak and not getattr(e, "appimage", "") and e.apt]
+    other = [e for e in selection if not e.flatpak and not getattr(e, "appimage", "") and not e.apt and e.id != "umu"]
     want_umu = any(e.id == "umu" for e in selection)
+    ra_selected = any(e.id == "retroarch" for e in selection)
+    steps = len(fl) + len(img) + len(apt) + int(want_umu) + int(with_cores and ra_selected)
+    out(f"Atari - {title}")
+    out(f"{steps} step{'s' if steps != 1 else ''} to do. " + ("This can take 20 minutes or more - several GB are downloaded. "
+        if steps > 8 else "") + "You can run it again at any time; it only does what is still missing.")
+    out("(Warnings about old 'end-of-life' packages are hidden - they do not stop anything from working.)")
+    out("")
+    n = 0
+
+    def step(text: str) -> None:
+        nonlocal n
+        n += 1
+        out("")
+        out(f"Step {n} of {steps} - {text}")
+
+    flatpak_ok = (ensure_flatpak(out, ask, assume_yes) and ensure_flathub(out)) if flatpak_ok_needed else False
     if flatpak_ok:
-        for i, e in enumerate(fl, 1):
-            out("")
-            out(f"[{i}/{len(fl)}] {e.name}  ({e.flatpak})")
+        for e in fl:
+            step(f"{e.name}")
             results.append(install_flatpak(e, out))
     else:
         for e in fl:
+            n += 1
             results.append(Outcome(e.name, "failed", "Flatpak is not available"))
-    ra_selected = any(e.id == "retroarch" for e in selection)
+    for e in img:
+        step(f"{e.name} (official download from GitHub)")
+        results.append(install_appimage(e, out, home))
     if with_cores and ra_selected:
-        out("")
+        step("RetroArch cores (one per console, from libretro's official server)")
         if flatpak_ok and flatpak_has(RETROARCH_ID):
-            out("RetroArch cores (one per console, from libretro's official server):")
             results.extend(install_cores(out, home))
         else:
             out("Skipping RetroArch cores because RetroArch is not installed.")
     if want_umu:
-        out("")
-        out("umu-launcher (starts Windows games with Proton):")
+        step("umu-launcher (starts Windows games with Proton)")
         results.append(install_umu(out, home))
     if use_apt and apt:
-        out("")
+        step("Programs from your system's software list (apt): " + ", ".join(e.name for e in apt))
         results.extend(install_apt(apt, out, ask, assume_yes))
     for e in other:
         results.append(Outcome(e.name, "skipped", "no package known - see its website"))
@@ -338,7 +435,8 @@ def list_status(out: Callable[[str], None] = print) -> None:
     for e in used_emulators():
         cmd, how = find_emu(cfg, e.id)
         status = {"native": "installed", "flatpak": "installed (Flatpak)", "custom": "custom command"}.get(how, "-")
-        src = ("Flathub: " + e.flatpak) if e.flatpak else (("apt: " + e.apt) if e.apt else "see its website")
+        src = (("Flathub: " + e.flatpak) if e.flatpak else (("GitHub AppImage: " + e.appimage.split("|")[0]) if e.appimage else
+               (("apt: " + e.apt) if e.apt else "see its website")))
         out(f"{e.id:12} {e.name[:40]:40} {status:22} {src}")
     for name, text in NOTES:
         out(f"\n{name}: {text}")
@@ -391,6 +489,8 @@ def main(argv=None) -> int:
         "Atari never includes BIOS/firmware/keys/games - bring your own and use 'Add BIOS files' in Atari."))
     ap.add_argument("names", nargs="*", help="emulator ids to install (default: all; see --list)")
     ap.add_argument("--list", action="store_true", help="show emulators and whether each is installed")
+    ap.add_argument("--essentials", action="store_true",
+                    help="install only the essentials: RetroArch + cores, PCSX2, Dolphin, PPSSPP, melonDS, mGBA, Flycast")
     ap.add_argument("--all", action="store_true", help="install everything (this is the default without names)")
     ap.add_argument("--yes", "-y", action="store_true", help="do not ask questions (sudo may still ask your password)")
     ap.add_argument("--no-apt", action="store_true", help="do not use apt / sudo at all")
@@ -416,11 +516,15 @@ def main(argv=None) -> int:
             else:
                 print(f"Unknown emulator or app '{n}'. Run with --list.", file=sys.stderr)
                 return 2
+    elif args.essentials:
+        sel = essential_selection()
     else:
         sel = default_selection()
     rc = 1
     try:
-        rc = run_install(sel, assume_yes=args.yes, use_apt=not args.no_apt, with_cores=not args.no_cores)
+        rc = run_install(sel, assume_yes=args.yes, use_apt=not args.no_apt, with_cores=not args.no_cores,
+                         title="install the essentials" if args.essentials and not args.names else
+                         "install everything (emulators and PC apps)")
     except KeyboardInterrupt:
         print("\nStopped. Run it again any time - it continues where it left off.")
     finally:

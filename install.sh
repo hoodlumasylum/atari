@@ -112,7 +112,9 @@ fi
 if [ "$STUDIO" = 1 ]; then
     say "Installing music Studio support (numpy, about 20 MB)"
     "$APP_DIR/.venv/bin/python" -m pip install -r "$APP_DIR/requirements-studio.txt" \
-        || warn "Studio support could not be installed. Everything else works; the Studio will say how to add it."
+        || { echo "Trying once more..."; sleep 3; "$APP_DIR/.venv/bin/python" -m pip install -r "$APP_DIR/requirements-studio.txt"; } \
+        || warn "Studio support could not be installed. Everything else works; in Atari press Studio > Fix Studio (or Help > Fix Studio) to add it."
+    if "$APP_DIR/.venv/bin/python" -c "import numpy" >/dev/null 2>&1; then echo "Studio support: OK"; else warn "Studio support is NOT installed yet (Atari's Studio screen has a Fix Studio button)."; fi
 fi
 
 say "Testing that the app can start"

@@ -35,7 +35,7 @@ def filter_games(games: list[Game], store: Store, key: str, query: str, sort: st
         return sort_games(pool, store, sort)
     if key == "all":
         # the PC Apps / Stores launchers (Roblox, Heroic, ...) have their own tile; "All Games" is games only
-        return sort_games([g for g in games if g.platform not in ("apps", "streaming", "free", "studio")], store, sort)
+        return sort_games([g for g in games if g.platform not in ("apps", "streaming", "free", "studio", "tools")], store, sort)
     if key == "favorites":
         return sort_games([g for g in games if store.is_favorite(g.gid)], store, sort)
     if key == "recent":
@@ -46,7 +46,7 @@ def filter_games(games: list[Game], store: Store, key: str, query: str, sort: st
 
 class GameModel(QAbstractListModel):
     ROLES = ["gid", "title", "platform", "platformName", "cover", "favorite", "playtime", "lastPlayed",
-             "note", "hue"]
+             "note", "hue", "fit"]
 
     def __init__(self, store: Store, parent=None):
         super().__init__(parent)
@@ -86,6 +86,8 @@ class GameModel(QAbstractListModel):
             return g.note
         if name == "hue":
             return self._hue(g)
+        if name == "fit":
+            return bool(g.fit)
         return None
 
     @Slot(int, result="QVariantMap")
@@ -109,10 +111,10 @@ class GameModel(QAbstractListModel):
             "gid": g.gid, "title": g.title, "platform": g.platform, "platformName": g.platform_name,
             "cover": QUrl.fromLocalFile(g.cover).toString() if g.cover else "",
             "art": QUrl.fromLocalFile(g.header or g.cover).toString() if (g.header or g.cover) else "",
-            "wideArt": bool(g.header) and g.header != g.cover,
+            "wideArt": bool(g.header) and g.header != g.cover, "fitArt": bool(g.fit),
             "favorite": s.is_favorite(g.gid), "playtime": format_playtime(s.playtime(g.gid)),
             "lastPlayed": format_last_played(s.last_played(g.gid)), "note": g.note,
-            "hue": self._hue(g), "genre": text("genre"), "players": text("players"),
+            "hue": self._hue(g), "needsInstall": bool(g.missing), "genre": text("genre"), "players": text("players"),
             "release": text("release"), "rating": rating,
         }
 
@@ -133,7 +135,7 @@ class GameModel(QAbstractListModel):
         for row, g in enumerate(self._visible):
             if g.gid == gid:
                 idx = self.index(row)
-                self.dataChanged.emit(idx, idx, [Qt.UserRole + 1 + self.ROLES.index("cover")])
+                self.dataChanged.emit(idx, idx, [Qt.UserRole + 1 + self.ROLES.index("cover"), Qt.UserRole + 1 + self.ROLES.index("fit")])
                 return
 
     def row_changed(self, row: int) -> None:

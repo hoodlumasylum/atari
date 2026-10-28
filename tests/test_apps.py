@@ -11,7 +11,7 @@ VERIFIED_FLATHUB_IDS = {   # checked against flathub.org on 2026-10-28
     "roblox": "org.vinegarhq.Sober", "heroic": "com.heroicgameslauncher.hgl", "lutris": "net.lutris.Lutris",
     "bottles": "com.usebottles.bottles", "itch": "io.itch.itch", "prism": "org.prismlauncher.PrismLauncher",
     "minecraft": "com.mojang.Minecraft", "moonlight": "com.moonlight_stream.Moonlight",
-    "protonup": "net.davidotek.pupgui2", "kodi": "tv.kodi.Kodi",
+    "protonup": "net.davidotek.pupgui2", "kodi": "tv.kodi.Kodi", "steam": "com.valvesoftware.Steam",
 }
 
 

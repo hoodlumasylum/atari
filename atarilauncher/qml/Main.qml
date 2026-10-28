@@ -95,7 +95,7 @@ Window {
     function activateTile(i) {
         var t = tileList[i]
         if (!t) return
-        if (t.key === "__add") openImport("library")
+        if (t.key === "__add") openPage("addgames")
         else if (t.key === "__more") backend.toggleShowAllSystems()
         else selectFilter(t.key, true)
     }
@@ -110,7 +110,7 @@ Window {
         if (i <= 2) selectFilter(["all", "favorites", "recent"][i], grid.count > 0)
         else if (i === 3) area = "tiles"
         else if (i === 4) openSetup()
-        else if (i === 5) openImport("library")
+        else if (i === 5) openPage("addgames")
         else openSearch()
     }
     function toggleFav() {
@@ -132,6 +132,9 @@ Window {
             { kind: "item", id: "bios", title: "Add BIOS files (USB stick or folder)" },
             { kind: "item", id: "studio", title: "Studio: make music (beats, voice, mix)" },
             { kind: "item", id: "winadd", title: "Add Windows game (.exe or .zip)" },
+            { kind: "item", id: "pickcover", title: "Pick cover for the highlighted game" },
+            { kind: "item", id: "record", title: backend.recording ? "Stop recording (F9)" : "Record screen (F9)" },
+            { kind: "item", id: "recordings", title: "Recordings (watch your videos)" },
             { kind: "item", id: "fix", title: "Fix my game (checks the highlighted game)" },
             { kind: "item", id: "help", title: "Help & getting started" },
             { kind: "item", id: "rescan", title: "Rescan library" },
@@ -150,7 +153,7 @@ Window {
     }
     function openOsk(purpose) {
         oskPurpose = purpose
-        searchText = backend.winName()
+        searchText = purpose === "sgdbkey" ? backend.steamGridKey() : backend.winName()
         typedSearch = false
         oskRow = 0; oskCol = 0
         mode = "search"
@@ -164,10 +167,12 @@ Window {
     }
     function closeSearch() {
         if (oskPurpose === "winname") { oskPurpose = "search"; openPage("winform"); return }
+        if (oskPurpose === "sgdbkey") { oskPurpose = "search"; refreshSetup(true); mode = "setup"; return }
         mode = "library"; area = grid.count > 0 ? "grid" : "tiles"
     }
     function setSearch(t) {
         if (oskPurpose === "winname") { searchText = t; backend.winSetName(t); return }
+        if (oskPurpose === "sgdbkey") { searchText = t; backend.setSteamGridKey(t); return }
         searchText = t
         backend.setQuery(t)
         grid.currentIndex = 0
@@ -219,6 +224,9 @@ Window {
         if (a === "refresh") refreshPage(true)
         else if (a === "back" || a === "close") leavePage()
         else if (a === "browse:winfile") openBrowser({ kind: "winfile", files: "exe" }, backend.winBrowseStart())
+        else if (a === "browse:winaddwizard") openBrowser({ kind: "winfile", files: "exe", wizard: true }, "")
+        else if (a === "browse:importfolder") openBrowser({ kind: "importfolder" }, "")
+        else if (a === "browse:gamecover") openBrowser({ kind: "gamecover", files: "image", gid: backend.pickGid() }, backend.winBrowseStart())
         else if (a === "browse:wincover") openBrowser({ kind: "wincover", files: "image" }, backend.winBrowseStart())
         else if (a === "osk:winname") openOsk("winname")
         else if (a === "import:games") openImport("page", "games")
@@ -311,7 +319,7 @@ Window {
     function loadDir(path) {
         var picking = !!browseTarget.files
         browseData = picking ? backend.listFiles(path, browseTarget.files) : backend.listDir(path)
-        var rows = []
+        var rows = [{ kind: "back", title: "\u25c0  Back", detail: "" }]
         if (browseData.path !== "" && !picking)
             rows.push({ kind: "use", title: "Use this folder", detail: browseData.path })
         if (browseTarget.kind === "wincover")
@@ -324,7 +332,7 @@ Window {
             for (var j = 0; j < browseData.files.length; j++)
                 rows.push({ kind: "file", title: browseData.files[j].name, detail: "", path: browseData.files[j].path })
         browseList.model = rows
-        browseList.currentIndex = 0
+        browseList.currentIndex = rows.length > 1 ? 1 : 0     // not on Back: the first real choice
     }
 
     // ------------------------------------------------------------ key handling
@@ -399,7 +407,7 @@ Window {
             else if (k === Qt.Key_Left) { if (two && emptyIndex > 0) emptyIndex--; else area = "side" }
             else if (k === Qt.Key_Right) { if (two && emptyIndex < 1) emptyIndex++ }
             else if (isEnter(k) || k === Qt.Key_Space) {
-                if (two) { if (emptyIndex === 0) openImport("library"); else openSetup() }
+                if (two) { if (emptyIndex === 0) openPage("addgames"); else openSetup() }
             }
             return
         }
@@ -453,10 +461,13 @@ Window {
         var id = menuList.model[i].id
         if (id === "resume") mode = "library"
         else if (id === "sort") openSort()
-        else if (id === "add") openImport("library")
+        else if (id === "add") openPage("addgames")
         else if (id === "bios") openImport("library", "bios")
         else if (id === "studio") openStudio()
         else if (id === "winadd") openBrowser({ kind: "winfile", files: "exe" }, backend.winBrowseStart())
+        else if (id === "pickcover") { backend.openCoverPicker(grid.count > 0 ? grid.currentIndex : -1); openPage("coverpick") }
+        else if (id === "record") { mode = "library"; backend.toggleRecording() }
+        else if (id === "recordings") openPage("recordings")
         else if (id === "fix") { backend.openFix(grid.count > 0 ? grid.currentIndex : -1); openPage("fix") }
         else if (id === "help") openPage("help")
         else if (id === "update") openUpdate("library")
@@ -503,6 +514,15 @@ Window {
         else if (r.kind === "sfx") { backend.toggleSoundEffects(); refreshSetup(true) }
         else if (r.kind === "music") { backend.toggleMusic(); refreshSetup(true) }
         else if (r.kind === "volume") { backend.cycleVolume(); refreshSetup(true) }
+        else if (r.kind === "recnow") { backend.toggleRecording(); refreshSetup(true) }
+        else if (r.kind === "recaudio") { backend.cycleRecAudio(); refreshSetup(true) }
+        else if (r.kind === "recquality") { backend.cycleRecQuality(); refreshSetup(true) }
+        else if (r.kind === "recfps") { backend.toggleRecFps(); refreshSetup(true) }
+        else if (r.kind === "recdir") openBrowser({ kind: "recdir" }, backend.homeDir())
+        else if (r.kind === "sgdbkey") openOsk("sgdbkey")
+        else if (r.kind === "installmenu") backend.installEmulators()
+        else if (r.kind === "steampage") openPage("steam")
+        else if (r.kind === "escexit") { backend.toggleEscExit(); refreshSetup(true) }
         else if (r.kind === "anim") { backend.toggleAnimations(); refreshSetup(true) }
         else if (r.kind === "covers") { backend.downloadCoversNow(); refreshSetup(true) }
         else if (r.kind === "coversauto") { backend.toggleCoversAuto(); refreshSetup(true) }
@@ -542,8 +562,10 @@ Window {
 
     function browseCancel() {
         if (browseTarget.kind === "import") mode = "import"
+        else if (browseTarget.kind === "importfolder" || (browseTarget.kind === "winfile" && browseTarget.wizard)) openPage("addgames")
         else if (browseTarget.kind === "winfile") { mode = "library"; buildLists() }
         else if (browseTarget.kind === "wincover") openPage("winform")
+        else if (browseTarget.kind === "gamecover") openPage("coverpick")
         else mode = "setup"
     }
     function browseKey(e) {
@@ -560,16 +582,20 @@ Window {
         var r = browseList.model[i]
         if (!r) return
         if (r.kind === "dir") loadDir(r.path)
+        else if (r.kind === "back") browseCancel()
         else if (r.kind === "up") loadDir(browseData.parent)
         else if (r.kind === "file" && enter) {
             if (browseTarget.kind === "winfile") handleAction(backend.winPicked(r.path))
+            else if (browseTarget.kind === "gamecover") handleAction(backend.coverFromFile(browseTarget.gid, r.path))
             else handleAction(backend.winPickedCover(r.path))
         }
         else if (r.kind === "nocover" && enter) handleAction(backend.winPickedCover(""))
         else if (r.kind === "use" && enter) {
-            if (browseTarget.kind === "import") { backend.startImportScan(browseData.path); mode = "import" }
+            if (browseTarget.kind === "importfolder") { importReturn = "page"; importScreen.open("games"); backend.startImportScan(browseData.path); mode = "import" }
+            else if (browseTarget.kind === "import") { backend.startImportScan(browseData.path); mode = "import" }
             else {
                 if (browseTarget.kind === "system") backend.setSystemFolder(browseTarget.id, browseData.path)
+                else if (browseTarget.kind === "recdir") backend.setRecDir(browseData.path)
                 else backend.addSteamLibrary(browseData.path)
                 refreshSetup(true)
                 mode = "setup"
@@ -919,7 +945,7 @@ Window {
                                 Icon { name: "plus"; size: 22 * win.u; stroke: 2.8; color: "white"; anchors.verticalCenter: parent.verticalCenter }
                                 Text { text: "ADD GAMES"; color: "white"; font.pixelSize: 19 * win.u; font.bold: true
                                        anchors.verticalCenter: parent.verticalCenter } }
-                            MouseArea { anchors.fill: parent; onClicked: win.openImport("library") }
+                            MouseArea { anchors.fill: parent; onClicked: win.openPage("addgames") }
                         }
                         Rectangle {
                             readonly property bool sel: win.area === "grid" && win.emptyIndex === 1

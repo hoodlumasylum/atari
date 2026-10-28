@@ -15,6 +15,8 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import paths
+
 
 # ---------------------------------------------------------------- emulator programs
 @dataclass(frozen=True)
@@ -27,14 +29,17 @@ class Emu:
     template: str        # {exe} {rom} {rom_dir} {rom_name} {rom_text} {core_path}
     flatpak_opts: tuple = ()
     note: str = ""
+    appimage: str = ""   # "owner/repo|release tag|file name": official AppImage on GitHub (checked against GitHub's SHA256)
 
 
 EMUS: dict[str, Emu] = {e.id: e for e in [
     Emu("retroarch", "RetroArch", ("retroarch",), "org.libretro.RetroArch", "retroarch",
         "{exe} -f -L {core_path} {rom}"),
     Emu("duckstation", "DuckStation", ("duckstation-qt", "duckstation", "DuckStation-x64.AppImage"),
-        "org.duckstation.DuckStation", "", "{exe} -batch -fullscreen -- {rom}",
-        note="Needs your own PS1 BIOS (set up once inside DuckStation)."),
+        "", "", "{exe} -batch -fullscreen -- {rom}",
+        note="Needs your own PS1 BIOS (set up once inside DuckStation). Its Flathub package is end-of-life, so Atari "
+             "installs the official AppImage from DuckStation's GitHub into ~/.local/share/atari/emulators.",
+        appimage="stenzek/duckstation|latest|DuckStation-x64.AppImage"),
     Emu("pcsx2", "PCSX2", ("pcsx2-qt", "pcsx2"), "net.pcsx2.PCSX2", "", "{exe} -batch -fullscreen -- {rom}",
         note="Needs your own PS2 BIOS (set up once inside PCSX2)."),
     Emu("rpcs3", "RPCS3", ("rpcs3",), "net.rpcs3.RPCS3", "", "{exe} --no-gui {rom}",
@@ -201,6 +206,19 @@ def configured_command(cfg, emu_id: str) -> str:
     return cfg.emulator_commands.get(emu_id, "").strip()
 
 
+def appimage_dir(home: Path | None = None) -> Path:
+    """Where Atari puts AppImages it installed (per user, no root)."""
+    return (home / ".local/share/atari/emulators") if home is not None else paths.data_dir() / "emulators"
+
+
+def appimage_path(emu: Emu, home: Path | None = None) -> str:
+    """Path of the AppImage Atari installed for this emulator, or ''."""
+    if not emu.appimage:
+        return ""
+    p = appimage_dir(home) / emu.appimage.split("|")[2]
+    return str(p) if p.is_file() else ""
+
+
 def find_emu(cfg, emu_id: str, home: Path | None = None) -> tuple[list[str], str]:
     """(command that starts the program, how) where how is 'custom', 'native', 'flatpak' or '' (not installed).
     When it is not installed the command is the best guess (the plain program name)."""
@@ -213,6 +231,9 @@ def find_emu(cfg, emu_id: str, home: Path | None = None) -> tuple[list[str], str
             return [exe], "native"
     if emu.flatpak and shutil.which("flatpak") and flatpak_installed(emu.flatpak, home):
         return ["flatpak", "run", *emu.flatpak_opts, emu.flatpak], "flatpak"
+    ai = appimage_path(emu, home)
+    if ai:
+        return [ai], "native"
     return [emu.exes[0]], ""
 
 

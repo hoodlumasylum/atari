@@ -6,7 +6,7 @@ import os
 import shutil
 from pathlib import Path
 
-from . import apps, bios, emulators, paths, webapps, windows
+from . import apps, bios, emulators, paths, sober, webapps, windows
 
 OK, BAD, NOTE = "ok", "bad", "note"
 
@@ -54,6 +54,10 @@ def check_game(cfg, game, sys_class: str = "/sys/class/input") -> list[dict]:
         if wa and wa.drm:
             add(NOTE, "Widevine DRM", webapps.DRM_NOTE)
         add(NOTE, "Signing in", "Sign in once inside the app - it remembers you. A mouse or touch screen can help in web pages.")
+    elif game.gid.endswith(":roblox") and game.platform == apps.APPS:
+        for c in sober.preflight():
+            add(OK if c.ok else (BAD if c.fatal else NOTE), "Roblox (Sober): " + c.id, "" if c.ok else c.text)
+        add(NOTE, "Installing", "Press Install on the Roblox tile - it comes from Flathub only. " + sober.INVALID_BUNDLE_TEXT)
     elif game.platform in apps.NON_GAME or game.launch:
         add(NOTE, "This is a PC app or a store game.", "If nothing opens, install the app: Options > Emulators.")
     else:
@@ -87,6 +91,14 @@ def summary(rows: list[dict]) -> str:
     return "Found " + str(len(bad)) + (" problem" if len(bad) == 1 else " problems") + " - the fix is written under each."
 
 
+def steam_ready() -> bool:
+    from . import appinstall, steam
+    try:
+        return steam.find_steam_root() is not None or appinstall.is_installed(appinstall.TARGETS["steam"])
+    except Exception:
+        return False
+
+
 def checklist(cfg, store_has_games: bool, sys_class: str = "/sys/class/input") -> list[dict]:
     """The four getting-started steps with a done/not-done mark."""
     ready = [s for s in cfg.systems.values() if emulators.status_line(cfg, s)[0]]
@@ -100,4 +112,6 @@ def checklist(cfg, store_has_games: bool, sys_class: str = "/sys/class/input") -
          "done": not need_bios, "detail": "Some consoles (PlayStation, Saturn...) need a BIOS file from your own console."},
         {"id": "covers", "title": "4. Download covers",
          "done": False, "detail": "Pictures for your games (needs internet)."},
+        {"id": "steam", "title": "5. Steam (only if you play Steam games)",
+         "done": steam_ready(), "detail": "Not installed? One press installs Steam for you, then opens it so you can sign in."},
     ]

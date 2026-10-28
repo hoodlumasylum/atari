@@ -27,7 +27,7 @@ def conf(tmp_path, text="[steam]\nenabled = false\n"):
     (tmp_path / "conf" / "config.toml").write_text(text)
 
 
-MENU_ORDER = ["resume", "sort", "add", "bios", "studio", "winadd", "fix", "help", "rescan", "emus", "update", "settings", "full", "quit"]
+MENU_ORDER = ["resume", "sort", "add", "bios", "studio", "winadd", "pickcover", "record", "recordings", "fix", "help", "rescan", "emus", "update", "settings", "full", "quit"]
 
 
 def open_menu_item(ui, item_id):
@@ -67,7 +67,7 @@ def test_settings_and_emulator_rows_for_030(app, tmp_path, monkeypatch):
         assert {"bios", "covers", "coversauto", "update", "updateauto", "emulators"} <= kinds
         rows = ui.backend.emulatorRows()
         ekinds = [r["kind"] for r in rows]
-        assert "install" in ekinds and "bios" in ekinds and "controls" in ekinds and ekinds.count("app") == 12
+        assert "install" in ekinds and "bios" in ekinds and "controls" in ekinds and ekinds.count("app") == 13
         ps1 = next(r for r in rows if r.get("id") == "ps1")
         assert "BIOS" in ps1["detail"] and "your own console" in ps1["detail"]
         assert "apps" in [t["key"] for t in ui.backend.tiles]       # the PC Apps tile is always there
@@ -402,7 +402,7 @@ def test_help_page_copy_log_and_two_press_reset(app, tmp_path, monkeypatch):
         assert page(ui) == "help"
         rows = ui.backend.pageRows("help")
         ck = [r["id"] for r in rows if str(r.get("id", "")).startswith("ck_")]
-        assert ck == ["ck_emus", "ck_games", "ck_bios", "ck_covers"]       # the four first-run steps
+        assert ck == ["ck_emus", "ck_games", "ck_bios", "ck_covers", "ck_steam"]       # the first-run steps
         press_row(ui, rows, "copylog")
         from PySide6.QtGui import QGuiApplication
         assert "error: boom" in QGuiApplication.clipboard().text()

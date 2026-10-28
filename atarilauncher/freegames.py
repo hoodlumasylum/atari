@@ -58,7 +58,7 @@ GAMES: list[FreeGame] = [
              "Open-source ancient-warfare strategy, native Linux (Flathub).", "Strategy"),
     FreeGame("xonotic", "Xonotic", "flatpak", "org.xonotic.Xonotic", VERIFIED,
              "Open-source arena shooter, native Linux (Flathub).", "Shooter"),
-    FreeGame("openarena", "OpenArena", "flatpak", "ws.openarena.OpenArena", VERIFIED,
+    FreeGame("openarena", "OpenArena", "flatpak", "io.github.ec_.Quake3e.OpenArena", VERIFIED,
              "Open-source arena shooter, native Linux (Flathub).", "Shooter"),
     FreeGame("luanti", "Luanti (Minetest)", "flatpak", "org.luanti.luanti", VERIFIED,
              "Open-source block-building sandbox, native Linux (Flathub).", "Sandbox"),

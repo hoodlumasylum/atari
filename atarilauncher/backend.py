@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -11,7 +12,7 @@ from pathlib import Path
 from PySide6.QtCore import Property, QObject, QProcess, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QKeyEvent
 
-from . import apps, bios, controls, covers, diagnose, emulators, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
+from . import icons, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
 from . import __version__
 from .config import Config, load_config, save_config
 from .import_model import ImportModel
@@ -56,8 +57,14 @@ class Backend(QObject):
     coverArrived = Signal(str, str, str)   # gid, file, kind (from worker thread)
     coverProgressed = Signal(int, int, int)  # done, total, got
     coversFinished = Signal(object)         # covers.Report
+    iconArrived = Signal(str, str, bool)    # gid, file, fit (from the icon worker thread)
+    iconsDone = Signal()
     sessionStarted = Signal()               # the emulator process is up (from worker thread)
     runningHintChanged = Signal()
+    recChanged = Signal()
+    hotkeyPressed = Signal()
+    pickEvent = Signal(str, object)             # cover picker worker -> UI (kind, payload)
+    installEvent = Signal(str, str)             # kind (step | line | done), text - from the install worker thread
     updateChanged = Signal()
     updateEvent = Signal(str, str, float)       # state, text, fraction (from the worker thread)
     updateChecked = Signal(object, str, bool)   # release or None, error text, was it asked for by the user
@@ -90,6 +97,7 @@ class Backend(QObject):
         self._imp_source = ""
         self._imp_cancel = threading.Event()
         self._imp_kind = "games"          # "games" | "bios" - the same USB picker serves both
+        self._add_result = ""             # what the last Add Games run did, shown on the wizard page
         self.importScanned.connect(self._on_import_scanned, Qt.QueuedConnection)
         self.importProgressed.connect(self._on_import_progress, Qt.QueuedConnection)
         self.importFinished.connect(self._on_import_finished, Qt.QueuedConnection)
@@ -111,6 +119,33 @@ class Backend(QObject):
         self.sessionStarted.connect(self._on_session_started, Qt.QueuedConnection)
         self._running_hint = ""
         self._minimized_for_game = False
+        # screen recorder + cover picker
+        self._rec = recorder.Recorder()
+        self._rec_env = None                 # tests can put a dict of env vars / stubs here
+        self._rec_timer = QTimer(self, interval=1000)
+        self._rec_timer.timeout.connect(self.recChanged.emit)
+        self._hotkey = None
+        self.hotkeyPressed.connect(self.toggleRecording, Qt.QueuedConnection)
+        self._pick_gid = ""
+        self._pick_title = ""
+        self._pick_state = "idle"            # idle | searching | ready | saving
+        self._pick_cands: list[dict] = []
+        self._pick_dir = None
+        self._pick_msg = ""
+        self.pickEvent.connect(self._on_pick_event, Qt.QueuedConnection)
+        # one-press installs (appinstall.py)
+        self._inst_job = None
+        self._inst_env = None                # tests put a stubbed appinstall.Env here
+        self._inst_state = "idle"            # idle | ask | running | done
+        self._inst_specs: list[str] = []     # "id" or "id|core" items
+        self._inst_titles: dict[str, str] = {}
+        self._inst_what = ""
+        self._inst_step = ""
+        self._inst_lines: list[str] = []
+        self._inst_summary = ""
+        self._inst_ok = False
+        self._inst_for_gid = ""
+        self.installEvent.connect(self._on_install_event, Qt.QueuedConnection)
         # covers (background download)
         self._cover_busy = False
         self._cover_text = ""
@@ -118,10 +153,13 @@ class Backend(QObject):
         self._cover_rerun = False
         self._cover_by_gid: dict[str, object] = {}
         self.coverArrived.connect(self._on_cover_arrived, Qt.QueuedConnection)
+        self.iconArrived.connect(self._on_icon_arrived, Qt.QueuedConnection)
+        self.iconsDone.connect(self._icons_finished, Qt.QueuedConnection)
+        self._icon_busy = False
         self.coverProgressed.connect(self._on_cover_progress, Qt.QueuedConnection)
         self.coversFinished.connect(self._on_covers_finished, Qt.QueuedConnection)
         self._cover_timer = QTimer(self, singleShot=True, interval=2500)
-        self._cover_timer.timeout.connect(lambda: self.startCovers(auto=True))
+        self._cover_timer.timeout.connect(lambda: (self.startCovers(auto=True), self.startIcons()))
         # sounds (a helper process plays them) and animations
         self._snd_proc = None
         self._snd_dead = False
@@ -166,6 +204,7 @@ class Backend(QObject):
         self.rescan(initial=True)
         if enable_gamepad:
             self._start_gamepad()
+            self._start_hotkey()
 
     @staticmethod
     def _demo_store() -> Store:
@@ -206,6 +245,10 @@ class Backend(QObject):
         proc.start()
         self._gamepad_proc = proc
 
+    def stop_all_helpers(self) -> None:
+        self.stop_recording()
+        self.stop_hotkey()
+
     def stop_gamepad(self) -> None:
         if self._gamepad_proc is not None:
             self._gamepad_proc.readyReadStandardOutput.disconnect()
@@ -219,6 +262,13 @@ class Backend(QObject):
         for line in data.splitlines():
             line = line.strip()
             if not line:
+                continue
+            if line == "record":                       # gamepad Guide + X
+                self.hotkeyPressed.emit()
+                continue
+            if line == "quitapp":                       # gamepad Guide + B: close the web app / Kodi that is running
+                if exitwatch.request_quit("gamepad"):
+                    self.show_toast("Closing the app...", 2000)
                 continue
             if line.startswith("#pad "):
                 self.show_toast("Controller connected: " + line[5:])
@@ -235,6 +285,523 @@ class Backend(QObject):
             return
         for kind in (QKeyEvent.KeyPress, QKeyEvent.KeyRelease):
             QGuiApplication.postEvent(win, QKeyEvent(kind, key, Qt.NoModifier))
+
+    # ----- screen recorder -------------------------------------------------------------
+    def _start_hotkey(self) -> None:
+        """F9 works everywhere (also while a game has the focus) - the same no-grab watcher method as Esc-to-return."""
+        if os.environ.get("ATARI_NO_HOTKEY") or self._hotkey is not None:
+            return
+        hk = exitwatch.HotkeyWatch(self.hotkeyPressed.emit)
+        if hk.available:
+            self._hotkey = hk.start()
+        else:
+            hk.stop()
+
+    def stop_hotkey(self) -> None:
+        if self._hotkey is not None:
+            self._hotkey.stop()
+            self._hotkey = None
+
+    @Property(bool, notify=recChanged)
+    def recording(self):
+        return self._rec.active
+
+    @Property(str, notify=recChanged)
+    def recText(self):
+        if not self._rec.active:
+            return ""
+        s = int(self._rec.elapsed())
+        return f"REC {s // 60:02d}:{s % 60:02d}"
+
+    @Slot()
+    def toggleRecording(self) -> None:
+        if self._rec.active:
+            path = self._rec.stop()
+            self._rec_timer.stop()
+            self.recChanged.emit()
+            msg = f"Recording saved: {path.name}  (Tools > Recordings)" if path else "The recording could not be saved."
+            self.playSound("select" if path else "error")
+            self.show_toast(msg, 8000)
+            exitwatch.notify(msg)
+            return
+        if self._demo:
+            self.show_toast("Demo mode: nothing to record.")
+            return
+        env = self._rec_env or {}
+        reason = recorder.why_not(self.cfg, env.get("env"), env.get("which", shutil.which))
+        if reason and "ffmpeg is not installed" in reason:
+            self.begin_install(["ffmpeg"], what="FFmpeg (the screen recorder)")
+            return
+        path = self._rec.start(self.cfg, size=env.get("size"), env=env.get("env"), which=env.get("which", shutil.which),
+                               run=env.get("run", subprocess.run), sources=env.get("sources"), home=env.get("home"))
+        if path is None:
+            self.playSound("error")
+            self.show_toast(self._rec.error or "Recording did not start.", 10000)
+            self.recChanged.emit()
+            return
+        self._rec_timer.start()
+        self.recChanged.emit()
+        self.playSound("select")
+        exitwatch.notify("Recording started - press F9 to stop")
+        self.show_toast("Recording started. Press F9 (or Guide + X) to stop.", 6000)
+
+    def stop_recording(self) -> None:
+        if self._rec.active:
+            self._rec.stop()
+        self._rec_timer.stop()
+
+    @Slot()
+    def cycleRecAudio(self) -> None:
+        i = recorder.AUDIO_MODES.index(self.cfg.rec_audio) if self.cfg.rec_audio in recorder.AUDIO_MODES else 1
+        self.cfg.rec_audio = recorder.AUDIO_MODES[(i + 1) % len(recorder.AUDIO_MODES)]
+        self._save_prefs()
+
+    @Slot()
+    def cycleRecQuality(self) -> None:
+        order = list(recorder.QUALITIES)
+        i = order.index(self.cfg.rec_quality) if self.cfg.rec_quality in order else 1
+        self.cfg.rec_quality = order[(i + 1) % len(order)]
+        self._save_prefs()
+
+    @Slot()
+    def toggleRecFps(self) -> None:
+        self.cfg.rec_fps = 60 if self.cfg.rec_fps != 60 else 30
+        self._save_prefs()
+
+    @Slot(str)
+    def setRecDir(self, folder: str) -> None:
+        self.cfg.rec_dir = folder
+        self._save_prefs()
+
+    def _rec_rows(self) -> list:
+        why = recorder.why_not(self.cfg)
+        return [
+            {"kind": "recnow", "title": "Stop recording" if self._rec.active else "Start recording (F9)",
+             "value": "ON" if self._rec.active else ("" if not why else "Needs setup"),
+             "detail": why or "Records the whole screen to an MP4. F9 (or Guide + X on a controller) starts and stops it, even inside a game."},
+            {"kind": "recaudio", "title": "Recording sound", "value": recorder.AUDIO_LABELS.get(self.cfg.rec_audio, self.cfg.rec_audio),
+             "detail": "Press Enter to change: none, game / desktop sound, microphone, or both."},
+            {"kind": "recquality", "title": "Recording quality", "value": self.cfg.rec_quality.title(),
+             "detail": "Low = small files, medium = good for most, high = sharper (bigger files, more CPU)."},
+            {"kind": "recfps", "title": "Recording frame rate", "value": f"{self.cfg.rec_fps} fps",
+             "detail": "30 is light on the CPU. 60 is smoother for fast games."},
+            {"kind": "recdir", "title": "Recordings folder", "value": "",
+             "detail": str(recorder.out_dir(self.cfg)) + "   (press Enter to choose another folder)"},
+        ]
+
+    def _recordings_rows(self) -> list:
+        recs = recorder.list_recordings(self.cfg)
+        rows = [self._info("Pick a recording to watch it (mpv, full screen; press Q or Esc in the player to come back)."
+                           if recs else "No recordings yet. Press F9 (or Guide + X) to start one; press it again to stop.")]
+        for i, r in enumerate(recs[:40]):
+            when = time.strftime("%d %b %Y, %H:%M", time.localtime(r["mtime"]))
+            rows.append({"kind": "item", "id": f"rec{i}", "title": r["name"], "value": f"{r['size_mb']:.0f} MB", "detail": when})
+        rows.append({"kind": "item", "id": "recfolder", "title": "Open the recordings folder", "detail": str(recorder.out_dir(self.cfg))})
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    def _recordings_activate(self, rid: str) -> str:
+        recs = recorder.list_recordings(self.cfg)
+        if rid.startswith("rec") and rid[3:].isdigit():
+            i = int(rid[3:])
+            if i < len(recs):
+                cmd = recorder.player_command(recs[i]["path"], self.cfg)
+                if not cmd:
+                    self.begin_install(["mpv"], what="mpv (the video player)")
+                    return ""
+                try:
+                    subprocess.Popen(cmd, env=launcher.clean_env(), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL, start_new_session=True)
+                except OSError as exc:
+                    self.show_toast(f"Could not play it: {exc}", 8000)
+        elif rid == "recfolder":
+            opener = shutil.which("xdg-open")
+            d = recorder.out_dir(self.cfg)
+            if opener:
+                try:
+                    d.mkdir(parents=True, exist_ok=True)
+                    subprocess.Popen([opener, str(d)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                except OSError:
+                    pass
+            else:
+                self.show_toast(f"Your recordings are in {d}", 8000)
+        return ""
+
+    # ----- covers: pick one, list the ones not found ---------------------------------------
+    def _cover_downloader(self, http=None):
+        base = os.environ.get("ATARI_COVERS_THUMBS_URL") or covers.THUMBS_URL
+        steam_base = os.environ.get("ATARI_COVERS_STEAM_URL") or covers.STEAM_URL
+        fast = bool(os.environ.get("ATARI_COVERS_FAST"))
+        http = http or covers.Http(pause=0.0 if fast else 0.25, backoff=0.01 if fast else 1.0, timeout=5 if fast else 15)
+        return covers.CoverDownloader(
+            base, steam_base, http=http, force=True,
+            wiki_url=os.environ.get("ATARI_COVERS_WIKI_URL") or covers.WIKI_API,
+            sgdb_url=os.environ.get("ATARI_COVERS_SGDB_URL") or covers.SGDB_API,
+            sgdb_key=self.cfg.steamgriddb_key, wikipedia=self.cfg.cover_wikipedia and not os.environ.get("ATARI_NO_WIKI"))
+
+    def _game_by_gid(self, gid: str):
+        return next((g for g in self._all if g.gid == gid), None)
+
+    @Slot(int)
+    def openCoverPicker(self, row: int) -> None:
+        g = self.model.game_at(row) if row >= 0 else None
+        if g is None:
+            self.show_toast("Highlight a game first.")
+            return
+        self.pickCoverFor(g.gid)
+
+    def pickCoverFor(self, gid: str) -> None:
+        g = self._game_by_gid(gid)
+        job = covers.job_for_game(g) if g is not None else None
+        self._pick_gid, self._pick_title = gid, (g.title if g else "")
+        self._pick_cands = []
+        if job is None:
+            self._pick_state = "idle"
+            self._pick_msg = ("Covers can be picked for games from your ROM folders and Steam. Windows games and apps use the picture "
+                              "chosen when they were added.")
+            self.pageChanged.emit()
+            return
+        if not self._covers_allowed():
+            self._pick_state, self._pick_msg = "ready", "Searching online is switched off here. You can still choose a picture file."
+            self.pageChanged.emit()
+            return
+        self._pick_state, self._pick_msg = "searching", "Searching libretro, Wikipedia and (if you set a key) SteamGridDB..."
+        import tempfile
+        self._pick_dir = Path(tempfile.mkdtemp(prefix="atari-pick-"))
+
+        def worker():
+            try:
+                dl = self._cover_downloader()
+                cands = dl.candidates(job.system, job.stem, job.title, 8)
+                self.pickEvent.emit("cands", cands)
+                for i, c in enumerate(cands):
+                    data = dl.http.get(c["url"], max_bytes=4 * 1024 * 1024)
+                    if data and covers.looks_like_image(data):
+                        f = self._pick_dir / f"{i}.img"
+                        f.write_bytes(data)
+                        self.pickEvent.emit("thumb", (i, str(f)))
+            except Exception as exc:    # a bad network must never break the screen
+                self.pickEvent.emit("error", str(exc))
+            self.pickEvent.emit("done", None)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    @Slot(str, object)
+    def _on_pick_event(self, kind: str, payload) -> None:
+        if kind == "cands":
+            self._pick_cands = list(payload)
+            self._pick_msg = (f"Found {len(self._pick_cands)} picture{'s' if len(self._pick_cands) != 1 else ''} for {self._pick_title}. "
+                              "Choose one - or pick a file from a disk / USB stick.") if self._pick_cands else \
+                f"Nothing found online for {self._pick_title}. You can choose a picture file from a disk or USB stick."
+        elif kind == "thumb":
+            i, f = payload
+            if i < len(self._pick_cands):
+                self._pick_cands[i]["thumb"] = f
+        elif kind == "error":
+            self._pick_msg = "Could not search right now (" + str(payload)[:80] + "). Check the internet connection."
+        elif kind == "done":
+            if self._pick_state == "searching":
+                self._pick_state = "ready"
+        elif kind == "saved":
+            self._pick_state = "ready"
+            self._pick_msg = payload
+        self.pageChanged.emit()
+
+    def _coverpick_rows(self) -> list:
+        rows = [self._info(self._pick_msg or "Pick a cover.")]
+        for i, c in enumerate(self._pick_cands):
+            row = {"kind": "item", "id": f"cand{i}", "title": c["label"][:70], "detail": "Press Enter to use this picture"}
+            if c.get("thumb"):
+                row["image"] = "file://" + c["thumb"]
+            rows.append(row)
+        rows.append({"kind": "item", "id": "coverfile", "title": "Choose a picture from this computer or a USB stick",
+                     "detail": ".png / .jpg / .webp"})
+        if self._pick_state != "searching" and self._pick_gid:
+            rows.append({"kind": "item", "id": "coveragain", "title": "Search again"})
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    def _coverpick_activate(self, rid: str) -> str:
+        if rid.startswith("cand") and rid[4:].isdigit():
+            i = int(rid[4:])
+            if i < len(self._pick_cands) and self._pick_state != "saving":
+                url = self._pick_cands[i]["url"]
+                gid = self._pick_gid
+                g = self._game_by_gid(gid)
+                job = covers.job_for_game(g) if g is not None else None
+                if job is None:
+                    return ""
+                self._pick_state = "saving"
+                self._pick_msg = "Saving the picture..."
+
+                def worker():
+                    try:
+                        data = self._cover_downloader().http.get(url)
+                        if not (data and covers.looks_like_image(data)):
+                            self.pickEvent.emit("saved", "That picture could not be downloaded. Try another one.")
+                            return
+                        covers._write_atomic(job.dest, data)
+                        self.coverArrived.emit(gid, str(job.dest), job.kind)
+                        covers.forget_not_found(gid)
+                        self.pickEvent.emit("saved", "Cover saved.")
+                    except Exception as exc:
+                        self.pickEvent.emit("saved", f"Could not save it: {exc}")
+
+                threading.Thread(target=worker, daemon=True).start()
+                return "refresh"
+        elif rid == "coverfile":
+            return "browse:gamecover"
+        elif rid == "coveragain":
+            self.pickCoverFor(self._pick_gid)
+            return "refresh"
+        return ""
+
+    @Slot(result=str)
+    def pickGid(self) -> str:
+        return self._pick_gid
+
+    @Slot(str, str, result=str)
+    def coverFromFile(self, gid: str, path: str) -> str:
+        """Use a picture file from the disk / a USB stick as this game's cover."""
+        g = self._game_by_gid(gid)
+        job = covers.job_for_game(g) if g is not None else None
+        if job is None:
+            self.show_toast("That game cannot take a picture here.")
+            return "back"
+        try:
+            data = Path(path).read_bytes()
+        except OSError as exc:
+            self.show_toast(f"Could not read that file: {exc}", 8000)
+            return "back"
+        if len(data) > covers.MAX_IMAGE_BYTES or not covers.looks_like_image(data):
+            self.show_toast("Choose a .png, .jpg or .webp picture (under 12 MB).", 8000)
+            return "back"
+        try:
+            covers._write_atomic(job.dest, data)
+        except OSError as exc:
+            self.show_toast(f"Could not save the cover: {exc}", 8000)
+            return "back"
+        self._on_cover_arrived(gid, str(job.dest), job.kind)
+        covers.forget_not_found(gid)
+        self.show_toast(f"Cover set for {g.title}.", 5000)
+        return "close"
+
+    def _nocovers_rows(self) -> list:
+        nf = [r for r in covers.not_found_list() if self._game_by_gid(r["gid"]) is not None]
+        rows = [self._info(f"{len(nf)} game{'s' if len(nf) != 1 else ''} without a cover after the last search. Press one to pick a cover yourself."
+                           if nf else "Every game that could get a cover has one (or has not been searched yet).")]
+        for i, r in enumerate(nf[:60]):
+            rows.append({"kind": "item", "id": f"nc{i}", "title": r.get("title", r["gid"]), "detail": r.get("system", "")})
+        rows.append({"kind": "item", "id": "redownload", "title": "Re-download covers (try every game again)",
+                     "detail": "Forgets the 'not found' list and searches libretro, Wikipedia (and SteamGridDB with your key) again."})
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    def _nocovers_activate(self, rid: str) -> str:
+        if rid == "redownload":
+            covers.forget_not_found()
+            self.downloadCoversNow() if not self._cover_busy else None
+            self.show_toast("Looking for covers again...", 4000)
+            return "refresh"
+        if rid.startswith("nc") and rid[2:].isdigit():
+            nf = [r for r in covers.not_found_list() if self._game_by_gid(r["gid"]) is not None]
+            i = int(rid[2:])
+            if i < len(nf):
+                self.pickCoverFor(nf[i]["gid"])
+                return "page:coverpick"
+        return ""
+
+    @Slot(str)
+    def setSteamGridKey(self, text: str) -> None:
+        self.cfg.steamgriddb_key = text.strip()
+        self._save_prefs()
+
+    @Slot(result=str)
+    def steamGridKey(self) -> str:
+        return self.cfg.steamgriddb_key
+
+    # ----- one-press installs ------------------------------------------------------
+    def _inst_items(self) -> list:
+        items = []
+        for spec in self._inst_specs:
+            tid, _, core = spec.partition("|")
+            t = appinstall.target_for(tid, self._inst_titles.get(tid, ""))
+            if t is not None:
+                items.append((t, core))
+        return items
+
+    def begin_install(self, specs: list[str], for_gid: str = "", what: str = "", titles: dict | None = None) -> None:
+        """Show the Install page for these programs ("id" or "id|core"); nothing is installed until the user presses Install."""
+        if self._inst_state == "running":
+            self.pageRequested.emit("install")
+            return
+        self._inst_specs = list(specs)
+        self._inst_titles = dict(titles or {})
+        self._inst_for_gid = for_gid
+        items = self._inst_items()
+        if not items:
+            self.show_toast("Atari does not know how to install that. See Help.", 6000)
+            return
+        self._inst_what = what or (items[0][0].title if len(items) == 1 else f"{len(items)} programs")
+        self._inst_state, self._inst_lines, self._inst_summary, self._inst_step, self._inst_ok = "ask", [], "", "", False
+        self.pageRequested.emit("install")
+
+    @Slot()
+    def installEmulators(self) -> None:
+        """Settings > Emulators > Install...: the page that offers 'essentials only' or 'everything'."""
+        self.pageRequested.emit("installmenu")
+
+    @Slot()
+    def installInTerminal(self) -> None:
+        ok, msg = installer.open_in_terminal()
+        self.show_toast(msg, 9000)
+
+    def _install_missing(self, ids: list[str]) -> list[str]:
+        specs = []
+        for i in ids:
+            t = appinstall.TARGETS.get(i)
+            if t is None:
+                continue
+            if i == "retroarch":                  # RetroArch is more than the program: every core too
+                specs.append("retroarch|" + ",".join(installer.wanted_cores()))
+            elif not appinstall.is_installed(t, cfg=self.cfg):
+                specs.append(i)
+        return specs
+
+    @Slot()
+    def installEssentials(self) -> None:
+        specs = self._install_missing(list(installer.ESSENTIAL_IDS))
+        if not specs:
+            self.show_toast("The essentials are already installed.", 5000)
+            return
+        self.begin_install(specs, what="the essentials")
+
+    @Slot()
+    def installAll(self) -> None:
+        specs = self._install_missing(appinstall.all_ids())
+        if not specs:
+            self.show_toast("Everything is already installed.", 5000)
+            return
+        self.begin_install(specs, what="everything")
+
+    def _install_start(self) -> None:
+        if self._inst_state == "running":
+            return
+        items = self._inst_items()
+        if not items:
+            return
+        self._inst_state, self._inst_lines, self._inst_step, self._inst_summary = "running", [], "Starting...", ""
+        self.playSound("select")
+        job = appinstall.Job(items, lambda kind, text: self.installEvent.emit(kind, text),
+                             self._inst_env or appinstall.Env(), self.cfg)
+        self._inst_job = job
+        job.start()
+        self.pageChanged.emit()
+
+    @Slot(str, str)
+    def _on_install_event(self, kind: str, text: str) -> None:
+        if kind == "step":
+            self._inst_step = text
+        elif kind == "line":
+            self._inst_lines = (self._inst_lines + [text])[-5:]
+        elif kind == "done":
+            res = self._inst_job.results if self._inst_job else []
+            self._inst_summary = appinstall.summary_text(res)
+            self._inst_ok = bool(res) and all(r.status in ("installed", "already") for r in res)
+            self._inst_state = "done"
+            self._inst_job = None
+            if any(r.status == "installed" for r in res):
+                self.rescan(toast=False)
+            self.playSound("select" if self._inst_ok else "error")
+            self.show_toast(self._inst_summary, 9000)
+        self.pageChanged.emit()
+
+    def _install_rows(self) -> list:
+        st = self._inst_state
+        what = self._inst_what or "this"
+        if st == "ask":
+            t = [x for x, _c in self._inst_items()]
+            many = len(t) > 1
+            how = ("Atari downloads it for your user only (Flathub, official sites). A password window may pop up for a few of them."
+                   if many else "Atari downloads it for you (Flathub, or your system's software list - then a password window pops up).")
+            rows = [self._info(f"{what[:1].upper() + what[1:]} {'are' if many else 'is'} not installed yet. {how} Needs internet."
+                               + (f"  {len(t)} programs: this can take 20 minutes or more." if len(t) > 6 else ""))]
+            for x in t[:6]:
+                rows.append(self._info("  - " + x.title))
+            if len(t) > 6:
+                rows.append(self._info(f"  ... and {len(t) - 6} more"))
+            rows.append({"kind": "done", "id": "install", "title": "Install now"})
+            rows.append({"kind": "item", "id": "back", "title": "Not now"})
+            return rows
+        if st == "running":
+            rows = [self._info("Installing - " + (self._inst_step or "starting...") + "   (you can leave this screen; it keeps going)")]
+            for ln in self._inst_lines:
+                rows.append(self._info(ln))
+            rows.append({"kind": "item", "id": "cancel", "title": "Stop"})
+            rows.append({"kind": "item", "id": "back", "title": "Hide this screen"})
+            return rows
+        rows = [self._info(self._inst_summary or "Done.")]
+        g = next((x for x in self._all if x.gid == self._inst_for_gid), None) if self._inst_for_gid else None
+        if self._inst_ok and g is not None and not g.missing:
+            rows.append({"kind": "done", "id": "launch", "title": f"Open {g.title} now"})
+        if not self._inst_ok and self._inst_specs:
+            rows.append({"kind": "item", "id": "retry", "title": "Try again"})
+            rows.append({"kind": "item", "id": "copylog", "title": "Copy log (to send to someone who is helping you)"})
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    def _installmenu_rows(self) -> list:
+        return [
+            self._info("Choose what to install. Atari only installs what is missing, for your user only, and never downloads games, BIOS files or keys. "
+                       "You can run it again at any time."),
+            {"kind": "item", "id": "inst_essentials", "title": "Install essentials only",
+             "detail": "RetroArch with all its cores (PlayStation 1, Genesis, SNES ...), PCSX2, Dolphin, PPSSPP, melonDS, mGBA, Flycast. Quicker (about 10 minutes)."},
+            {"kind": "item", "id": "inst_all", "title": "Install everything",
+             "detail": "Every emulator and app Atari can start (about 38 programs, several GB, 20+ minutes). Fine to leave running."},
+            {"kind": "item", "id": "inst_terminal", "title": "Open it in a terminal instead",
+             "detail": "Same installer with a text window (atari-install-everything --essentials / --all)."},
+            {"kind": "item", "id": "back", "title": "Back"},
+        ]
+
+    # ----- Steam: install, rescan, where to keep games ----------------------------------
+    def steam_installed(self) -> bool:
+        from . import steam as steam_mod
+        return steam_mod.find_steam_root(None, self.cfg.steam_root) is not None or \
+            appinstall.is_installed(appinstall.TARGETS["steam"], cfg=self.cfg)
+
+    @Slot()
+    def rescanSteam(self) -> None:
+        self.rescan(toast=False)
+        n = len([g for g in self._all if g.platform == STEAM])
+        self.show_toast(f"Steam rescanned: {n} game" + ("" if n == 1 else "s") + " found."
+                        if self.steam_installed() else "Steam is not installed yet - use Install Steam.", 6000)
+
+    @Slot()
+    def installSteam(self) -> None:
+        self.begin_install(["steam"], for_gid="app:steam", what="Steam")
+
+    def _steam_rows(self) -> list:
+        from . import steam as steam_mod
+        have = self.steam_installed()
+        rows = [self._info("Steam is installed." if have else
+                           "Steam is not installed. One press installs it for you (Flatpak, no password; or your system's steam-installer package), "
+                           "then opens it so you can sign in.")]
+        if have:
+            rows.append({"kind": "item", "id": "steamopen", "title": "Open Steam (sign in / install games there)"})
+        else:
+            rows.append({"kind": "done", "id": "steaminstall", "title": "Install Steam"})
+        rows.append({"kind": "item", "id": "steamrescan", "title": "Rescan Steam",
+                     "detail": "Use this after Steam installed a game, so it shows up in Atari."})
+        rows.append(self._info("Where to keep Steam games: a Linux drive (ext4). Windows (NTFS) drives and USB sticks (exFAT / FAT) make many Proton games fail."))
+        adv = steam_mod.drive_advice()
+        for d in adv[:6]:
+            rows.append({"kind": "info", "title": ("OK   " if d["ok"] else "AVOID   ") + d["text"]})
+        if not adv:
+            rows.append(self._info("No extra drives found. Plug one in, then in Steam: Steam > Settings > Storage > + > add the drive."))
+        else:
+            rows.append(self._info("To use another drive: in Steam open Steam > Settings > Storage, press + and choose the drive. Then press Rescan Steam here."))
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
 
     # ----- properties ------------------------------------------------------
     @Property("QVariantList", notify=filtersChanged)
@@ -474,9 +1041,21 @@ class Backend(QObject):
         if g.gid == "studio:open":
             self.studioRequested.emit()
             return
+        if g.gid == "tool:recordings":
+            self.pageRequested.emit("recordings")
+            return
+        if g.gid == "tool:record" and not g.missing:
+            self.toggleRecording()
+            return
         if self._demo:
             self.show_toast("Demo mode: nothing to launch.")
             return
+        if g.missing:                      # the program is not installed: offer to install it (one press)
+            self.begin_install([g.missing], for_gid=g.gid, what=g.title)
+            return
+        self._launch_game(g)
+
+    def _launch_game(self, g) -> None:
         self.playSound("launch")
         if self.cfg.music and self._snd_enabled():
             self._snd_write("music off")        # the game gets the speakers
@@ -532,6 +1111,20 @@ class Backend(QObject):
                 win.showNormal()
         win.raise_()
         win.requestActivate()
+        # window managers sometimes ignore the first focus request right after a full-screen app closed: ask again
+        for ms in (300, 1000):
+            QTimer.singleShot(ms, self._reactivate)
+
+    def _reactivate(self) -> None:
+        win = self._window
+        if win is None or self._running:
+            return
+        try:
+            if not win.isActive():
+                win.raise_()
+                win.requestActivate()
+        except RuntimeError:       # the window is already gone (Atari is closing)
+            pass
 
     @Slot(str, str, float, str)
     def _on_session_ended(self, gid: str, title: str, secs: float, err: str) -> None:
@@ -839,7 +1432,7 @@ class Backend(QObject):
         if res.error:
             msg = res.error
         else:
-            msg = f"Copied {res.copied} game{'s' if res.copied != 1 else ''} ({importer.human_size(res.bytes_copied)})."
+            msg = f"Done - {res.copied} game{'s' if res.copied != 1 else ''} added ({importer.human_size(res.bytes_copied)})."
             if res.skipped_duplicates:
                 msg += f" {res.skipped_duplicates} already in your library (skipped)."
             if res.failed:
@@ -849,6 +1442,8 @@ class Backend(QObject):
             elif res.copied:
                 msg += " Your USB stick can be removed safely."
         self._imp_msg = msg
+        if not res.error:
+            self._add_result = msg
         self._imp_state = "done"
         self._imp_progress = 1.0
         self.importChanged.emit()
@@ -980,6 +1575,11 @@ class Backend(QObject):
         self._save_prefs()
         self._snd_write(f"volume {nxt:.2f}")
         self.playSound("select")
+
+    @Slot()
+    def toggleEscExit(self) -> None:
+        self.cfg.esc_exit = not self.cfg.esc_exit
+        self._save_prefs()
 
     @Slot()
     def toggleAnimations(self) -> None:
@@ -1228,6 +1828,47 @@ class Backend(QObject):
             self.show_toast("Cover download is not available in demo mode.")
             return
         self.startCovers(auto=False, force=True)
+        self.startIcons(force=True)
+
+    def startIcons(self, force: bool = False) -> None:
+        """Fetch the missing tile icons (web apps, PC apps, free games) once, in the background. Quiet: no screen text."""
+        if not self._covers_allowed() or self._icon_busy:
+            return
+        specs = [s for s in (icons.spec_for(g.gid) for g in self._all
+                             if g.gid.partition(":")[0] in ("web", "app", "free") and not g.rom_path) if s is not None]
+        if not specs:
+            return
+        self._icon_busy = True
+        fast = bool(os.environ.get("ATARI_COVERS_FAST"))
+        flathub = os.environ.get("ATARI_ICONS_FLATHUB_URL") or icons.FLATHUB_ICONS
+        steam_base = os.environ.get("ATARI_COVERS_STEAM_URL") or covers.STEAM_URL
+        root = Path(os.environ["ATARI_ICONS_DIR"]) if os.environ.get("ATARI_ICONS_DIR") else None
+
+        def worker():
+            try:
+                http = covers.Http(pause=0.0 if fast else 0.2, backoff=0.01 if fast else 1.0, timeout=5 if fast else 12)
+                f = icons.IconFetcher(http, root, flathub, steam_base, force=force)
+                f.run(specs, on_icon=lambda s, p: self.iconArrived.emit(s.gid, p, s.kind != "free" or not s.steam_appid))
+            except Exception as exc:  # pragma: no cover - safety net
+                print(f"[atari] icon download failed: {exc}")
+            self.iconsDone.emit()
+
+        threading.Thread(target=worker, daemon=True, name="atari-icons").start()
+
+    @Slot()
+    def _icons_finished(self) -> None:
+        self._icon_busy = False
+
+    @Slot(str, str, bool)
+    def _on_icon_arrived(self, gid: str, path: str, fit: bool) -> None:
+        for g in self._all:
+            if g.gid == gid and (not g.cover or g.cover != path):
+                if g.cover and not g.fit and gid.partition(":")[0] != "free":
+                    return                       # it already has real art of its own
+                g.cover = g.header = path
+                g.fit = fit
+                self.model.cover_updated(gid)
+                return
 
     @Slot()
     def stopCovers(self) -> None:
@@ -1349,6 +1990,19 @@ class Backend(QObject):
         rows.append({"kind": "anim", "title": "Reduce animations",
                      "value": "ON" if self.cfg.reduce_animations else "OFF",
                      "detail": "Turns off the moving background, bobbing icons and fades. Choose ON on a slow computer."})
+        rows += self._rec_rows()
+        rows.append({"kind": "sgdbkey", "title": "SteamGridDB key (optional, for more covers)",
+                     "value": "Set" if self.cfg.steamgriddb_key else "Not set",
+                     "detail": "Free at steamgriddb.com > Preferences > API. Type it here with the keyboard, or put it in config.toml under [covers]. Leave empty to skip."})
+        rows.append({"kind": "installmenu", "title": "Install emulators and apps", "value": "",
+                     "detail": "One press: essentials only, or everything. Missing programs also show INSTALL on their own tile."})
+        rows.append({"kind": "steampage", "title": "Steam: install, rescan, drives",
+                     "value": "Installed" if self.steam_installed() else "Not installed",
+                     "detail": "Installs Steam for you, rescans your Steam games, and says where to keep them."})
+        rows.append({"kind": "escexit", "title": "Esc twice returns to Atari (Netflix, YouTube, Kodi...)",
+                     "value": "ON" if self.cfg.esc_exit else "OFF",
+                     "detail": "Press Esc twice quickly, or hold Esc for 1 second (or Ctrl+Esc; on a controller hold Guide and press B) "
+                               "to close a streaming app and come back here. One Esc still leaves video full screen as usual."})
         rows.append({"kind": "emulators", "title": "Emulators", "value": "",
                         "detail": "See what is installed, install emulators, and which consoles still need BIOS files."})
         for sc in self.cfg.systems.values():
@@ -1422,12 +2076,17 @@ class Backend(QObject):
         home = Path.home()
         if not path:
             places = [("Home", home)]
-            for base in (Path("/media") / os.environ.get("USER", ""), Path("/run/media") / os.environ.get("USER", ""),
-                         Path("/mnt")):
+            media = os.environ.get("ATARI_MEDIA_ROOTS")
+            bases = ([Path(x) for x in media.split(os.pathsep) if x] if media else
+                     [Path("/media") / os.environ.get("USER", ""), Path("/run/media") / os.environ.get("USER", ""), Path("/mnt")])
+            for base in bases:
                 try:
-                    places += [(f"{base.name or base} / {p.name}", p) for p in sorted(base.iterdir()) if p.is_dir()]
+                    places += [(f"USB / drive: {p.name}", p) for p in sorted(base.iterdir()) if p.is_dir()]
                 except OSError:
                     pass
+            for label, sub_ in (("Downloads", "Downloads"), ("Documents", "Documents"), ("Desktop", "Desktop"), ("My games (Games/Atari)", "Games/Atari")):
+                if (home / sub_).is_dir():
+                    places.append((label, home / sub_))
             places.append(("Whole computer (/)", Path("/")))
             return {"path": "", "parent": "", "dirs": [{"name": n, "path": str(p)} for n, p in places]}
         p = Path(path)
@@ -1450,7 +2109,10 @@ class Backend(QObject):
     @Slot(str, result=str)
     def pageTitle(self, name: str) -> str:
         return {"help": "HELP & GETTING STARTED", "fix": "FIX MY GAME", "winform": "ADD A WINDOWS GAME",
-                "winchoose": "WHICH PROGRAM STARTS THE GAME?", "winwork": "OPENING THE ARCHIVE"}.get(name, name.upper())
+                "winchoose": "WHICH PROGRAM STARTS THE GAME?", "winwork": "OPENING THE ARCHIVE",
+                "install": "INSTALL", "installmenu": "INSTALL EMULATORS & APPS", "steam": "STEAM",
+                "recordings": "RECORDINGS", "coverpick": "PICK A COVER", "nocovers": "COVERS NOT FOUND",
+                "addgames": "ADD GAMES"}.get(name, name.upper())
 
     @Slot(str, result=str)
     def pageSub(self, name: str) -> str:
@@ -1458,10 +2120,41 @@ class Backend(QObject):
                 "fix": "Atari checked everything it can.  Esc / B = back.",
                 "winform": "Check the details, then choose \"Add this game\".  Esc / B = cancel.",
                 "winchoose": "Pick the main program (the biggest .exe is usually it).  Esc / B = cancel.",
-                "winwork": "Please wait - big games take a minute.  Esc / B = cancel."}.get(name, "")
+                "winwork": "Please wait - big games take a minute.  Esc / B = cancel.",
+                "install": "One press, no terminal.  Esc / B = back.",
+                "installmenu": "Up/Down to choose, Enter / A to press.  Esc / B = back.",
+                "steam": "Install Steam, rescan your games, and where to keep them.  Esc / B = back.",
+                "recordings": "Enter / A plays a recording.  Esc / B = back.",
+                "coverpick": "Enter / A uses the highlighted picture.  Esc / B = back.",
+                "nocovers": "Games that no cover was found for.  Esc / B = back.",
+                "addgames": "Up/Down to choose, Enter / A or a click to press.  Esc / B = back."}.get(name, "")
+
+    def _addgames_rows(self) -> list:
+        try:
+            drives = importer.detect_drives()
+        except Exception:
+            drives = []
+        usb = (f"Found: {drives[0].label}" + (f" (+{len(drives) - 1} more)" if len(drives) > 1 else "")) if drives else "Plug the USB stick in first, then press this."
+        rows = [self._info("Step 1 of 2 - where are the games?  Pick one. Atari only reads from your stick or folder; nothing there is changed.")]
+        rows += [
+            {"kind": "item", "id": "usb", "title": "From a USB stick", "detail": usb, "value": "USB" if drives else ""},
+            {"kind": "item", "id": "folder", "title": "From a folder on this computer",
+             "detail": "Starts at your USB sticks, Downloads and Home. Pick the folder that holds the games."},
+            {"kind": "item", "id": "windows", "title": "A Windows game (.exe or .zip)",
+             "detail": "A PC game you downloaded yourself. Atari sets it up to run with Proton / Wine."},
+            {"kind": "item", "id": "bios", "title": "BIOS files (for PlayStation, Saturn, Dreamcast ...)",
+             "detail": "Files from your own console; some emulators need them."},
+        ]
+        if self._add_result:
+            rows.append(self._info("Last result:  " + self._add_result))
+        rows.append({"kind": "done", "id": "finish", "title": "Finished - show my games"})
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
 
     @Slot(str, result="QVariantList")
     def pageRows(self, name: str):
+        if name == "addgames":
+            return self._addgames_rows()
         if name == "help":
             return self._help_rows()
         if name == "fix":
@@ -1470,6 +2163,18 @@ class Backend(QObject):
             return self._winform_rows()
         if name == "winchoose":
             return self._winchoose_rows()
+        if name == "recordings":
+            return self._recordings_rows()
+        if name == "coverpick":
+            return self._coverpick_rows()
+        if name == "nocovers":
+            return self._nocovers_rows()
+        if name == "install":
+            return self._install_rows()
+        if name == "installmenu":
+            return self._installmenu_rows()
+        if name == "steam":
+            return self._steam_rows()
         if name == "winwork":
             return [{"kind": "info", "title": self._win_text or "Working..."},
                     {"kind": "item", "id": "cancel", "title": "Cancel"}]
@@ -1490,6 +2195,10 @@ class Backend(QObject):
         rows += [
             {"kind": "item", "id": "winadd", "title": "Add a Windows game (.exe or .zip)",
              "detail": "For PC games you downloaded yourself. Runs through Proton / Wine."},
+            {"kind": "item", "id": "nocovers", "title": "Covers not found (and re-download covers)",
+             "detail": "Lists games no cover was found for; pick one yourself or search again."},
+            {"kind": "item", "id": "steampage", "title": "Steam: install, rescan, where to keep games",
+             "detail": "Installs Steam for you, opens it for the first sign-in, rescans your games, and warns about Windows (NTFS) drives."},
             {"kind": "item", "id": "controls", "title": "Controls (keyboard keys)",
              "detail": "Which keys to press inside each emulator."},
             self._info("Q: Make music?  A: Options > Studio (or the Studio tile). Make a beat, record your voice over it, then mix and save a WAV or MP3 "
@@ -1499,11 +2208,17 @@ class Backend(QObject):
                        "AntiMicroX can make a controller act as a mouse. Netflix, Prime and Disney+ stream at about 720p on Linux."),
             self._info("Q: Fortnite / Call of Duty / Warzone?  A: they do not work on Linux - their anti-cheat blocks it and the makers do not support it. "
                        "The Free Games tile lists free games that do work (checked on ProtonDB). Minecraft Java: Prism Launcher in PC Apps (needs your own licence)."),
+            self._info("Q: Roblox says \"Invalid Bundle\" / I downloaded a .flatpak file.  A: " + sober.INVALID_BUNDLE_TEXT),
             self._info("Q: A game does not start.  A: highlight it, press the Options button (F10 / Start), choose \"Fix my game\"."),
             self._info("Q: The game has no picture.  A: step 4 above downloads covers (needs internet). Names must look like the real game title."),
             self._info("Q: A console says it needs a BIOS.  A: those are files from your own console. Atari cannot download them - use step 3 with a USB stick or folder."),
             self._info("Q: Where are my games?  A: ~/Games/Atari/<console>/ . Your favourites and play time are kept when you update Atari."),
             self._info("Q: How do I quit a game?  A: use the emulator's own exit (see Controls). Atari comes back by itself."),
+            self._info("Q: How do I get back from Netflix / YouTube / Kodi?  A: press Esc twice quickly (or hold Esc for 1 second, or Ctrl+Esc). "
+                       "Atari closes the app and comes back. One Esc still leaves video full screen as normal. On a controller: hold Guide / Home and press B. "
+                       "(Needs the normal Linux Mint X11 desktop; turn it off in Settings.)"),
+            {"kind": "item", "id": "studiofix", "title": "Studio does not work? Fix Studio",
+             "detail": "Checks numpy, the recording tools and the microphone, and installs what is missing (needs internet)."},
             {"kind": "item", "id": "copylog", "title": "Copy log (to send to someone who is helping you)",
              "detail": "Copies Atari's recent messages and your setup to the clipboard. It contains no passwords."},
             {"kind": "item", "id": "reset",
@@ -1563,8 +2278,10 @@ class Backend(QObject):
         except OSError:
             pass
         head = [f"Atari {__version__}  python {sys.version.split()[0]}  {os.environ.get('XDG_CURRENT_DESKTOP', '')}",
-                diagnose.controller_text(), ""]
-        text = "\n".join(head + (lines or ["(the log is empty)"]))
+                diagnose.controller_text(), "Studio: " + studio_fix.summary(studio_fix.problems(studio_fix.numpy_ok()))
+                if hasattr(studio_fix, "numpy_ok") else diagnose.controller_text(), ""]
+        slog = studio_fix.read_log(40)
+        text = "\n".join(head + (lines or ["(the log is empty)"]) + (["", "--- Studio log ---"] + slog if slog else []))
         cb = QGuiApplication.clipboard()
         if cb is not None:
             cb.setText(text)
@@ -1604,6 +2321,37 @@ class Backend(QObject):
             return "back" if rid == "back" else ""
         if name == "help":
             return self._help_activate(rid)
+        if name == "addgames":
+            return {"usb": "import:games", "folder": "browse:importfolder", "windows": "browse:winaddwizard",
+                    "bios": "import:bios", "finish": "close"}.get(rid, "")
+        if name == "install":
+            return self._install_activate(rid)
+        if name == "recordings":
+            return self._recordings_activate(rid)
+        if name == "coverpick":
+            return self._coverpick_activate(rid)
+        if name == "nocovers":
+            return self._nocovers_activate(rid)
+        if name == "installmenu":
+            if rid == "inst_essentials":
+                self.installEssentials()
+            elif rid == "inst_all":
+                self.installAll()
+            elif rid == "inst_terminal":
+                self.installInTerminal()
+            return ""
+        if name == "steam":
+            if rid == "steaminstall":
+                self.installSteam()
+            elif rid == "steamopen":
+                g = next((x for x in self._all if x.gid == "app:steam"), None)
+                if g is not None and not g.missing:
+                    self._launch_game(g)
+                    return "close"
+            elif rid == "steamrescan":
+                self.rescanSteam()
+                return "refresh"
+            return ""
         if name == "fix":
             if rid == "emus":
                 self.installEmulators()
@@ -1640,14 +2388,45 @@ class Backend(QObject):
             return "back"
         return ""
 
+    def _install_activate(self, rid: str) -> str:
+        if rid == "install" or rid == "retry":
+            self._inst_state = "ask"
+            self._install_start()
+            return "refresh"
+        if rid == "cancel":
+            if self._inst_job is not None:
+                self._inst_job.cancel()
+            return ""
+        if rid == "launch":
+            g = next((x for x in self._all if x.gid == self._inst_for_gid), None)
+            self._inst_state = "idle"
+            if g is not None and not g.missing and not self._running:
+                self._launch_game(g)
+            return "close"
+        if rid == "copylog":
+            self.copyLog()
+            return ""
+        return ""
+
     def _help_activate(self, rid: str) -> str:
         if rid != "reset":
             self._reset_armed = False
-        if rid == "ck_emus":
-            self.installEmulators()
+        if rid == "studiofix":
+            st = self.studio
+            if st.available and not studio_fix.problems(True):
+                self.show_toast("The Studio looks fine. If it still fails, press Copy log and send it to whoever is helping you.", 7000)
+            else:
+                st.fix()
+                self.show_toast("Fixing the Studio - Atari adds what is missing. This can take a minute.", 7000)
             return ""
+        if rid == "ck_emus":
+            return "page:installmenu"
+        if rid == "ck_steam" or rid == "steampage":
+            return "page:steam"
+        if rid == "nocovers":
+            return "page:nocovers"
         if rid == "ck_games":
-            return "import:games"
+            return "page:addgames"
         if rid == "ck_bios":
             return "import:bios"
         if rid == "ck_covers":

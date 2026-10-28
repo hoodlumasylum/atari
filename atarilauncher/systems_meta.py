@@ -14,6 +14,7 @@ SYSTEM_LOOK = {
     "apps": ("PC Apps", "monitor", "#2d6a4a", "#0b2016"),
     "streaming": ("Streaming", "monitor", "#7a5a10", "#241a05"),
     "studio": ("Studio", "bars", "#7a5a10", "#12200a"),
+    "tools": ("Tools", "monitor", "#8a1620", "#2a0508"),
     "free": ("Free Games", "pad", "#2d7a3a", "#0b2410"),
     "windows": ("Windows", "monitor", "#1f5fa8", "#0a1a30"),
     "heroic": ("Heroic", "pad", "#1f3f7a", "#0a1530"),

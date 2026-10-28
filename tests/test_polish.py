@@ -188,6 +188,8 @@ def test_launch_whoosh_favourite_and_error_sounds(app, tmp_path, monkeypatch):
         assert "fav" in ui.cmds
         ui.cmds.clear()
         b.cfg.music = True
+        b.cfg.systems["nes"].command = "no-such-nes-emulator {rom}"      # a missing program of your own: a plain launch error
+        b.rescan(toast=False)
         # the real launch path: there is no NES emulator on the test machine, so it ends with an error
         b.launch(0)
         assert wait_for(app, lambda: not b.running, 10)

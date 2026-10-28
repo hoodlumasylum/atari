@@ -41,7 +41,7 @@ Item {
     function adjust(d) { if (page !== "home") studio.adjust(page, currentId(), d) }
     function cardPress(i) {
         var id = cards[i].id
-        if (!studio.available) return
+        if (!studio.available) { studio.fix(); return }
         if (id === "beat" || id === "record" || id === "mix") goPage(id)
         else { studio.activate("home", id); refresh() }
     }
@@ -104,7 +104,18 @@ Item {
             visible: !studio.available
             anchors.centerIn: parent; width: parent.width * 0.8
             wrapMode: Text.Wrap; horizontalAlignment: Text.AlignHCenter
-            text: studio.helpText; color: st.gold; font.pixelSize: 24 * st.u
+            text: studio.helpText + (studio.fixText !== "" ? "\n\n" + studio.fixText : "") + "\n\nPress Enter / A (or click here) to fix it."
+            color: st.gold; font.pixelSize: 24 * st.u
+            MouseArea { anchors.fill: parent; onClicked: studio.fix() }
+        }
+        Rectangle {
+            visible: !studio.available
+            objectName: "studioFixButton"
+            anchors.horizontalCenter: parent.horizontalCenter; anchors.bottom: parent.bottom; anchors.bottomMargin: 30 * st.u
+            width: 520 * st.u; height: 76 * st.u; radius: 16 * st.u; color: "#1d2a10"; border.width: 4 * st.u; border.color: st.gold
+            Text { anchors.centerIn: parent; color: st.gold; font.pixelSize: 30 * st.u; font.bold: true
+                   text: studio.fixing ? "Working on it..." : "Fix Studio" }
+            MouseArea { anchors.fill: parent; onClicked: studio.fix() }
         }
         Row {
             id: bigRow

@@ -2,7 +2,9 @@
 
 It uses SDL2 (bundled with the `pygame` package) which understands practically every
 controller (Xbox, PlayStation, Switch Pro, 8BitDo...). It prints one word per line:
-up down left right accept back favorite options system search prev next
+up down left right accept back favorite options system search prev next quitapp record
+(`quitapp` = Guide/Home held + B: closes a running web app or Kodi and returns to Atari;
+`record` = Guide/Home held + X: start / stop the screen recorder)
 
 Running it in its own process keeps SDL's settings out of the emulators we launch,
 and a controller problem can never crash the launcher.
@@ -60,6 +62,25 @@ class Repeater:
         return out
 
 
+class GuideChord:
+    """Guide/Home held + B  ->  'quitapp'. Guide alone does nothing; B alone is the normal 'back'."""
+
+    def __init__(self):
+        self.guide = 0                      # how many pads hold Guide down (usually 0 or 1)
+
+    def button(self, name: str, down: bool) -> str | None:
+        """Returns 'quitapp' when B is pressed with Guide held, 'swallow' for B/Guide events that must not
+        also act as plain 'back', else None."""
+        if name == "guide":
+            self.guide = max(0, self.guide + (1 if down else -1))
+            return "swallow"
+        if name == "b" and down and self.guide:
+            return "quitapp"
+        if name == "x" and down and self.guide:
+            return "record"
+        return None
+
+
 def main() -> int:
     import os
 
@@ -93,6 +114,7 @@ def main() -> int:
     for i in range(controller.get_count()):
         open_pad(i)
 
+    chord = GuideChord()
     parent = os.getppid()
     btn_names = {getattr(pygame, n): n[len("CONTROLLER_BUTTON_"):].lower()
                  for n in dir(pygame) if n.startswith("CONTROLLER_BUTTON_")}
@@ -107,14 +129,23 @@ def main() -> int:
                 pads.pop(ev.instance_id, None)
                 print("#pad-removed", flush=True)
             elif t == pygame.CONTROLLERBUTTONDOWN:
-                action = BUTTON_MAP.get(btn_names.get(ev.button, ""))
+                bname = btn_names.get(ev.button, "")
+                special = chord.button(bname, True)
+                if special:
+                    if special in ("quitapp", "record"):
+                        print(special, flush=True)
+                    continue
+                action = BUTTON_MAP.get(bname)
                 if action in DIRECTIONS:
                     for a in rep.press(action, time.monotonic()):
                         print(a, flush=True)
                 elif action:
                     print(action, flush=True)
             elif t == pygame.CONTROLLERBUTTONUP:
-                action = BUTTON_MAP.get(btn_names.get(ev.button, ""))
+                bname = btn_names.get(ev.button, "")
+                if chord.button(bname, False):
+                    continue
+                action = BUTTON_MAP.get(bname)
                 if action in DIRECTIONS:
                     rep.release(action)
             elif t == pygame.CONTROLLERAXISMOTION:

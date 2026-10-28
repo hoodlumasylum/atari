@@ -25,6 +25,9 @@ class Fake:
         self.files: dict[str, bytes] = {}      # path (unquoted) -> body
         self.flaky: dict[str, int] = {}        # path -> number of 503s to serve first
         self.hits: list[str] = []
+        self.dynamic: dict = {}                # path prefix -> function(path, query dict) -> bytes   (JSON APIs)
+        self.auth_seen: list[str] = []
+        self.ua_seen: list[str] = []
         outer = self
 
         class H(http.server.BaseHTTPRequestHandler):
@@ -34,6 +37,18 @@ class Fake:
             def do_GET(self):
                 path = urllib.parse.unquote(self.path)
                 outer.hits.append(path)
+                outer.ua_seen.append(self.headers.get("User-Agent", ""))
+                if self.headers.get("Authorization"):
+                    outer.auth_seen.append(self.headers["Authorization"])
+                for prefix, fn in outer.dynamic.items():
+                    if path.split("?")[0].startswith(prefix):
+                        q = dict(urllib.parse.parse_qsl(self.path.partition("?")[2]))
+                        body = fn(path.split("?")[0], q)
+                        self.send_response(200)
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                        return
                 if outer.flaky.get(path, 0) > 0:
                     outer.flaky[path] -= 1
                     self.send_response(503)
@@ -55,11 +70,11 @@ class Fake:
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
 
-    def listing(self, folder: str, names: list[str]):
+    def listing(self, folder: str, names: list[str], kind: str = "Named_Boxarts", body: bytes = PNG):
         rows = "".join(f'<tr><td><a href="{urllib.parse.quote(n)}">{n}</a></td></tr>' for n in names)
-        self.files[f"/{folder}/Named_Boxarts/"] = f"<html><body><table>{rows}</table></body></html>".encode()
+        self.files[f"/{folder}/{kind}/"] = f"<html><body><table>{rows}</table></body></html>".encode()
         for n in names:
-            self.files[f"/{folder}/Named_Boxarts/{n}"] = PNG
+            self.files[f"/{folder}/{kind}/{n}"] = body
 
     def stop(self):
         self.server.shutdown()

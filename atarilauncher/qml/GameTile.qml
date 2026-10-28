@@ -13,6 +13,7 @@ Item {
     required property string lastPlayed
     required property string note
     required property real hue
+    required property bool fit
     property real u: 1
     property bool current: false     // the highlighted game
     property bool focused: false     // ... and the grid currently has the focus
@@ -56,6 +57,7 @@ Item {
             u: tile.u
             radius: 7 * tile.u
             source: tile.cover
+            fit: tile.fit
             title: tile.title
             label: tile.platformName
             hue: tile.hue

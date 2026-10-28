@@ -563,7 +563,7 @@ def test_without_numpy_the_studio_explains_itself(ctl, monkeypatch):
     import atarilauncher.studio_ui as su
     monkeypatch.setattr(su, "numpy_available", lambda: False)
     rows = ctl.rows("beat")
-    assert "numpy" in rows[0]["title"] and ids(rows) == ["back"]
+    assert "numpy" in rows[0]["title"] and ids(rows) == ["fix", "back"]
     assert ctl.activate("home", "beat") == "" and ctl.page == "home"
 
 

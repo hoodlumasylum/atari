@@ -49,6 +49,14 @@ class Config:
     sound_effects: bool = True  # little UI sounds (Settings > Sound effects)
     music: bool = False         # soft ambient loop (Settings > Music), off unless asked for
     volume: float = 0.6         # 0.0 - 1.0 for sounds and music
+    rec_audio: str = "desktop"     # none | desktop | mic | both
+    rec_quality: str = "medium"    # low | medium | high
+    rec_fps: int = 30              # 30 | 60
+    rec_dir: str = ""              # "" = ~/Videos/Atari Recordings
+    rec_encoder: str = "x264"      # x264 | vaapi (hardware, needs a working VAAPI driver)
+    steamgriddb_key: str = ""      # optional free SteamGridDB API key for extra covers (Settings)
+    cover_wikipedia: bool = True   # Wikipedia's article picture as a last-resort cover source
+    esc_exit: bool = True          # Esc twice / hold Esc / Ctrl+Esc / Guide+B quits a web app or Kodi and returns to Atari
     reduce_animations: bool = False  # Settings > Reduce animations: no moving background, bobbing or fades
     first_run: bool = False
     path: Path | None = None
@@ -91,6 +99,8 @@ def load_config(path: Path | None = None) -> Config:
     cv = data.get("covers", {})
     if isinstance(cv, dict):
         cfg.covers_auto = bool(cv.get("auto", True))
+        cfg.steamgriddb_key = str(cv.get("steamgriddb_key", "")).strip()
+        cfg.cover_wikipedia = bool(cv.get("wikipedia", True))
     up = data.get("updates", {})
     if isinstance(up, dict):
         cfg.update_check = bool(up.get("check", True))
@@ -103,6 +113,14 @@ def load_config(path: Path | None = None) -> Config:
         except (TypeError, ValueError):
             cfg.volume = 0.6
         cfg.reduce_animations = bool(ui.get("reduce_animations", False))
+        cfg.esc_exit = bool(ui.get("esc_exit", True))
+    rc = data.get("recording", {})
+    if isinstance(rc, dict):
+        cfg.rec_audio = rc.get("audio", "desktop") if rc.get("audio") in ("none", "desktop", "mic", "both") else "desktop"
+        cfg.rec_quality = rc.get("quality", "medium") if rc.get("quality") in ("low", "medium", "high") else "medium"
+        cfg.rec_fps = 60 if rc.get("fps") == 60 else 30
+        cfg.rec_dir = str(rc.get("folder", ""))
+        cfg.rec_encoder = "vaapi" if rc.get("encoder") == "vaapi" else "x264"
     r = data.get("retroarch", {})
     cfg.retroarch_command = str(r.get("command", ""))
     cfg.cores_dir = str(r.get("cores_dir", ""))
@@ -154,6 +172,20 @@ def dump_config(cfg: Config) -> str:
         "[covers]",
         "# Download missing box art from the internet in the background after a scan (Settings > Covers).",
         "auto = " + ("true" if cfg.covers_auto else "false"),
+        "# Optional: a free SteamGridDB API key (steamgriddb.com > Preferences > API) adds more cover sources. Leave empty to skip.",
+        "steamgriddb_key = " + _q(cfg.steamgriddb_key),
+        "# Wikipedia's article picture as a last-resort cover (only the page image, no other data).",
+        "wikipedia = " + ("true" if cfg.cover_wikipedia else "false"),
+        "",
+        "[recording]",
+        "# Screen recorder (F9, or Guide + X on a controller). audio = none | desktop | mic | both; quality = low | medium | high.",
+        "audio = " + _q(cfg.rec_audio),
+        "quality = " + _q(cfg.rec_quality),
+        "fps = " + str(cfg.rec_fps),
+        '# folder = ""  means ~/Videos/Atari Recordings',
+        "folder = " + _q(cfg.rec_dir),
+        '# encoder = "x264" (works everywhere) or "vaapi" (hardware, if your graphics driver supports it)',
+        "encoder = " + _q(cfg.rec_encoder),
         "",
         "[updates]",
         "# Look for a newer Atari release (once a day, quietly) and show a badge (Settings > Updates).",
@@ -165,6 +197,8 @@ def dump_config(cfg: Config) -> str:
         "music = " + ("true" if cfg.music else "false"),
         "volume = " + f"{cfg.volume:.2f}",
         "reduce_animations = " + ("true" if cfg.reduce_animations else "false"),
+        "# Esc twice (or hold Esc 1 s, Ctrl+Esc, gamepad Guide+B) closes Netflix / YouTube / Kodi and returns to Atari.",
+        "esc_exit = " + ("true" if cfg.esc_exit else "false"),
         "",
         "[retroarch]",
         '# Leave empty to auto-detect. Example: command = "flatpak run org.libretro.RetroArch"',

@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from . import apps, controls, emulators, freegames, paths, webapps, windows
+from . import apps, controls, emulators, exitwatch, freegames, paths, webapps, windows
 from .config import Config, SystemConfig
 from .library import Game
 
@@ -24,9 +24,16 @@ _STRIP_ENV = ("QT_QPA_PLATFORM", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH"
               "QML2_IMPORT_PATH", "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "QT_QUICK_BACKEND")
 
 
+def _has_fuse2() -> bool:
+    import ctypes.util
+    return bool(ctypes.util.find_library("fuse"))
+
+
 def clean_env() -> dict[str, str]:
     """Environment for child programs, without our Python/Qt settings leaking in."""
     env = {k: v for k, v in os.environ.items() if k not in _STRIP_ENV}
+    if not _has_fuse2():            # AppImages (DuckStation) need FUSE 2; without it they unpack themselves and run from there
+        env.setdefault("APPIMAGE_EXTRACT_AND_RUN", "1")
     venv = os.environ.get("VIRTUAL_ENV")
     if venv:
         env["PATH"] = os.pathsep.join(p for p in env.get("PATH", "").split(os.pathsep)
@@ -64,11 +71,54 @@ def controls_hint(cfg: Config, game: Game) -> str:
     """One line of keyboard keys for the emulator that would run this game ('' for Steam / unknown)."""
     if game.platform == "steam":
         return ""
+    if game.platform == webapps.STREAMING:            # Netflix, YouTube, ... and Kodi: how to get back to Atari
+        return exit_hint(cfg)
     system = cfg.systems.get(game.platform)
     if system is None or system.command.strip():
         return ""
     choice = emulators.choose(cfg, system)
     return controls.hint_for(choice.emu.id, system.id) if choice else ""
+
+
+def exit_hint(cfg: Config | None = None) -> str:
+    """The line shown when a web app / Kodi starts ('' when Esc-to-return is switched off)."""
+    if not exitwatch.enabled(cfg):
+        return ""
+    return exitwatch.HINT + ".  " + exitwatch.HINT_PAD
+
+
+def _hint_delay() -> float:
+    """Seconds the 'NOW PLAYING ... press Esc twice' screen is shown before the browser covers it."""
+    try:
+        return max(0.0, float(os.environ.get("ATARI_HINT_DELAY", "1.5")))
+    except ValueError:
+        return 1.5
+
+
+def _flatpak_id(cmd: list[str]) -> str:
+    if len(cmd) >= 3 and cmd[0] == "flatpak" and cmd[1] == "run":
+        return next((a for a in cmd[2:] if not a.startswith("-")), "")
+    return ""
+
+
+def _start_watch(cfg: Config, proc, cmd: list[str]):
+    """Start the Esc-twice watcher for a running web app; None when switched off."""
+    if not exitwatch.enabled(cfg):
+        return None
+    w = exitwatch.Watch(proc, _flatpak_id(cmd))
+    _log("esc-to-return: " + ("keyboard watcher on (X11)" if w.keyboard_ok else
+                              f"keyboard watcher unavailable ({w.keys.why}); gamepad Guide+B only"))
+    w.start()
+    exitwatch.notify(exitwatch.HINT_SHORT)
+    return w
+
+
+def _finish_watched(w, name: str, code: int, started: float) -> tuple[float, str] | None:
+    """If the user closed the app with Esc-twice / Guide+B, that is a normal end, not an error."""
+    if w is not None and w.triggered:
+        _log(f"esc-to-return: closed {name} ({w.reason})")
+        return time.time() - started, ""
+    return None
 
 
 def steam_base_command(cfg: Config, home: Path | None = None) -> list[str]:
@@ -200,18 +250,39 @@ def _run_app(cfg: Config, game: Game, on_started):
         raise LaunchError(apps.install_hint(app) if app else "That app is not available.")
     _check_executable(cmd, app.title)
     _log("launch: " + shlex.join(cmd))
+    if app.id == "steam" and not game.launch:      # Steam stays open on its own: start it and come straight back
+        try:
+            subprocess.Popen(cmd, env=clean_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             stdin=subprocess.DEVNULL, start_new_session=True)
+        except OSError as exc:
+            raise LaunchError(f"Could not start Steam: {exc}")
+        on_started()
+        return 0.0, INFO + ("Steam is starting - sign in there. After Steam has installed a game, choose "
+                            "Settings > Steam > Rescan Steam so it shows up here.")
     try:
         paths.data_dir().mkdir(parents=True, exist_ok=True)
         logfh = open(paths.log_file(), "ab")
     except OSError:
         logfh = subprocess.DEVNULL
+    watched = game.platform == webapps.STREAMING and exitwatch.enabled(cfg)    # Kodi: Esc twice / hold Esc returns to Atari
+    if watched:
+        time.sleep(_hint_delay())
     started = time.time()
     try:
-        proc = subprocess.Popen(cmd, env=clean_env(), stdout=logfh, stderr=logfh, stdin=subprocess.DEVNULL)
+        proc = subprocess.Popen(cmd, env=clean_env(), stdout=logfh, stderr=logfh, stdin=subprocess.DEVNULL,
+                                start_new_session=watched)
     except OSError as exc:
         raise LaunchError(f"Could not start {app.title}: {exc}")
+    watch = _start_watch(cfg, proc, cmd) if watched else None
     on_started()
-    code = proc.wait()
+    try:
+        code = proc.wait()
+    finally:
+        if watch is not None:
+            watch.stop()
+    done = _finish_watched(watch, app.title, code, started)
+    if done:
+        return done
     elapsed = time.time() - started
     if code != 0 and elapsed < 5:
         extra = (" Sober is unofficial and can break after a Roblox update: reinstall it with Settings > Emulators "
@@ -304,13 +375,24 @@ def _run_web(cfg: Config, game: Game, on_started):
         logfh = open(paths.log_file(), "ab")
     except OSError:
         logfh = subprocess.DEVNULL
+    if exitwatch.enabled(cfg):
+        time.sleep(_hint_delay())       # let the "Press Esc twice to return to Atari" screen be read before the browser covers it
     started = time.time()
     try:
-        proc = subprocess.Popen(cmd, env=clean_env(), stdout=logfh, stderr=logfh, stdin=subprocess.DEVNULL)
+        proc = subprocess.Popen(cmd, env=clean_env(), stdout=logfh, stderr=logfh, stdin=subprocess.DEVNULL,
+                                start_new_session=True)
     except OSError as exc:
         raise LaunchError(f"Could not start {name}: {exc}")
+    watch = _start_watch(cfg, proc, cmd)
     on_started()
-    code = proc.wait()
+    try:
+        code = proc.wait()
+    finally:
+        if watch is not None:
+            watch.stop()
+    done = _finish_watched(watch, name, code, started)
+    if done:
+        return done
     elapsed = time.time() - started
     if code != 0 and elapsed < 5:
         return 0.0, f"{name} closed right away (code {code}). Details: {paths.log_file()}"

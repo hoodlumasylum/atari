@@ -49,7 +49,7 @@ Item {
             readonly property bool primary: modelData.kind === "done"   // the big red DONE / CONTINUE rows
             width: lv.width
             height: isInfo ? Math.max(34 * ml.u, infoText.implicitHeight + 12 * ml.u)
-                           : (two ? 56 * ml.u + detailText.implicitHeight : 62 * ml.u)
+                           : (modelData.image ? 112 * ml.u : (two ? 56 * ml.u + detailText.implicitHeight : 62 * ml.u))
             radius: 10 * ml.u
             color: primary ? (sel ? "#d8222c" : "#a8121b") : (sel ? ml.selColor : (isInfo ? "transparent" : "#121420"))
             border.width: sel ? 3 * ml.u : (isInfo ? 0 : 1.5 * ml.u)
@@ -67,11 +67,25 @@ Item {
                 color: Theme.dim
                 font.pixelSize: 18 * ml.u
             }
+            Image {      // optional picture on the left (the cover picker's candidates)
+                id: rowImg
+                visible: !row.isInfo && !!modelData.image
+                source: modelData.image ? modelData.image : ""
+                asynchronous: true
+                cache: false
+                fillMode: Image.PreserveAspectFit
+                sourceSize.height: 160
+                anchors.left: parent.left
+                anchors.leftMargin: 14 * ml.u
+                anchors.verticalCenter: parent.verticalCenter
+                height: parent.height - 12 * ml.u
+                width: visible ? 96 * ml.u : 0
+            }
             Text {
                 id: titleText
                 visible: !row.isInfo
                 anchors.left: parent.left
-                anchors.leftMargin: 22 * ml.u
+                anchors.leftMargin: (modelData.image ? 120 : 22) * ml.u
                 anchors.right: valueText.left
                 anchors.rightMargin: 12 * ml.u
                 anchors.top: parent.top
@@ -103,7 +117,7 @@ Item {
                 id: detailText
                 visible: !row.isInfo && row.two
                 anchors.left: parent.left
-                anchors.leftMargin: 22 * ml.u
+                anchors.leftMargin: (modelData.image ? 120 : 22) * ml.u
                 anchors.right: parent.right
                 anchors.rightMargin: 22 * ml.u
                 anchors.bottom: parent.bottom
