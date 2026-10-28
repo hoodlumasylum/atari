@@ -1,5 +1,5 @@
 """0.3.2: original-Xbox .iso games (sniffing, "Which system is this?", skipped-file reasons, default.xbe folders),
-the Steam controller-permissions fix, and Steam in Big Picture with Esc / Guide+B back to Code."""
+the Steam controller-permissions fix, and Steam in Big Picture with Esc / Guide+B back to CodeAque."""
 import os
 import struct
 import threading

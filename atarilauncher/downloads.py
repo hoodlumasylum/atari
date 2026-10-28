@@ -1,8 +1,8 @@
 """Files you downloaded from the web (in ~/Downloads) and a one-press way to move a finished file into your games.
 
-Code does not curate, bookmark or link to any download site: the Web Browser tile opens a neutral search engine and you browse
+CodeAque does not curate, bookmark or link to any download site: the Web Browser tile opens a neutral search engine and you browse
 yourself. Downloads are saved by the browser into ~/Downloads (its normal place); this screen lists them, shows the ones that are
-still arriving (a growing .crdownload / .part file) and moves a finished file into ~/Games/Atari/<system>/ - the folder Code's game
+still arriving (a growing .crdownload / .part file) and moves a finished file into ~/Games/Atari/<system>/ - the folder CodeAque's game
 scanner reads (~/Games/Code is made as a second name for it). Only files you own or have the right to use belong here.
 Pure Python, injectable folders, so it is testable."""
 from __future__ import annotations

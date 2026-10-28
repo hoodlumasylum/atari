@@ -6,10 +6,11 @@ Rectangle {
     property var game: ({})
     property real u: 1
     property bool focused: false
-    property int focusIndex: 0          // 0 = PLAY, 1 = FAVOURITE
+    property int focusIndex: 0          // 0 = PLAY, 1 = FAVOURITE, 2 = DELETE GAME
     readonly property bool has: game && game.title !== undefined
     signal play()
     signal toggleFavorite()
+    signal deleteRequested()
     signal clicked()
 
     radius: 14 * u
@@ -119,7 +120,7 @@ Rectangle {
         anchors.topMargin: 10 * dp.u
         anchors.left: titleText.left
         anchors.right: titleText.right
-        anchors.bottom: buttons.top
+        anchors.bottom: delBtn.visible ? delBtn.top : buttons.top
         anchors.bottomMargin: 8 * dp.u
         visible: dp.has && dp.game.note !== ""
         text: dp.has ? dp.game.note : ""
@@ -127,6 +128,23 @@ Rectangle {
         elide: Text.ElideRight
         color: Theme.yellow
         font.pixelSize: 14 * dp.u
+    }
+    Rectangle {
+        id: delBtn
+        readonly property bool sel: dp.focused && dp.focusIndex === 2
+        visible: dp.has && dp.game.canDelete === true
+        anchors.bottom: buttons.top
+        anchors.bottomMargin: 10 * dp.u
+        anchors.left: titleText.left
+        anchors.right: titleText.right
+        height: 38 * dp.u
+        radius: 9 * dp.u
+        color: delBtn.sel ? "#2a0b10" : "#141622"
+        border.width: (delBtn.sel ? 3 : 1.5) * dp.u
+        border.color: delBtn.sel ? "white" : "#4a2a30"
+        Text { anchors.centerIn: parent; text: "DELETE GAME"; color: delBtn.sel ? "white" : "#e8a0a6"
+               font.pixelSize: 15 * dp.u; font.bold: true; font.letterSpacing: 1 * dp.u }
+        MouseArea { anchors.fill: parent; onClicked: { if (dp.has) dp.deleteRequested() } }
     }
     Row {
         id: buttons

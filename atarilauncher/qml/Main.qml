@@ -6,7 +6,7 @@ Window {
     visible: true
     width: 1280
     height: 720
-    title: "Code"
+    title: "CodeAque"
     color: Theme.bg
     visibility: (backend.fullscreen || (mode === "intro" && Qt.platform.pluginName !== "offscreen")) ? Window.FullScreen : Window.Windowed     // the intro is always full screen (the headless test platform cannot)
 
@@ -123,6 +123,11 @@ Window {
         keepIdx = -1
         refreshCur()
     }
+    // "Delete game": the page asks first (the highlight starts on No). Steam games only offer to open Steam's own uninstall.
+    function openDelete() {
+        if (grid.count < 1) return
+        if (backend.openDeleteGame(grid.currentIndex)) openPage("deletegame")
+    }
     function launchCurrent() { if (grid.count > 0) backend.launch(grid.currentIndex) }
 
     function openStudio() { studioScreen.open(); mode = "studio" }
@@ -144,14 +149,14 @@ Window {
             { kind: "item", id: "help", title: "Help & getting started" },
             { kind: "item", id: "rescan", title: "Rescan library" },
             { kind: "item", id: "emus", title: "Emulators" },
-            { kind: "item", id: "update", title: backend.updateAvailable ? "Update Code  (" + backend.updateVersion + " is ready)" : "Update Code" },
+            { kind: "item", id: "update", title: backend.updateAvailable ? "Update CodeAque  (" + backend.updateVersion + " is ready)" : "Update CodeAque" },
             { kind: "item", id: "settings", title: "Settings (Steam & ROM folders)" },
             { kind: "item", id: "golive", title: "Go Live: stream to Twitch, TikTok, YouTube with OBS" },
             { kind: "item", id: "downloads", title: "Downloads: web browser, add downloaded files to my games" },
             { kind: "item", id: "files", title: "My files: browse Downloads, Games, Videos (unzip, rename, delete)" },
-            { kind: "item", id: "support", title: "Support Code (optional donation page)" },
+            { kind: "item", id: "support", title: "Support CodeAque (optional donation page)" },
             { kind: "item", id: "full", title: "Toggle full screen" },
-            { kind: "item", id: "power", title: "Power: restart Code, restart device, shut down" }
+            { kind: "item", id: "power", title: "Power: restart CodeAque, restart device, shut down" }
         ]
     }
     function openSort() {
@@ -405,10 +410,12 @@ Window {
             return
         }
         if (area === "detail") {
-            if (k === Qt.Key_Left) { if (detailIndex > 0) detailIndex--; else area = "grid" }
-            else if (k === Qt.Key_Right) detailIndex = 1
-            else if (k === Qt.Key_Up) area = "tiles"
-            else if (isEnter(k) || k === Qt.Key_Space) { if (detailIndex === 0) launchCurrent(); else toggleFav() }
+            if (k === Qt.Key_Left) { if (detailIndex === 1 || detailIndex === 2) detailIndex = 0; else area = "grid" }
+            else if (k === Qt.Key_Right) { if (detailIndex === 0) detailIndex = 1 }
+            else if (k === Qt.Key_Down) { if (detailIndex < 2 && cur.canDelete === true) detailIndex = 2 }
+            else if (k === Qt.Key_Up) { if (detailIndex === 2) detailIndex = 0; else area = "tiles" }
+            else if (k === Qt.Key_Delete) openDelete()
+            else if (isEnter(k) || k === Qt.Key_Space) { if (detailIndex === 0) launchCurrent(); else if (detailIndex === 1) toggleFav(); else openDelete() }
             return
         }
         // ---- grid
@@ -432,6 +439,7 @@ Window {
         }
         else if (k === Qt.Key_Home) grid.currentIndex = 0
         else if (k === Qt.Key_End) grid.currentIndex = n - 1
+        else if (k === Qt.Key_Delete) openDelete()
         else if (isEnter(k) || k === Qt.Key_Space) launchCurrent()
     }
 
@@ -850,6 +858,7 @@ Window {
                 focusIndex: win.detailIndex
                 onPlay: win.launchCurrent()
                 onToggleFavorite: win.toggleFav()
+                onDeleteRequested: { win.detailIndex = 2; win.openDelete() }
             }
 
             // ---- centre: heading + grid
@@ -1482,7 +1491,7 @@ Window {
             }
         }
 
-        // ------------------------------------------------- overlay: update Code
+        // ------------------------------------------------- overlay: update CodeAque
         Rectangle {
             id: updScreen
             anchors.fill: parent
@@ -1637,7 +1646,7 @@ Window {
                     visible: backend.runningCancelable
                     width: 420 * win.u; height: 64 * win.u; radius: height / 2
                     color: "#26ffffff"; border.color: Theme.redBright; border.width: 2
-                    Text { anchors.centerIn: parent; text: "Cancel - back to Code  (Esc / B)"; color: "white"; font.pixelSize: 24 * win.u; font.bold: true }
+                    Text { anchors.centerIn: parent; text: "Cancel - back to CodeAque  (Esc / B)"; color: "white"; font.pixelSize: 24 * win.u; font.bold: true }
                     MouseArea { anchors.fill: parent; onClicked: backend.cancelLaunch() }
                 }
                 Text {

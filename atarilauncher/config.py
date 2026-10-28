@@ -40,12 +40,12 @@ class Config:
     steam_root: str = ""  # empty = auto-detect
     steam_extra_libraries: list[str] = field(default_factory=list)
     steam_command: str = ""  # empty = auto ("steam" or Flatpak)
-    steam_proton_default: bool = True  # Code-only mode: Steam Play (proton-experimental) for all games unless a tool was already chosen
+    steam_proton_default: bool = True  # CodeAque-only mode: Steam Play (proton-experimental) for all games unless a tool was already chosen
     retroarch_command: str = ""  # empty = auto ("retroarch" or Flatpak)
     cores_dir: str = ""  # empty = auto
     emulator_commands: dict[str, str] = field(default_factory=dict)  # e.g. {"rpcs3": "flatpak run net.rpcs3.RPCS3"}
     systems: dict[str, SystemConfig] = field(default_factory=dict)
-    update_check: bool = True  # look for a newer Code release at most once a day (Settings)
+    update_check: bool = True  # look for a newer CodeAque release at most once a day (Settings)
     covers_auto: bool = True  # download missing cover art in the background after a scan (Settings)
     sound_effects: bool = True  # little UI sounds (Settings > Sound effects)
     music: bool = False         # soft ambient loop (Settings > Music), off unless asked for
@@ -57,9 +57,9 @@ class Config:
     rec_encoder: str = "x264"      # x264 | vaapi (hardware, needs a working VAAPI driver)
     steamgriddb_key: str = ""      # optional free SteamGridDB API key for extra covers (Settings)
     cover_wikipedia: bool = True   # Wikipedia's article picture as a last-resort cover source
-    esc_exit: bool = True          # Esc twice / hold Esc / Ctrl+Esc / Guide+B quits a web app or Kodi and returns to Code
-    intro_enabled: bool = True     # play the intro video you chose (~/.local/share/atari/intro.mp4 ...) when Code starts
-    intro_default: bool = True     # with no video of your own: Code's own short start-up animation
+    esc_exit: bool = True          # Esc twice / hold Esc / Ctrl+Esc / Guide+B quits a web app or Kodi and returns to CodeAque
+    intro_enabled: bool = True     # play the intro video you chose (~/.local/share/atari/intro.mp4 ...) when CodeAque starts
+    intro_default: bool = True     # with no video of your own: CodeAque's own short start-up animation
     intro_sound: bool = True       # the intro plays WITH its sound (independent of "sound effects")
     steam_bigpicture: bool = True  # the Steam tile opens Steam full screen in Big Picture (controller-friendly) mode
     reduce_animations: bool = False  # Settings > Reduce animations: no moving background, bobbing or fades
@@ -164,7 +164,7 @@ def _ql(items) -> str:
 
 def dump_config(cfg: Config) -> str:
     out = [
-        "# Code launcher settings. Safe to edit by hand; restart Code afterwards.",
+        "# CodeAque launcher settings. Safe to edit by hand; restart CodeAque afterwards.",
         "# Lines starting with # are comments.",
         "",
         "[general]",
@@ -178,7 +178,7 @@ def dump_config(cfg: Config) -> str:
         "extra_libraries = " + _ql(cfg.steam_extra_libraries),
         '# command = ""  means: use `steam`, or the Flatpak version if that is what you have.',
         "command = " + _q(cfg.steam_command),
-        "# Code-only mode: turn on Steam Play (Proton) for all games by default, only if you have not chosen a tool yourself.",
+        "# CodeAque-only mode: turn on Steam Play (Proton) for all games by default, only if you have not chosen a tool yourself.",
         "proton_default = " + ("true" if cfg.steam_proton_default else "false"),
         "",
         "[covers]",
@@ -200,7 +200,7 @@ def dump_config(cfg: Config) -> str:
         "encoder = " + _q(cfg.rec_encoder),
         "",
         "[updates]",
-        "# Look for a newer Code release (once a day, quietly) and show a badge (Settings > Updates).",
+        "# Look for a newer CodeAque release (once a day, quietly) and show a badge (Settings > Updates).",
         "check = " + ("true" if cfg.update_check else "false"),
         "",
         "[ui]",
@@ -209,11 +209,11 @@ def dump_config(cfg: Config) -> str:
         "music = " + ("true" if cfg.music else "false"),
         "volume = " + f"{cfg.volume:.2f}",
         "reduce_animations = " + ("true" if cfg.reduce_animations else "false"),
-        "# Esc twice (or hold Esc 1 s, Ctrl+Esc, gamepad Guide+B) closes Netflix / YouTube / Kodi and returns to Code.",
+        "# Esc twice (or hold Esc 1 s, Ctrl+Esc, gamepad Guide+B) closes Netflix / YouTube / Kodi and returns to CodeAque.",
         "esc_exit = " + ("true" if cfg.esc_exit else "false"),
         "# The Steam tile opens Steam full screen in Big Picture mode (steam -gamepadui). false = normal window.",
         "steam_bigpicture = " + ("true" if cfg.steam_bigpicture else "false"),
-        "# Start-up intro: your own video (intro.mp4 / .webm / .mkv / .mov in ~/.local/share/atari) and Code's own short animation.",
+        "# Start-up intro: your own video (intro.mp4 / .webm / .mkv / .mov in ~/.local/share/atari) and CodeAque's own short animation.",
         "intro_enabled = " + ("true" if cfg.intro_enabled else "false"),
         "intro_default = " + ("true" if cfg.intro_default else "false"),
         "intro_sound = " + ("true" if cfg.intro_sound else "false"),

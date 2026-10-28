@@ -3,7 +3,7 @@
 `systemctl reboot|poweroff|suspend` normally works without a password for the person sitting at the computer (a local logind session
 is allowed by polkit). When it is refused (a remote or odd session, no polkit rule), the same command is retried with `pkexec`
 (the normal password window). If systemctl does not exist, `loginctl` is tried before pkexec. Nothing here ever raises.
-Code-only mode needs nothing special: the session is the user's own local session, so the first try is the one that works."""
+CodeAque-only mode needs nothing special: the session is the user's own local session, so the first try is the one that works."""
 from __future__ import annotations
 
 import shutil
@@ -42,14 +42,14 @@ def run(action: str, runner: Callable | None = None, which: Callable | None = No
     what, doing = ACTIONS.get(action, ("", ""))
     chain = command_chain(action, which)
     if not chain:
-        return False, f"This computer has no systemctl / loginctl, so Code cannot {what or action}. Use the power button."
+        return False, f"This computer has no systemctl / loginctl, so CodeAque cannot {what or action}. Use the power button."
     last = ""
     for cmd in chain:
         kw = {"stdin": subprocess.DEVNULL}
-        if cmd[0] == "pkexec":                    # the second try needs the administrator password: asked inside Code (no polkit window)
+        if cmd[0] == "pkexec":                    # the second try needs the administrator password: asked inside CodeAque (no polkit window)
             cmd, secret, early = rootauth.prepare(cmd, which)
             if early is not None:
-                return False, f"The password window was closed, so Code did not {what}." if early == rootauth.CANCELLED else (rootauth.last_error or f"Code may not {what}.")
+                return False, f"The password window was closed, so CodeAque did not {what}." if early == rootauth.CANCELLED else (rootauth.last_error or f"CodeAque may not {what}.")
             if secret is not None:
                 kw = {"input": secret.decode()}
         try:
@@ -63,5 +63,5 @@ def run(action: str, runner: Callable | None = None, which: Callable | None = No
             return True, doing
         last = ((p.stderr or p.stdout or "").strip().splitlines() or [f"exit code {p.returncode}"])[0]
         if p.returncode in (126, 127) and cmd[0] in ("pkexec", "sudo"):      # the password window was closed: do not try anything else
-            return False, f"The password window was closed, so Code did not {what}."
+            return False, f"The password window was closed, so CodeAque did not {what}."
     return False, f"Could not {what} ({last}). Use the power button, or in a Terminal:  systemctl {action}"

@@ -1,8 +1,8 @@
 """Screen recorder: ffmpeg in a separate background process, so it keeps recording while an emulator, a game or a
-full-screen web app has the focus and Code's own window is hidden.
+full-screen web app has the focus and CodeAque's own window is hidden.
 
     X11 (Linux Mint's default)   ffmpeg -f x11grab  + PulseAudio / PipeWire-Pulse audio (desktop sound, microphone or both)
-    Wayland                      wf-recorder, when it is installed (otherwise Code says what to install)
+    Wayland                      wf-recorder, when it is installed (otherwise CodeAque says what to install)
 Video is H.264 (libx264 ultrafast, a low-CPU preset) in a fragmented MP4, so even a crash or a power cut leaves a playable
 file. Files go to ~/Videos/Atari Recordings/Atari-YYYY-MM-DD_HH-MM-SS.mp4 (change the folder in Settings).
 Stopping sends SIGINT, which makes ffmpeg finish the file properly. VAAPI hardware encoding is available with
@@ -36,7 +36,7 @@ def out_dir(cfg, home: Path | None = None) -> Path:
 
 
 def new_filename(now: float | None = None) -> str:
-    return time.strftime("Code-%Y-%m-%d_%H-%M-%S.mp4", time.localtime(now))
+    return time.strftime("CodeAque-%Y-%m-%d_%H-%M-%S.mp4", time.localtime(now))
 
 
 def session_type(env: dict | None = None) -> str:
@@ -151,7 +151,7 @@ def why_not(cfg, env: dict | None = None, which: Callable = shutil.which) -> str
     kind = session_type(env)
     if kind == "wayland" and not which("wf-recorder"):
         return ("This is a Wayland session. Recording there needs wf-recorder (sudo apt install wf-recorder) - "
-                "or log in with the standard 'Cinnamon' (X11) session, which Code can record with ffmpeg.")
+                "or log in with the standard 'Cinnamon' (X11) session, which CodeAque can record with ffmpeg.")
     if kind == "":
         return "There is no screen to record (no display found)."
     if kind == "x11" and not which("ffmpeg"):
@@ -196,7 +196,7 @@ class Recorder:
             size = screen_size()
         cmd = build_command(cfg, target, size=size, env=env, which=which, run=run, sources=sources)
         if not cmd:
-            self.error = "Code could not work out how to record this screen."
+            self.error = "CodeAque could not work out how to record this screen."
             return None
         try:
             self.proc = self._popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,

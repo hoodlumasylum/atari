@@ -21,8 +21,8 @@ except ImportError:                            # pragma: no cover - exercised by
 
 KEYS = beatgen.NOTE_NAMES
 LOUD_ORDER = ["quiet", "normal", "loud"]
-STUDIO_HELP = ("The Studio needs one extra library (numpy). Press \"Fix Studio\" below and Code adds it for you "
-               "(needs internet). Or run ./install.sh again in the Code folder.")
+STUDIO_HELP = ("The Studio needs one extra library (numpy). Press \"Fix Studio\" below and CodeAque adds it for you "
+               "(needs internet). Or run ./install.sh again in the CodeAque folder.")
 
 
 class StudioController(QObject):
@@ -207,7 +207,7 @@ class StudioController(QObject):
             return
         ps = studio_fix.problems(numpy_available(), sources=None)
         if not any(p.fixable for p in ps):
-            self._fix_text = "Nothing can be fixed from here. " + studio_fix.summary(ps) + " Run ./install.sh again in the Code folder."
+            self._fix_text = "Nothing can be fixed from here. " + studio_fix.summary(ps) + " Run ./install.sh again in the CodeAque folder."
             self.availableChanged.emit()
             self.changed.emit()
             return
@@ -224,7 +224,7 @@ class StudioController(QObject):
                 studio_fix.log("fix: " + line)
             try:
                 ok, text = studio_fix.fix(ps, out)
-            except Exception as exc:       # never take Code down
+            except Exception as exc:       # never take CodeAque down
                 ok, text = False, f"The fix hit a problem: {exc}"
                 studio_fix.log(text)
             self.fixDone.emit(ok, text)
@@ -244,7 +244,7 @@ class StudioController(QObject):
         self.changed.emit()
 
     def _reload_modules(self) -> None:
-        """numpy was installed while Code was running: load the Studio's numpy parts now."""
+        """numpy was installed while CodeAque was running: load the Studio's numpy parts now."""
         global mixer, proj, synth
         import importlib
         importlib.invalidate_caches()
@@ -252,7 +252,7 @@ class StudioController(QObject):
             from .studio import mixer as _m, project as _p, synth as _s
         except Exception as exc:
             studio_fix.log(f"reload failed: {exc!r}")
-            self._fix_text = f"numpy was added but the Studio still could not load ({exc}). Restart Code once."
+            self._fix_text = f"numpy was added but the Studio still could not load ({exc}). Restart CodeAque once."
             return
         mixer, proj, synth = _m, _p, _s
         if self.project is None:
@@ -478,7 +478,7 @@ class StudioController(QObject):
                 return self._act_record(rid, keep)
             if page == "mix":
                 return self._act_mix(rid)
-        except Exception as exc:                   # the Studio must never take Code down with it
+        except Exception as exc:                   # the Studio must never take CodeAque down with it
             import traceback
             studio_fix.log(f"{page}/{rid} failed: {exc!r} " + traceback.format_exc().replace("\n", " | "))
             self._say(f"The Studio hit a problem: {exc}. Help > Copy log has the details.", 9000)

@@ -1,7 +1,7 @@
 """Streaming & Social: web apps (YouTube, Netflix, Instagram, ...) shown as tiles and started in a full-screen "app" window
 of a browser on this PC, each with its own private profile folder so you sign in once per app.
 
-Code uses no company logos: the tiles are plain text/colour tiles. Nothing is downloaded or bundled here.
+CodeAque uses no company logos: the tiles are plain text/colour tiles. Nothing is downloaded or bundled here.
 Order of browsers: Google Chrome, Chromium, Brave, ungoogled-Chromium (as `--app=URL --start-fullscreen`), then Firefox
 (`--kiosk`). Netflix, Prime Video and Disney+ need Widevine DRM: Google Chrome has it built in, Firefox downloads it after you
 accept its prompt; on Linux those services stream at about 720p (Widevine "L3"), never 4K/HDR.
@@ -27,7 +27,7 @@ class WebApp:
     url: str
     drm: bool = False
     note: str = ""
-    background: bool = False    # keeps running behind Code (music): Esc twice brings Code back and leaves it playing
+    background: bool = False    # keeps running behind CodeAque (music): Esc twice brings CodeAque back and leaves it playing
     browse: bool = False        # a normal browser window (address bar, back / forward) instead of a full-screen app window
     mic: bool = False           # records with the microphone: the browser is told to allow it (no pop-up a controller cannot answer)
     studio: bool = False        # listed in the Studio area (next to the built-in Studio) instead of Streaming & Social
@@ -42,8 +42,8 @@ DRM_NOTE = ("Needs Widevine DRM (Google Chrome has it; in Firefox accept its \"P
 WEBAPPS: list[WebApp] = [
     WebApp("browser", "Web Browser", "https://duckduckgo.com/", browse=True,
            note="A normal browser window with an address bar and back / forward buttons, starting at a neutral search engine. "
-                "Press Esc twice (or hold Guide + B on a controller) to return to Code. Files you download land in ~/Downloads - "
-                "Options > Downloads moves them into your games. Code does not recommend or link any download site."),
+                "Press Esc twice (or hold Guide + B on a controller) to return to CodeAque. Files you download land in ~/Downloads - "
+                "Options > Downloads moves them into your games. CodeAque does not recommend or link any download site."),
     WebApp("twitchlive", "Twitch (go live)", "https://dashboard.twitch.tv/stream-manager", browse=True,
            note="Twitch's Creator Dashboard in a browser window: your stream key is under Settings > Stream. Pair it with OBS (Options > Go Live)."),
     WebApp("tiktoklive", "TikTok LIVE (go live)", "https://www.tiktok.com/live", browse=True,
@@ -53,12 +53,12 @@ WEBAPPS: list[WebApp] = [
            note="YouTube Studio in a browser window: Create > Go live > Stream shows your stream key. Pair it with OBS (Options > Go Live)."),
     WebApp("spotify", "Spotify (web player)", "https://open.spotify.com", True, background=True,
            note="Spotify's web player in its own window (sign in once; needs a Spotify account). Music needs Widevine: Google Chrome has it "
-                "built in. It keeps playing behind Code - press Esc twice (or Guide + B) to come back and use the music buttons in the "
+                "built in. It keeps playing behind CodeAque - press Esc twice (or Guide + B) to come back and use the music buttons in the "
                 "top bar (they need playerctl)."),
     WebApp("bandlab", "BandLab (music studio)", "https://www.bandlab.com/studio", mic=True, studio=True,
            note="BandLab is a free music studio in the browser (record, loops, mixing; no Linux app). It opens in its own window and "
                 "remembers your login. The microphone is allowed for recording: pick it in BandLab's own audio settings. Sign in once; "
-                "a mouse helps. Press Esc twice (or Guide + B) to come back to Code."),
+                "a mouse helps. Press Esc twice (or Guide + B) to come back to CodeAque."),
     WebApp("youtube", "YouTube", "https://www.youtube.com/tv",
            note="The TV layout of YouTube - big buttons, works with arrow keys and Enter. Sign in once."),
     WebApp("netflix", "Netflix", "https://www.netflix.com", True, DRM_NOTE),
@@ -69,7 +69,7 @@ WEBAPPS: list[WebApp] = [
     WebApp("facebook", "Facebook", "https://www.facebook.com", note="A mouse or touch screen helps."),
     WebApp("tiktok", "TikTok", "https://www.tiktok.com", note="A mouse or touch screen helps."),
 ]
-# The optional "Support Code" donate page: a browser window opened by a button in Settings / Options. It is NOT a tile (not in WEBAPPS).
+# The optional "Support CodeAque" donate page: a browser window opened by a button in Settings / Options. It is NOT a tile (not in WEBAPPS).
 SUPPORT = WebApp("support", donate.TITLE, donate.DONATE_URL, browse=True, note=donate.NOTE)
 BY_ID = {w.id: w for w in WEBAPPS}
 BY_ID[SUPPORT.id] = SUPPORT
@@ -116,7 +116,7 @@ def find_browser(cfg=None, home: Path | None = None, which: Callable = shutil.wh
 def build_command(cfg, app: WebApp, home: Path | None = None, which: Callable = shutil.which,
                   root: Path | None = None) -> tuple[list[str], str]:
     """(command, browser name). A command in config ([emulators] browser = "...") replaces the browser:
-    Code adds --app=<url> --start-fullscreen --user-data-dir=<profile> to it. Returns ([], '') when no browser exists."""
+    CodeAque adds --app=<url> --start-fullscreen --user-data-dir=<profile> to it. Returns ([], '') when no browser exists."""
     root = root or profile_root()
     prof = root / app.id
     custom = (cfg.emulator_commands.get("browser") or "").strip() if cfg is not None else ""

@@ -1,4 +1,4 @@
-"""The optional "Support Code" button: opens the donate page in the browser, only on a button press, one URL constant, no address in the repo."""
+"""The optional "Support CodeAque" button: opens the donate page in the browser, only on a button press, one URL constant, no address in the repo."""
 import os
 import re
 from pathlib import Path

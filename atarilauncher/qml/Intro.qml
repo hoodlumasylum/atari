@@ -1,6 +1,6 @@
 import QtQuick
 
-// The start-up intro screen. With no video of your own it plays Code's own short animation (original artwork: the app's
+// The start-up intro screen. With no video of your own it plays CodeAque's own short animation (original artwork: the app's
 // wordmark over the flowing waves, plus a soft original sound). With your video, a video player covers the screen and this
 // is just the black backdrop. Any key, click or controller button skips (handled in Main.qml / the backend).
 Item {

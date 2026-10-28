@@ -1,7 +1,7 @@
 """The table of consoles and emulators (data-driven) + detection of what is installed.
 
 Every console lists its emulators in order of preference. Each emulator can be a program on your PATH
-or a Flatpak; Code picks the first one that is installed (or the one you chose in Settings > Emulators).
+or a Flatpak; CodeAque picks the first one that is installed (or the one you chose in Settings > Emulators).
 Nothing here bundles emulators, firmware/BIOS, keys or games - you bring your own.
 
 Flatpak IDs below were checked against Flathub (https://flathub.org/api/v2/appstream/<id>) on 2026-10-28;
@@ -37,7 +37,7 @@ EMUS: dict[str, Emu] = {e.id: e for e in [
         "{exe} -f -L {core_path} {rom}"),
     Emu("duckstation", "DuckStation", ("duckstation-qt", "duckstation", "DuckStation-x64.AppImage"),
         "", "", "{exe} -batch -fullscreen -- {rom}",
-        note="Needs your own PS1 BIOS (set up once inside DuckStation). Its Flathub package is end-of-life, so Code "
+        note="Needs your own PS1 BIOS (set up once inside DuckStation). Its Flathub package is end-of-life, so CodeAque "
              "installs the official AppImage from DuckStation's GitHub into ~/.local/share/atari/emulators.",
         appimage="stenzek/duckstation|latest|DuckStation-x64.AppImage"),
     Emu("pcsx2", "PCSX2", ("pcsx2-qt", "pcsx2"), "net.pcsx2.PCSX2", "", "{exe} -batch -fullscreen -- {rom}",
@@ -154,7 +154,7 @@ SYSTEM_BY_ID = {s.id: s for s in SYSTEMS}
 # Consoles that cannot be launched from a file list (shown on the Emulators page only).
 NOTES = [
     ("PlayStation Vita", "Vita3K is not on Flathub. Download it from vita3k.org if you want it; it installs games "
-                         "inside its own window, so Code cannot start Vita games by file."),
+                         "inside its own window, so CodeAque cannot start Vita games by file."),
     ("Xbox 360", "The Xbox 360 emulator (Xenia) only runs on Windows, so it is not supported on Linux."),
 ]
 
@@ -162,7 +162,7 @@ NOTES = [
 # ---------------------------------------------------------------- detection
 def flatpak_installed(app_id: str, home: Path | None = None) -> bool:
     """True when the Flatpak is really installed (per-user or system-wide). The ~/.var/app/<id> data folder is NOT
-    a sign of an install (Code's "Add BIOS files" can create it before the emulator is installed)."""
+    a sign of an install (CodeAque's "Add BIOS files" can create it before the emulator is installed)."""
     home = home or Path.home()
     for base in (Path("/var/lib/flatpak/app"), home / ".local/share/flatpak/app"):
         p = base / app_id
@@ -207,12 +207,12 @@ def configured_command(cfg, emu_id: str) -> str:
 
 
 def appimage_dir(home: Path | None = None) -> Path:
-    """Where Code puts AppImages it installed (per user, no root)."""
+    """Where CodeAque puts AppImages it installed (per user, no root)."""
     return (home / ".local/share/atari/emulators") if home is not None else paths.data_dir() / "emulators"
 
 
 def appimage_path(emu: Emu, home: Path | None = None) -> str:
-    """Path of the AppImage Code installed for this emulator, or ''."""
+    """Path of the AppImage CodeAque installed for this emulator, or ''."""
     if not emu.appimage:
         return ""
     p = appimage_dir(home) / emu.appimage.split("|")[2]
@@ -266,7 +266,7 @@ def candidates(cfg, system, home: Path | None = None) -> list[Choice]:
 
 
 def choose(cfg, system, home: Path | None = None) -> Choice | None:
-    """The emulator Code will use for this console (your choice, else the first installed one)."""
+    """The emulator CodeAque will use for this console (your choice, else the first installed one)."""
     cands = candidates(cfg, system, home)
     if not cands:
         return None

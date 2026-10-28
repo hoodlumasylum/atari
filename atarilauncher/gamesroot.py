@@ -1,8 +1,8 @@
-"""The default games folder (~/Games/Atari, also ~/Games/Code).
+"""The default games folder (~/Games/Atari, also ~/Games/Code and ~/Games/CodeAque).
 
-Code used to scan only the folders saved in Settings. A game dropped by hand into ~/Games/Atari/xbox was therefore
-never shown (the folder was only remembered after Code itself had copied a game there). Now:
-  * ~/Games/Atari/<system> is always scanned, when <system> is an id, a name or an alias Code knows
+CodeAque used to scan only the folders saved in Settings. A game dropped by hand into ~/Games/Atari/xbox was therefore
+never shown (the folder was only remembered after CodeAque itself had copied a game there). Now:
+  * ~/Games/Atari/<system> is always scanned, when <system> is an id, a name or an alias CodeAque knows
     ("xbox", "Xbox Classic", "xbox-classic", "xiso", "PS2", "playstation2" ...; upper/lower case does not matter);
   * a folder that matches no system is reported with a hint (and the system it most probably is), and so is a game
     file lying loose in ~/Games/Atari.
@@ -19,7 +19,7 @@ from pathlib import Path
 from . import importer
 from .config import Config
 
-ROOTS = ("Games/Atari", "Games/Code")
+ROOTS = ("Games/Atari", "Games/Code", "Games/CodeAque")
 # files that are not games: art, notes, saves, Windows leftovers
 _NOT_GAMES = {"txt", "nfo", "md", "jpg", "jpeg", "png", "gif", "bmp", "webp", "pdf", "url", "ini", "db", "log",
               "sav", "srm", "state", "cfg", "xml", "json", "html", "htm", "part", "crdownload", "tmp", "sfv", "md5",
@@ -159,10 +159,10 @@ def hint_text(cfg: Config, u: Unknown) -> str:
     where = "the file" if u.is_file else f"the folder ({u.files} game file{'s' if u.files != 1 else ''})"
     if u.guess and u.guess in cfg.systems:
         sc = cfg.systems[u.guess]
-        return (f"Code does not know {where} \"{u.name}\" in Games/Atari, so those games are not shown. "
+        return (f"CodeAque does not know {where} \"{u.name}\" in Games/Atari, so those games are not shown. "
                 f"It looks like {sc.name} ({u.why}): "
                 + (f"move it into a folder called \"{u.guess}\"." if u.is_file else f"rename it to \"{u.guess}\"."))
-    return (f"Code does not know {where} \"{u.name}\" in Games/Atari, so those games are not shown. "
+    return (f"CodeAque does not know {where} \"{u.name}\" in Games/Atari, so those games are not shown. "
             "Put games in a folder named after the system, for example xbox, ps2, snes, n64, gamecube.")
 
 
@@ -173,7 +173,7 @@ def fix(cfg: Config, path: str, home: Path | None = None) -> tuple[bool, str]:
     if u is None:
         return False, "That item is not there any more. Press Rescan."
     if not u.guess or u.guess not in cfg.systems:
-        return False, "Code could not tell which system this is: rename the folder yourself in My files."
+        return False, "CodeAque could not tell which system this is: rename the folder yourself in My files."
     src = Path(u.path)
     root = src.parent
     dst_dir = root / u.guess

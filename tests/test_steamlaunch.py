@@ -1,4 +1,4 @@
-"""Steam games from Code: start Steam first and wait for it, then ask for the game; live status, hint, resend, cancel, session log."""
+"""Steam games from CodeAque: start Steam first and wait for it, then ask for the game; live status, hint, resend, cancel, session log."""
 import os
 import threading
 import time
@@ -161,7 +161,7 @@ def test_big_picture_flag_is_used_when_wanted_and_not_otherwise(env, monkeypatch
     cfg.steam_bigpicture = False
     monkeypatch.setattr(kiosk, "shell_mode", lambda *a, **k: False)
     (secs, err), _ = run(cfg, fs, steam_running=lambda: fs.up.exists() or fs.log.exists() and bool(fs.up.touch()) is None)
-    assert fs.calls()[0] == ""                       # plain `steam` (no -gamepadui) outside Code-only mode when the setting is off
+    assert fs.calls()[0] == ""                       # plain `steam` (no -gamepadui) outside CodeAque-only mode when the setting is off
 
 
 def test_every_step_lands_in_the_session_log(env):
@@ -172,7 +172,7 @@ def test_every_step_lands_in_the_session_log(env):
         assert word in text, word
 
 
-# ------------------------------------------------------------------ in Code (backend + the Now Playing screen)
+# ------------------------------------------------------------------ in CodeAque (backend + the Now Playing screen)
 def test_status_steps_code_aside_in_code_only_mode_and_cancel_works(app, tmp_path, monkeypatch):
     conf(tmp_path)
     ui = Ui(app, tmp_path, monkeypatch, config_exists=False)

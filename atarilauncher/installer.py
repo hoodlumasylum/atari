@@ -1,4 +1,4 @@
-"""Install the emulators Code can use - in plain English, one step at a time, never stopping at the first problem.
+"""Install the emulators CodeAque can use - in plain English, one step at a time, never stopping at the first problem.
 
     scripts/install-everything.sh              install everything that is missing (safe to run again and again)
     scripts/install-everything.sh --list       show what is installed
@@ -10,7 +10,7 @@ What it does:
   3. downloads the RetroArch cores from libretro's official build server (the same place RetroArch's own
      "Core Downloader" uses) into RetroArch's own cores folder
   4. offers to install the few emulators that exist only as apt packages (mednafen, mupen64plus) - asks first
-BIOS / firmware / keys / games are never downloaded or included: use "Add BIOS files" in Code with your own files.
+BIOS / firmware / keys / games are never downloaded or included: use "Add BIOS files" in CodeAque with your own files.
 """
 from __future__ import annotations
 
@@ -138,7 +138,7 @@ def ensure_flatpak(out: Callable[[str], None], ask, assume_yes: bool) -> bool:
         return True
     out("Flatpak (the program that installs most emulators) is not on this computer yet.")
     if shutil.which("apt-get") and shutil.which("sudo"):
-        if _yes("Install Flatpak now? It needs your password (it is asked by sudo, not by Code).", assume_yes, ask):
+        if _yes("Install Flatpak now? It needs your password (it is asked by sudo, not by CodeAque).", assume_yes, ask):
             out("Installing Flatpak with apt ...")
             _run(["sudo", "apt-get", "install", "-y", "flatpak"])
             if shutil.which("flatpak"):
@@ -328,7 +328,7 @@ def install_apt(emus: list, out: Callable[[str], None], ask, assume_yes: bool) -
     if not (shutil.which("apt-get") and shutil.which("sudo")):
         out("   apt is not available here - skipping.")
         return results + [Outcome(e.name, "skipped", "apt not available") for e in todo]
-    if not _yes("Install them now? It needs your password (asked by sudo, not by Code).", assume_yes, ask):
+    if not _yes("Install them now? It needs your password (asked by sudo, not by CodeAque).", assume_yes, ask):
         return results + [Outcome(e.name, "skipped", "you chose to skip") for e in todo]
     rc = _run(["sudo", "apt-get", "install", "-y", *pk])
     for e in todo:
@@ -362,9 +362,9 @@ def summarize(results: list[Outcome], out: Callable[[str], None]) -> int:
     out("")
     if any(r.name == "Roblox" for r in results):
         out("Roblox: runs through Sober, an UNOFFICIAL community app (not made by Roblox). It may break after a Roblox")
-        out("update (run this again or 'flatpak update'). Open Roblox from Code's PC Apps and sign in to your own account.")
-    out("Next: open Code > Settings > Emulators to see what is ready. Some consoles also need a BIOS file")
-    out("from your own console - use \"Add BIOS files\" in Code (Code never downloads BIOS files or games).")
+        out("update (run this again or 'flatpak update'). Open Roblox from CodeAque's PC Apps and sign in to your own account.")
+    out("Next: open CodeAque > Settings > Emulators to see what is ready. Some consoles also need a BIOS file")
+    out("from your own console - use \"Add BIOS files\" in CodeAque (CodeAque never downloads BIOS files or games).")
     return 1 if failed else 0
 
 
@@ -380,7 +380,7 @@ def run_install(selection: list, *, out: Callable[[str], None] = print, ask: Cal
     want_umu = any(e.id == "umu" for e in selection)
     ra_selected = any(e.id == "retroarch" for e in selection)
     steps = len(fl) + len(img) + len(apt) + int(want_umu) + int(with_cores and ra_selected)
-    out(f"Code - {title}")
+    out(f"CodeAque - {title}")
     out(f"{steps} step{'s' if steps != 1 else ''} to do. " + ("This can take 20 minutes or more - several GB are downloaded. "
         if steps > 8 else "") + "You can run it again at any time; it only does what is still missing.")
     out("(Warnings about old 'end-of-life' packages are hidden - they do not stop anything from working.)")
@@ -475,7 +475,7 @@ def open_in_terminal(cmd: list[str] | None = None, which: Callable[[str], str | 
     cmd = cmd or installer_script()
     full = terminal_command(cmd, which)
     if full is None:
-        return False, ("Code could not find a terminal program. Open one yourself and run:  atari-install-everything")
+        return False, ("CodeAque could not find a terminal program. Open one yourself and run:  atari-install-everything")
     env = {k: v for k, v in os.environ.items()
            if k not in ("QT_QPA_PLATFORM", "QT_PLUGIN_PATH", "QML_IMPORT_PATH", "QML2_IMPORT_PATH", "PYTHONHOME")}
     try:
@@ -489,8 +489,8 @@ def open_in_terminal(cmd: list[str] | None = None, which: Callable[[str], str | 
 # ------------------------------------------------------------------ command line
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="install-emulators", description=(
-        "Install the emulators Code can use (Flatpak, per-user; plus RetroArch cores). Safe to run again. "
-        "Code never includes BIOS/firmware/keys/games - bring your own and use 'Add BIOS files' in Code."))
+        "Install the emulators CodeAque can use (Flatpak, per-user; plus RetroArch cores). Safe to run again. "
+        "CodeAque never includes BIOS/firmware/keys/games - bring your own and use 'Add BIOS files' in CodeAque."))
     ap.add_argument("names", nargs="*", help="emulator ids to install (default: all; see --list)")
     ap.add_argument("--list", action="store_true", help="show emulators and whether each is installed")
     ap.add_argument("--essentials", action="store_true",

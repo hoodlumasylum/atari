@@ -229,7 +229,7 @@ def test_a_missing_7z_tool_is_explained(app, tmp_path, monkeypatch, env):
     conf(tmp_path)
     ui = Ui(app, tmp_path, monkeypatch, config_exists=True, home=env)
     b = ui.backend
-    monkeypatch.setattr(files, "extract", lambda *a, **k: files.Extraction(False, "Code needs 7-Zip to open .7z files.", needs_tool="7zip"))
+    monkeypatch.setattr(files, "extract", lambda *a, **k: files.Extraction(False, "CodeAque needs 7-Zip to open .7z files.", needs_tool="7zip"))
     f = tmp_path / "p.7z"
     f.write_bytes(b"x")
     b.openImportKind("bios")

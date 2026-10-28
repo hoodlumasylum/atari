@@ -1,7 +1,7 @@
 """Keyboard controls per emulator: a cheat sheet for the "Controls" screen, the short hint shown when a game
 starts, and sane default keyboard bindings for emulators that need a file for them.
 
-Rule: Code only ever writes a binding file when the emulator has none yet. A file that already exists (the
+Rule: CodeAque only ever writes a binding file when the emulator has none yet. A file that already exists (the
 emulator made it, or you changed keys in the emulator) is never touched.
 """
 from __future__ import annotations
@@ -78,7 +78,7 @@ SHEETS: dict[str, dict] = {
         "keys": [("Move / D-pad", ARROWS), ("A  /  B  /  X  /  Y", "Z  /  X  /  C  /  V"), ("Start", "Enter"),
                  ("Analog stick", "W A S D"), ("Triggers L / R", "Q  /  E"), ("Flycast menu (and Exit)", "Tab"),
                  ("Fast-forward", "Space")],
-        "note": "Code sets these up the first time Flycast starts, unless you already have your own keys."},
+        "note": "CodeAque sets these up the first time Flycast starts, unless you already have your own keys."},
     "retroarch": {
         "name": "RetroArch", "systems": (),
         "keys": [("Move / D-pad", ARROWS), ("A  /  B", "X  /  Z"), ("X  /  Y", "S  /  A"), ("L  /  R", "Q  /  W"),
@@ -116,7 +116,7 @@ SHEETS: dict[str, dict] = {
     "melonds": {
         "name": "melonDS", "systems": ("nds",),
         "keys": [("Keys", "Set once in melonDS: Config > Input and hotkeys")],
-        "note": "melonDS needs its keys set once; Code cannot do it for you yet."},
+        "note": "melonDS needs its keys set once; CodeAque cannot do it for you yet."},
 }
 
 
@@ -137,13 +137,13 @@ def hint_for(emu_id: str, system_id: str = "") -> str:
 def cheat_rows() -> list[dict]:
     """Rows for the Controls screen (MenuList format)."""
     rows = [
-        {"kind": "info", "title": "Keys in Code itself: Arrow keys move, Enter plays, Esc goes back, F = favourite, "
+        {"kind": "info", "title": "Keys in CodeAque itself: Arrow keys move, Enter plays, Esc goes back, F = favourite, "
                                   "Tab = next console, Q / E = previous / next tab, / = search, F10 = options.",
          "value": "", "detail": ""},
         {"kind": "info", "title": "Back from Netflix, YouTube, Kodi...: press Esc twice quickly, or hold Esc for 1 second (Ctrl+Esc also works). "
                                   "On a controller hold Guide / Home and press B. One Esc still leaves video full screen as normal.",
          "value": "", "detail": ""},
-        {"kind": "info", "title": "Inside a game the emulator's own keys apply (below). Code steps aside (its window "
+        {"kind": "info", "title": "Inside a game the emulator's own keys apply (below). CodeAque steps aside (its window "
                                   "is minimised) while a game runs, and comes back when you quit the game.",
          "value": "", "detail": ""},
     ]

@@ -36,6 +36,7 @@ Item {
     Wordmark {
         id: wm
         u: tb.u
+        compact: true
         anchors.left: parent.left
         anchors.leftMargin: 34 * tb.u
         anchors.verticalCenter: parent.verticalCenter
@@ -115,7 +116,7 @@ Item {
         anchors.rightMargin: 36 * tb.u
         anchors.verticalCenter: parent.verticalCenter
         spacing: 26 * tb.u
-        Rectangle {   // a newer Code release exists (found by the quiet daily check)
+        Rectangle {   // a newer CodeAque release exists (found by the quiet daily check)
             visible: backend.updateAvailable
             anchors.verticalCenter: parent.verticalCenter
             height: 34 * tb.u

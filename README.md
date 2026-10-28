@@ -1,10 +1,10 @@
-![Code](docs/branding/code-banner.png)
+![CodeAque](docs/branding/codeaque-banner.png)
 
-# Code — a game launcher for your living-room PC
+# CodeAque — a game launcher for your living-room PC
 
-![Code home screen](docs/screenshot.png)
+![CodeAque home screen](docs/screenshot.png)
 
-**Code** is a full-screen, controller-friendly "console style" menu for a Linux gaming PC.
+**CodeAque** is a full-screen, controller-friendly "console style" menu for a Linux gaming PC.
 Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts.
 
 * **Steam** games (found automatically, even on several drives) with the artwork Steam already has on disk,
@@ -14,11 +14,11 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 * an **Add Games** button that copies games from a **USB stick** into your library,
 * **Favourites** and **Recent** lists, **search**, sorting, and play time.
 
-> **About the name.** "Code" is just the name of this personal hobby project (it was called "Atari" up to version 0.3.x - the old
-> `atari` command, `~/.config/atari`, `~/.local/share/atari` and the GitHub address still work, so nothing breaks when you update).
+> **About the name.** "CodeAque" is just the name of this personal hobby project (it was called "Atari" up to version 0.3.x and "Code" up to 0.4.6 - the old
+> `atari` and `code` commands, `~/.config/atari`, `~/.local/share/atari` and the GitHub address still work, so nothing breaks when you update).
 > It is **not** affiliated with, endorsed by, or connected to any company - not Atari, not Microsoft's Visual Studio Code, not anyone else.
 > Console names such as "Atari 2600" appear only as the names of systems the emulators play. There are **no company logos, character art or
-> trademarked artwork** in it: the "Code" logo (`docs/branding/`) is original vector art drawn for this project, the console tiles are original vector glyphs,
+> trademarked artwork** in it: the CodeAque logo (`docs/branding/`) is original artwork by the project owner (made with AI tools, 1254 px), the console tiles are original vector glyphs,
 > the banner is a generated neon gradient, and covers are generated placeholders unless you provide your own.
 > **No games, ROMs, emulators, BIOS files, firmware or keys are included** — you need to own the games you play
 > and supply your own BIOS/firmware where an emulator needs it.
@@ -30,6 +30,24 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 | ![emulators](docs/screenshot-emulators.png) | ![setup](docs/screenshot-setup.png) |
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
+
+## What's new in 0.4.7
+
+* **New name and logo: CodeAque.** The app is now called **CodeAque** everywhere you can see it (window title, menus, About page, Power menu
+  "Restart CodeAque", menu entry, boot text, donate text) and has the new gold-and-emerald Anubis logo on the loading screen, the Plymouth
+  boot screen, the top bar, the app icon and the new **Help > About CodeAque** page. Nothing you set up changes: the commands `code`, `atari`
+  and `code-launcher` still work, there is a new `codeaque` command, settings stay in `~/.config/atari`, updates still come from the same GitHub
+  address with the same `atari-<version>` files, and existing installs get the new name and command on their first start after updating.
+  Games in `~/Games/CodeAque/<system>` are found too (as well as `~/Games/Atari` and `~/Games/Code`). The older version notes below still say "Code".
+  The logo file is 1254 pixels wide - fine on a TV, **not print quality for metal stickers** (`docs/branding/codeaque-cutline.png` is only a
+  rough outline to start from).
+
+- **Delete game.** Every game from your games folders, every Windows game you added and every Steam game has a **DELETE GAME** button under PLAY / FAVOURITE in the game panel (D-pad: right to the panel, down to the button, A), and the **Delete** key does the same on the game list. It opens a page that asks first: the highlight starts on **No, keep it**, and the page shows the game's name, its file or folder, and its size ("4.0 KB in 1 file"). Only **Yes, delete it** deletes; Esc / B means no.
+  - *Only inside your games folders.* CodeAque deletes only inside `~/Games/Atari`, `~/Games/Code`, `~/Games/CodeAque` and the folders set in Settings for a system - never the folder itself, never your home folder or a system folder (such a "games folder" is ignored), never anything a symlink or a `..` path leads outside to (a link inside a game folder is removed as a link; what it points to is left alone). The check is done again right before each file is removed. A game that lives somewhere else is not deleted and the page says so.
+  - A game is its file (plus the `.bin` tracks listed in its `.cue` / `.gdi`), or for an unpacked Xbox game or a PS3 game its own folder (a folder game that sits straight in a console's folder, e.g. `xbox/default.xbe`, is refused rather than wiping the console folder). A Windows game that CodeAque unpacked is deleted with its folder and forgotten; a Windows game kept elsewhere is only removed from the library (its files stay).
+  - *Saves are kept by default.* A switch on the page deletes the save files that lie next to the game with the same name (`.srm`, `.sav`, `.state1` ...); saves an emulator keeps in its own folders are never touched. Another switch deletes the game's cover picture (kept by default). Favourite / recent / play-time entries of the deleted game are forgotten.
+  - *Steam games are never deleted by CodeAque.* The page says so and offers **Open Steam to uninstall it** (Steam's own uninstall window, `steam://uninstall/<id>`; Steam is started first if needed).
+  - It ends with a success or error text ("Deleted Super Thing: 4.0 KB freed (1 file). Saves were kept." or what could not be removed) and the game disappears from the library. Games from Heroic / Lutris, apps and tools have no Delete button (uninstall them in their own program).
 
 ## What's new in 0.4.6
 
@@ -93,7 +111,7 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 - **If the in-app updater cannot be trusted on your connection, one command does the same by hand** (resumes if it drops, checks the SHA256 against the release's own list, keeps your settings and games):
 
   ```bash
-  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.4.6.tar.gz https://github.com/hoodlumasylum/atari/releases/download/v0.4.6/atari-0.4.6.tar.gz && curl -fsSL https://github.com/hoodlumasylum/atari/releases/download/v0.4.6/SHA256SUMS.txt | grep ' atari-0.4.6.tar.gz$' | sha256sum -c - && tar xzf atari-0.4.6.tar.gz && cd atari-0.4.6 && ./install.sh --yes
+  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.4.7.tar.gz https://github.com/hoodlumasylum/atari/releases/download/v0.4.7/atari-0.4.7.tar.gz && curl -fsSL https://github.com/hoodlumasylum/atari/releases/download/v0.4.7/SHA256SUMS.txt | grep ' atari-0.4.7.tar.gz$' | sha256sum -c - && tar xzf atari-0.4.7.tar.gz && cd atari-0.4.7 && ./install.sh --yes
   ```
 
 ## What's new in 0.4.1
@@ -315,18 +333,18 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.4.6.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
+1. Download **`atari-0.4.7.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
 2. Open a **Terminal** and type:
 
    ```bash
    cd ~/Downloads
-   tar xzf atari-0.4.6.tar.gz
-   cd atari-0.4.6
+   tar xzf atari-0.4.7.tar.gz
+   cd atari-0.4.7
    ./install.sh
    ```
 
    It may ask for your password to install a few standard system libraries (it asks first, and skips this when there is no terminal).
-   It copies the app to `~/.local/share/atari-launcher`, creates a private Python environment there and adds **Code** to your
+   It copies the app to `~/.local/share/atari-launcher`, creates a private Python environment there and adds **CodeAque** to your
    application menu (under *Games*) and an `atari` command. **You can delete the downloaded folder afterwards.**
 
    * Want it to open by itself when you log in (like a console)? Use `./install.sh --autostart`.
@@ -338,7 +356,7 @@ To remove it later: `~/.local/share/atari-launcher/uninstall.sh` (your settings,
 
 ## 2. Start it
 
-* Open your application menu and click **Code**, or
+* Open your application menu and click **CodeAque**, or
 * in a terminal: `atari` (add `--windowed` for a normal window instead of full screen; `./run.sh --windowed` works from a source folder too).
 
 **Controls** (Xbox/PlayStation/Switch/8BitDo pads are all recognised by SDL):
@@ -364,19 +382,19 @@ The console tile row shows only systems that have games (plus Steam); choose **S
 ### From a USB stick (easiest)
 1. Plug in the stick, choose **Add Games** (top bar, or Settings, or the empty-library screen).
 2. Pick the drive (press **Refresh** if it isn't listed; **Browse folder…** lets you choose any folder instead, e.g. a card on another drive).
-3. Code scans the drive (read-only) for games by file type and folder name, and lists them by console with sizes.
+3. CodeAque scans the drive (read-only) for games by file type and folder name, and lists them by console with sizes.
    Tick the ones you want — *Select all* is there — and choose **Copy**.
 4. Files go to `~/Games/Atari/<console>/` (or the folder you configured for that console) with a progress bar; files that already
    exist are skipped, **Cancel** stops cleanly, and then the library refreshes. The USB stick is never modified, and NTFS/exFAT/FAT
    sticks and big files (multi-GB discs) are fine. PlayStation 3 game folders (`PS3_GAME`/`EBOOT.BIN`), `.iso`, `.pkg`, and Xbox `.iso`/`.xiso` are recognised.
 
 ### From folders
-On the **first start** Code shows a setup screen (press **Esc**, or choose **DONE / CONTINUE**, to skip it and add games later). Later: **Options → Settings** (or the Settings tab). Pick a console, press **Enter**, choose the
-folder with its games and **Use this folder**. Code searches sub-folders and tidies names (`Super_Game (USA) [!].sfc` → "Super Game").
+On the **first start** CodeAque shows a setup screen (press **Esc**, or choose **DONE / CONTINUE**, to skip it and add games later). Later: **Options → Settings** (or the Settings tab). Pick a console, press **Enter**, choose the
+folder with its games and **Use this folder**. CodeAque searches sub-folders and tidies names (`Super_Game (USA) [!].sfc` → "Super Game").
 Folders like `~/ROMs/snes`, `~/Games/Atari/snes` are pre-filled when they exist.
 
 ### Steam
-Nothing to do if Steam is installed normally: Code looks in `~/.steam`, `~/.local/share/Steam`, the Flatpak and Snap locations and reads
+Nothing to do if Steam is installed normally: CodeAque looks in `~/.steam`, `~/.local/share/Steam`, the Flatpak and Snap locations and reads
 **all** your Steam library folders, including drives under `/media`, `/mnt` or `/run/media`. It lists fully installed games (not tools such as Proton)
 and starts them with Steam itself (`steam steam://rungameid/<id>`). Steam must be installed and signed in.
 
@@ -388,14 +406,14 @@ and starts them with Steam itself (`steam steam://rungameid/<id>`). Steam must b
 * **Other games:** put a PNG or JPG named like the game (without extension) in `~/.local/share/atari/covers/`, e.g. `~/.local/share/atari/covers/Super Game.png`.
   (The older `~/.config/atari/covers/<console>/` folder still works.)
 * **Downloaded covers** (see *What's new in 0.3.0*) are saved under `~/.local/share/atari/covers/` too: `<console>/<game file name>.png` for ROMs and `steam/<appid>_cover.jpg` for Steam. Your own pictures always win and are never replaced.
-* Otherwise Code draws a coloured placeholder cover. Nothing is downloaded unless you press **Download covers** or leave the automatic option on.
+* Otherwise CodeAque draws a coloured placeholder cover. Nothing is downloaded unless you press **Download covers** or leave the automatic option on.
 * Optional details (genre, players, release, rating) can be given in `~/.local/share/atari/metadata.json`:
   `{"Super Game": {"genre": "Platformer", "players": "1-2", "release": "1993", "rating": 4.5}}`.
 
 ## 4. Emulators
 
-Code doesn't contain emulators. Each console in the table lists emulators in order of preference — a program on your PATH **or** a Flatpak —
-and Code uses the first one it finds. Consoles without an emulator still show, with an install hint. See **Settings → Emulators**
+CodeAque doesn't contain emulators. Each console in the table lists emulators in order of preference — a program on your PATH **or** a Flatpak —
+and CodeAque uses the first one it finds. Consoles without an emulator still show, with an install hint. See **Settings → Emulators**
 (press Enter on a console to cycle the emulator or see how to install it), or in a terminal:
 
 ```bash
@@ -414,7 +432,7 @@ atari-install-everything                     # everything: emulators, cores and 
 | Dreamcast | Flycast (`org.flycast.Flycast`) |
 | Xbox Classic | xemu (`app.xemu.xemu`) |
 | Arcade, DOS, ScummVM, C64, ZX Spectrum… | MAME, DOSBox, ScummVM, VICE, Fuse via native programs or Flatpak |
-| Switch | Configurable command only (set your emulator's command in Settings; no firmware or keys involved in Code) |
+| Switch | Configurable command only (set your emulator's command in Settings; no firmware or keys involved in CodeAque) |
 | PS Vita | Note only (Vita3K installs games inside its own window) |
 | Xbox 360 | Not supported on Linux |
 
@@ -422,10 +440,10 @@ atari-install-everything                     # everything: emulators, cores and 
 You must install RPCS3's **firmware** and supply your own games; PS3 emulation is heavy on integrated graphics.
 **Xbox Classic:** started as `xemu -dvd_path <iso>`. You supply your own BIOS/HDD image/games in xemu's settings.
 **You must supply your own BIOS, firmware, keys and games for any emulator that needs them** — **Add BIOS files** (Options menu, Settings, or Settings → Emulators)
-copies them from a USB stick for you, from consoles you own. Code never downloads them.
+copies them from a USB stick for you, from consoles you own. CodeAque never downloads them.
 
 ### Keyboard keys in emulators
-Code steps aside while a game runs. **Help & getting started → Controls** (or Settings → Emulators) shows each emulator's keys. Flycast gets default keyboard bindings the first time (only if it has none).
+CodeAque steps aside while a game runs. **Help & getting started → Controls** (or Settings → Emulators) shows each emulator's keys. Flycast gets default keyboard bindings the first time (only if it has none).
 RetroArch, DuckStation, PPSSPP, mGBA and PCSX2 use their own built-in keyboard defaults (listed on the Controls screen; change them inside the emulator).
 Dolphin, melonDS and Switch emulators need a one-time setup inside the emulator.
 
@@ -451,7 +469,7 @@ rpcs3 = "flatpak run net.rpcs3.RPCS3"
 ```
 
 Placeholders in `command`: `{rom}`, `{rom_dir}`, `{rom_name}`, and for RetroArch `{retroarch}`, `{core_path}`, `{core}`, `{cores_dir}`.
-Also available: `[steam] extra_libraries = [...]`, `[general] fullscreen = false`. Restart Code (or *Options → Rescan*) after hand-editing.
+Also available: `[steam] extra_libraries = [...]`, `[general] fullscreen = false`. Restart CodeAque (or *Options → Rescan*) after hand-editing.
 
 Play time, favourites and recents are in `~/.local/share/atari/state.json`. A launch log (useful if an emulator won't start) is in `~/.local/share/atari/launch.log`.
 
@@ -466,7 +484,7 @@ This is safe if you go slowly, but **partitioning can destroy data if something 
 2. **Pick a Linux.** The easiest for newcomers is **Linux Mint** (Cinnamon edition) — friendly installer, works with
    Windows already on the disk. Gaming-focused options are **Bazzite** and **Nobara** (Steam and graphics drivers ready out of the box),
    but their installers are less forgiving for *sharing a disk* with Windows: they are happiest on their **own separate drive**.
-   (Code's installer is written for Mint/Ubuntu/Fedora-style systems; Bazzite/Nobara are *not tested* with it.)
+   (CodeAque's installer is written for Mint/Ubuntu/Fedora-style systems; Bazzite/Nobara are *not tested* with it.)
 3. **Check for BitLocker/Device Encryption** (Windows 11 often turns it on automatically). Find your **recovery key**
    at <https://account.microsoft.com/devices/recoverykey> *before* touching partitions; Windows may ask for it afterwards.
 4. **Make room.** In Windows press `Win + X` → **Disk Management** → right-click your **C:** drive → **Shrink Volume**.
@@ -484,14 +502,14 @@ This is safe if you go slowly, but **partitioning can destroy data if something 
    (Ubuntu says "Install Ubuntu alongside Windows Boot Manager"). Drag the slider/choose the free space you made. Finish and restart.
    You will get a menu at every boot to choose Linux or Windows.
 9. **After installing**, run Software Update, install the graphics driver (Mint: *Driver Manager*), install **Steam**
-   (Software Manager) and sign in, then install Code (section 1).
+   (Software Manager) and sign in, then install CodeAque (section 1).
 
 ### Using your Windows Steam drive from Linux — read this
 You will be tempted to point Linux at the Steam library you already have on Windows' drive so you don't re-download games.
 **Honest warning:** it mostly doesn't work well.
 
 * Windows drives use **NTFS**. Linux can read and write it (just click the drive in the file manager to mount it — it appears under
-  `/media/<you>/` and Code's folder browser lists it), and Code **will list** Steam games found there.
+  `/media/<you>/` and CodeAque's folder browser lists it), and CodeAque **will list** Steam games found there.
 * But Windows games run on Linux through **Proton**, which needs a real Linux file system. On NTFS, Proton games often **fail to start,
   crash, or lose saves**. Steam's own support pages say Steam libraries on NTFS are unsupported. Native Linux games can have the same trouble.
 * If Windows is hibernating or "fast startup" is on, Linux can only open the drive **read-only** (or refuse), and updating games from
@@ -504,7 +522,7 @@ You will be tempted to point Linux at the Steam library you already have on Wind
 Then tell Steam about it: in **Steam → Settings → Storage**, open the drive drop-down → **Add Drive** (older Steam: *Settings → Downloads →
 Steam Library Folders → Add Library Folder*), pick the drive's folder, and choose it as the default for new installs. In *Disks*
 → the drive → ⚙ → **Edit Mount Options** → untick *User Session Defaults* and tick *Mount at system startup* so it's
-always there. Code then finds every library Steam knows about automatically. Your Windows games stay on Windows; re-download
+always there. CodeAque then finds every library Steam knows about automatically. Your Windows games stay on Windows; re-download
 what you want on Linux (save games sync through Steam Cloud for many titles).
 
 Other honest caveats: some games with kernel-level anti-cheat (many competitive multiplayer titles) don't run on Linux;
@@ -515,17 +533,17 @@ check [protondb.com](https://www.protondb.com) for each game; and big Windows up
 
 ## Caveats and limits (honest list)
 
-* Code was **tested headlessly only** — with fake Steam libraries, fake ROMs and a fake USB mount — **not with a real controller, real USB stick,
+* CodeAque was **tested headlessly only** — with fake Steam libraries, fake ROMs and a fake USB mount — **not with a real controller, real USB stick,
   or real emulators**. Emulator command lines and Flatpak IDs are written from the emulators' documentation and may need a tweak on your system
   (use the `command =` override).
 * The console tiles are original glyph art, not photos of consoles (by design: no company artwork).
 * Steam play-time is measured by watching for the game's process; if it can't detect the start, the game still launches but no time is recorded.
-* Code does not manage Steam sign-in, downloads, Proton versions, or shader caches — Steam does.
-* Controller input only works while Code is the focused window (so it never steals input from a game).
+* CodeAque does not manage Steam sign-in, downloads, Proton versions, or shader caches — Steam does.
+* Controller input only works while CodeAque is the focused window (so it never steals input from a game).
 * Wayland/X11 are both supported by Qt, but only headless (offscreen) testing was done. Full screen on some Wayland setups may need `F11`.
 * Animations are kept light (no GPU effects) for integrated graphics, but performance was not measured on real hardware.
 * Windows games: umu / Proton / Wine behaviour, anti-cheat/online games, and per-game quirks were **not tested on real hardware** (a stub runner was used in tests).
-  Many Windows games need extra Wine components; Bottles/Lutris are better for those (games installed in Lutris/Heroic appear in Code).
+  Many Windows games need extra Wine components; Bottles/Lutris are better for those (games installed in Lutris/Heroic appear in CodeAque).
 * The `.rar` and `.7z` formats need the `7z` program (`sudo apt install p7zip-full`, which the install-everything script also does).
 * The Studio: see its entry above — rule-based beats (no AI model yet), recording not tested on a real microphone, MP3 export needs ffmpeg or lame.
 * There is **no AppImage**; the tarball + `install.sh` is the supported way.
@@ -550,6 +568,6 @@ the emulator table (`emulators.py`), USB import (`importer.py`), settings (`conf
 Controllers are read by a small helper process using SDL2 (from the `pygame` package) and turned into key presses, so the keyboard and
 controller share one code path.
 
-## Licence and supporting Code
+## Licence and supporting CodeAque
 
-Code is **free to use, with no warranty**: MIT licensed - see `LICENSE`. Code's own files are the only things shipped in this repository (its own logo, intro video and sound effects); its dependencies (PySide6 / Qt, pygame / SDL2, which are LGPL) are installed from their own packages and are not copied into it, so the MIT licence fits. If you like Code and want to say thanks there is an optional **Support Code** button in Settings and the Options menu that opens https://paypal.me/Codeemulator - entirely optional, Code never asks or nags.
+CodeAque is **free to use, with no warranty**: MIT licensed - see `LICENSE`. CodeAque's own files are the only things shipped in this repository (its own logo, intro video and sound effects); its dependencies (PySide6 / Qt, pygame / SDL2, which are LGPL) are installed from their own packages and are not copied into it, so the MIT licence fits. If you like CodeAque and want to say thanks there is an optional **Support CodeAque** button in Settings and the Options menu that opens https://paypal.me/Codeemulator - entirely optional, CodeAque never asks or nags.

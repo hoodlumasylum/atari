@@ -73,7 +73,7 @@ def controls_hint(cfg: Config, game: Game) -> str:
         return ""
     if game.gid == "app:steam" and big_picture_wanted(cfg):
         return exit_hint(cfg)
-    if game.platform == webapps.STREAMING or game.gid.startswith("web:"):            # Netflix, YouTube, ... and Kodi: how to get back to Code
+    if game.platform == webapps.STREAMING or game.gid.startswith("web:"):            # Netflix, YouTube, ... and Kodi: how to get back to CodeAque
         return exit_hint(cfg)
     system = cfg.systems.get(game.platform)
     if system is None or system.command.strip():
@@ -229,7 +229,7 @@ def run_game(cfg: Config, game: Game, on_started: Callable[[], None],
     try:
         proc = subprocess.Popen(cmd, env=clean_env(), stdout=logfh, stderr=logfh,
                                 stdin=subprocess.DEVNULL, cwd=str(Path(game.rom_path).parent),
-                                start_new_session=True)       # its own session: nothing it does to its process group can reach Code
+                                start_new_session=True)       # its own session: nothing it does to its process group can reach CodeAque
     except OSError as exc:
         raise LaunchError(f"Could not start the emulator: {exc}")
     on_started()
@@ -277,7 +277,7 @@ def _run_app(cfg: Config, game: Game, on_started):
         logfh = subprocess.DEVNULL
     if app.background and not game.launch:
         return _run_background(cfg, cmd, app.title, on_started, logfh)
-    watched = game.platform == webapps.STREAMING and exitwatch.enabled(cfg)    # Kodi: Esc twice / hold Esc returns to Code
+    watched = game.platform == webapps.STREAMING and exitwatch.enabled(cfg)    # Kodi: Esc twice / hold Esc returns to CodeAque
     if watched:
         time.sleep(_hint_delay())
     started = time.time()
@@ -316,7 +316,7 @@ def _roblox_recover(cmd, started: float, logfh):
     if sober.permission_state(started):
         _log("roblox: Sober asked for the permission update")
         return 0.0, INFO + ("Sober shows \"Permission Update Required\". That is normal after a Sober update: it needs the permission update below. "
-                            "The next screen shows the exact command in plain English; press Run fix and Code applies it (your user only, "
+                            "The next screen shows the exact command in plain English; press Run fix and CodeAque applies it (your user only, "
                             "Sober only) and starts Roblox again. " + sober.OVERRIDE_COMMAND)
     if not sober.bundle_state(started):
         return None
@@ -342,7 +342,7 @@ def _roblox_recover(cmd, started: float, logfh):
 
 
 def big_picture_wanted(cfg: Config) -> bool:
-    """The Steam tile opens Big Picture when the setting is on - and ALWAYS in Code-only mode (nobody there has a desktop to use)."""
+    """The Steam tile opens Big Picture when the setting is on - and ALWAYS in CodeAque-only mode (nobody there has a desktop to use)."""
     from . import kiosk
     return bool(getattr(cfg, "steam_bigpicture", True)) or kiosk.shell_mode()
 
@@ -366,7 +366,7 @@ def _close_bigpicture(base: list[str]):
 
 class _SteamProc:
     """Stands in for "the Steam process" in the Esc watcher: alive while the Steam client runs (it may have been
-    started long before Code, so it is not our child)."""
+    started long before CodeAque, so it is not our child)."""
     pid = 0
 
     def __init__(self, running=None):
@@ -386,7 +386,7 @@ class _SteamProc:
 
 
 def _run_steam_bigpicture(cfg: Config, game: Game, cmd: list[str], on_started):
-    """Steam tile: open Steam full screen in Big Picture, and come back to Code with the Esc / Guide+B gesture."""
+    """Steam tile: open Steam full screen in Big Picture, and come back to CodeAque with the Esc / Guide+B gesture."""
     from . import steam as steam_mod
     base = list(cmd)
     cmd = bigpicture_command(cfg, base, steam_mod.steam_running())
@@ -521,12 +521,12 @@ class _Alive:
 
 
 def _leave_running(proc, flatpak_id, grace):
-    """The Esc watcher's way of "closing" a background app: do nothing - the app stays, Code simply comes back."""
+    """The Esc watcher's way of "closing" a background app: do nothing - the app stays, CodeAque simply comes back."""
     return None
 
 
 def _run_background(cfg: Config, cmd: list[str], name: str, on_started, logfh, wait_cap: float = 86400.0):
-    """Music apps: start the app, hide Code, and come back on Esc twice / Guide + B WITHOUT closing the app, so it keeps playing."""
+    """Music apps: start the app, hide CodeAque, and come back on Esc twice / Guide + B WITHOUT closing the app, so it keeps playing."""
     if exitwatch.enabled(cfg):
         time.sleep(_hint_delay())
     started = time.time()
@@ -546,7 +546,7 @@ def _run_background(cfg: Config, cmd: list[str], name: str, on_started, logfh, w
     try:
         while alive.poll() is None and not (watch is not None and watch.triggered) and time.time() - started < wait_cap:
             if watch is None and proc.poll() == 0:
-                break                                  # no way to leave with a key: do not hide Code for ever
+                break                                  # no way to leave with a key: do not hide CodeAque for ever
             time.sleep(0.3)
     finally:
         if watch is not None:
@@ -554,7 +554,7 @@ def _run_background(cfg: Config, cmd: list[str], name: str, on_started, logfh, w
     code = proc.poll()
     if code not in (None, 0) and time.time() - started < 8:
         return 0.0, f"{name} closed right away (code {code}). Details: {paths.log_file()}"
-    _log(f"background: back in Code, {name} keeps running")
+    _log(f"background: back in CodeAque, {name} keeps running")
     return time.time() - started, INFO + f"{name} keeps playing in the background. Use the music buttons in the top bar."
 
 
@@ -581,7 +581,7 @@ def _run_web(cfg: Config, game: Game, on_started):
     if wa.background:
         return _run_background(cfg, cmd, name, on_started, logfh)
     if exitwatch.enabled(cfg):
-        time.sleep(_hint_delay())       # let the "Press Esc twice to return to Code" screen be read before the browser covers it
+        time.sleep(_hint_delay())       # let the "Press Esc twice to return to CodeAque" screen be read before the browser covers it
     started = time.time()
     try:
         proc = subprocess.Popen(cmd, env=clean_env(), stdout=logfh, stderr=logfh, stdin=subprocess.DEVNULL,
@@ -648,9 +648,9 @@ def _slog(msg: str) -> None:
 def _run_steam(cfg: Config, game: Game, on_started, poll: float, start_timeout: float, grace: float = 6.0, status=None, cancel=None,
                steam_running=None, ui_ready=None, settle: float = 3.0, reveal_after: float = 20.0, resend_after: float = 45.0,
                hint_after: float = 60.0):
-    """A Steam game from Code. Never fire-and-forget: (1) start Steam first when it is not running (Big Picture) and WAIT until its
+    """A Steam game from CodeAque. Never fire-and-forget: (1) start Steam first when it is not running (Big Picture) and WAIT until its
     window process exists, (2) only then hand it steam://rungameid/<id>, (3) show live status, resend the request once, offer a hint
-    after hint_after seconds, (4) detect the game's process, (5) let the user cancel (Esc / B on the screen, or Esc twice once Code
+    after hint_after seconds, (4) detect the game's process, (5) let the user cancel (Esc / B on the screen, or Esc twice once CodeAque
     has stepped aside to show Steam's own windows). status(phase, text): starting | launching | waiting | reveal | playing."""
     from . import steam as steam_mod
     steam_running = steam_running or steam_mod.steam_running
@@ -672,8 +672,8 @@ def _run_steam(cfg: Config, game: Game, on_started, poll: float, start_timeout: 
             raise LaunchError(f"Could not start Steam: {exc}")
 
     def stopped(note: str):
-        _slog("cancelled - back in Code (" + note + ")")
-        return 0.0, INFO + "Cancelled - back in Code. Steam keeps running; open the Steam tile to see it."
+        _slog("cancelled - back in CodeAque (" + note + ")")
+        return 0.0, INFO + "Cancelled - back in CodeAque. Steam keeps running; open the Steam tile to see it."
 
     # 1. Steam first
     t0 = time.time()
@@ -732,7 +732,7 @@ def _run_steam(cfg: Config, game: Game, on_started, poll: float, start_timeout: 
             text = f"Waiting for {title} to start... {int(w)} s"
             if w >= hint_after:
                 text += ("\nStill nothing after a minute. Steam may be asking something (sign in, an update, a Proton download, the game "
-                         "installing). Press Esc (or B) to go back to Code, or Esc twice if Code has stepped aside.")
+                         "installing). Press Esc (or B) to go back to CodeAque, or Esc twice if CodeAque has stepped aside.")
             say("waiting", text)
             time.sleep(step)
         if not first_seen:

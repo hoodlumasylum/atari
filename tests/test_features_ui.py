@@ -260,7 +260,7 @@ def test_silent_daily_check_shows_badge_and_respects_toggle(app, tmp_path, monke
 
 
 def test_minimise_for_game_and_restore(app, tmp_path, monkeypatch):
-    """While a ROM game runs Code steps aside (so the emulator gets the keyboard) and comes back afterwards."""
+    """While a ROM game runs CodeAque steps aside (so the emulator gets the keyboard) and comes back afterwards."""
     conf(tmp_path)
     ui = Ui(app, tmp_path, monkeypatch, config_exists=False)
     try:

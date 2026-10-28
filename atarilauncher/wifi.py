@@ -1,7 +1,7 @@
 """WiFi through NetworkManager's `nmcli` (what Linux Mint uses). No root is needed for a normal logged-in desktop or
-Code-only session: NetworkManager lets the person at the console manage WiFi, and `nmcli dev wifi connect SSID password PW`
+CodeAque-only session: NetworkManager lets the person at the console manage WiFi, and `nmcli dev wifi connect SSID password PW`
 stores the password with the connection itself, so no desktop applet / password-agent is required (that is why this works
-in Code-only mode where there is no panel).
+in CodeAque-only mode where there is no panel).
 
 Everything runs through an injectable `run(args, timeout)` -> (returncode, stdout, stderr), so tests use a mocked nmcli.
 Nothing here ever raises: a missing nmcli, a stopped NetworkManager or a missing adapter come back as plain-English states."""
@@ -15,7 +15,7 @@ from typing import Callable
 
 Run = Callable[..., tuple]
 
-NO_NMCLI = ("This computer has no NetworkManager (the nmcli tool), so Code cannot manage WiFi. On Linux Mint it is installed "
+NO_NMCLI = ("This computer has no NetworkManager (the nmcli tool), so CodeAque cannot manage WiFi. On Linux Mint it is installed "
             "by default - connect with the network icon on the Mint desktop instead (Settings > Back to Mint desktop).")
 NO_NM = ("NetworkManager is not running, so WiFi cannot be managed here. Restart the computer; if it is still off, "
          "connect with the Mint desktop's network settings.")

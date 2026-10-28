@@ -1,4 +1,4 @@
-"""The in-app administrator password: sudo -S fed from Code's own dialog instead of a pkexec window that cannot show in Code-only mode."""
+"""The in-app administrator password: sudo -S fed from CodeAque's own dialog instead of a pkexec window that cannot show in CodeAque-only mode."""
 import os
 import stat
 import subprocess
@@ -142,7 +142,7 @@ def test_checks_accept_sudo_alone_only_with_a_dialog():
     assert rootauth.can_elevate(only("sudo")) and rootauth.can_elevate(only("pkexec")) and not rootauth.can_elevate(only())
 
 
-# ------------------------------------------------------------------ the dialog in Code
+# ------------------------------------------------------------------ the dialog in CodeAque
 @pytest.fixture
 def ui(app, tmp_path, monkeypatch):
     monkeypatch.delenv("ATARI_NO_ROOTAUTH", raising=False)

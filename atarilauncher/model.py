@@ -114,7 +114,7 @@ class GameModel(QAbstractListModel):
             "wideArt": bool(g.header) and g.header != g.cover, "fitArt": bool(g.fit),
             "favorite": s.is_favorite(g.gid), "playtime": format_playtime(s.playtime(g.gid)),
             "lastPlayed": format_last_played(s.last_played(g.gid)), "note": g.note,
-            "hue": self._hue(g), "needsInstall": bool(g.missing), "genre": text("genre"), "players": text("players"),
+            "hue": self._hue(g), "needsInstall": bool(g.missing), "canDelete": g.gid.startswith(("rom:", "steam:", "win:")), "genre": text("genre"), "players": text("players"),
             "release": text("release"), "rating": rating,
         }
 

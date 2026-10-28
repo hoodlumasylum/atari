@@ -2,12 +2,12 @@
 
 Where a tile's picture comes from, best first:
   1. the app's own installed icon (Flatpak export or the .desktop file's Icon=), already on this computer;
-  2. the copy Code downloaded earlier into ~/.local/share/atari/icons/ (one file per tile);
+  2. the copy CodeAque downloaded earlier into ~/.local/share/atari/icons/ (one file per tile);
   3. a download, once, when online:
        web apps  -> the site's own icon (apple-touch-icon / <link rel=icon>, then /favicon.ico),
        apps      -> the Flathub store icon of the Flatpak, else the app's website icon,
        free games-> Steam's own art for the game id (Steam CDN), or the Flathub icon of the Flatpak;
-  4. nothing found / offline: the tile keeps Code's own original coloured tile with the app's initials (drawn in QML).
+  4. nothing found / offline: the tile keeps CodeAque's own original coloured tile with the app's initials (drawn in QML).
 Failed lookups are remembered for a few days, then tried again. Downloads use the same polite HTTP client as the covers."""
 from __future__ import annotations
 

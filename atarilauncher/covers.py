@@ -34,16 +34,16 @@ WIKI_API = "https://en.wikipedia.org/w/api.php"
 SGDB_API = "https://www.steamgriddb.com/api/v2"
 THUMB_KINDS = ("Named_Boxarts", "Named_Titles", "Named_Snaps")   # box art first; title / in-game screens only as a last resort
 STEAM_URL = "https://cdn.cloudflare.steamstatic.com/steam/apps"
-USER_AGENT = "Code-Launcher/0.4.6 (+https://github.com/hoodlumasylum/atari; personal game launcher)"
+USER_AGENT = "Code-Launcher/0.4.7 (+https://github.com/hoodlumasylum/atari; personal game launcher)"
 MISS_DAYS = 14          # a game with no cover is not asked for again for this long ("Download covers" forces it)
 INDEX_DAYS = 14         # how long a downloaded directory listing of a system is reused
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 
 # --------------------------------------------------------------------------- libretro naming
-# Folder names on https://thumbnails.libretro.com/ for each Code system id (first entry is tried first).
+# Folder names on https://thumbnails.libretro.com/ for each CodeAque system id (first entry is tried first).
 LIBRETRO_SYSTEMS: dict[str, tuple] = {
-    "atari2600": ("Code - 2600",), "atari5200": ("Code - 5200",), "atari7800": ("Code - 7800",),
-    "atarilynx": ("Code - Lynx",), "atarijaguar": ("Code - Jaguar",),
+    "atari2600": ("CodeAque - 2600",), "atari5200": ("CodeAque - 5200",), "atari7800": ("CodeAque - 7800",),
+    "atarilynx": ("CodeAque - Lynx",), "atarijaguar": ("CodeAque - Jaguar",),
     "nes": ("Nintendo - Nintendo Entertainment System", "Nintendo - Family Computer Disk System"),
     "snes": ("Nintendo - Super Nintendo Entertainment System",),
     "n64": ("Nintendo - Nintendo 64",),
@@ -605,7 +605,7 @@ class CoverDownloader:
     # -- optional / free extra sources
     def wikipedia_images(self, title: str, system: str, limit: int = 3) -> list[tuple[str, str]]:
         """[(image url, label)] - only the article's own picture (the infobox cover), found through Wikipedia's public API.
-        Pictures there are owned by the game's publisher and shown for identification; Code keeps them on your PC only."""
+        Pictures there are owned by the game's publisher and shown for identification; CodeAque keeps them on your PC only."""
         base = base_title(strip_disc(title.replace("_", " ")) or title)
         if not base:
             return []

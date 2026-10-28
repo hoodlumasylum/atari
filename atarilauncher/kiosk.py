@@ -1,21 +1,21 @@
-"""Code-only mode ("kiosk"): the computer starts straight into Code - no Linux Mint desktop.
+"""CodeAque-only mode ("kiosk"): the computer starts straight into CodeAque - no Linux Mint desktop.
 
 What turning it ON does (one password window, `pkexec`; three small files, all named "atari"):
-  1. /usr/local/bin/atari-session                       the session program: starts Code full screen
+  1. /usr/local/bin/atari-session                       the session program: starts CodeAque full screen
   2. /usr/share/xsessions/atari.desktop                 a "session" entry, so the login screen can start it
   3. /etc/lightdm/lightdm.conf.d/90-atari-kiosk.conf    LightDM logs you in by itself and picks that session
 Nothing else is touched. Turning it OFF removes exactly those three files.
 
 Ways back to the normal Mint desktop (also written in the README and Help):
-  * Code > Settings > "Back to Mint desktop"  (needs the password once; removes the three files)
-  * Code > Settings > "Open the Mint desktop once"  (no password; this login only)
-  * safety net: if Code crashes 5 times in a row, each within seconds of starting, the session starts the Mint desktop by itself
+  * CodeAque > Settings > "Back to Mint desktop"  (needs the password once; removes the three files)
+  * CodeAque > Settings > "Open the Mint desktop once"  (no password; this login only)
+  * safety net: if CodeAque crashes 5 times in a row, each within seconds of starting, the session starts the Mint desktop by itself
   * at the login screen: click the session icon (top right / next to your name) and choose Cinnamon
   * from a text console (Ctrl+Alt+F2, log in, then):  sudo rm /etc/lightdm/lightdm.conf.d/90-atari-kiosk.conf && sudo systemctl restart lightdm
 
-The session script is the session's main process and runs Code in a loop: when Code ends for any reason except exit code 64 or the
-one-off desktop flag, it starts Code again. Code itself also never quits by accident here (ATARI_KIOSK=1: "Quit Code" becomes
-"Restart Code"), every game / app it starts runs in its own session (so nothing it does can take Code down), and Code re-takes the
+The session script is the session's main process and runs CodeAque in a loop: when CodeAque ends for any reason except exit code 64 or the
+one-off desktop flag, it starts CodeAque again. CodeAque itself also never quits by accident here (ATARI_KIOSK=1: "Quit CodeAque" becomes
+"Restart CodeAque"), every game / app it starts runs in its own session (so nothing it does can take CodeAque down), and CodeAque re-takes the
 screen whenever an app closes.
 
 Everything outside (pkexec, files under /etc, the clock) is injectable so the tests never touch the system."""
@@ -55,12 +55,12 @@ DEFAULT = Layout()
 RECOVERY = ("If you ever get stuck: at the login screen choose the Cinnamon session (the small icon next to your name), "
             "or press Ctrl+Alt+F2, log in, and type:  sudo rm /etc/lightdm/lightdm.conf.d/90-atari-kiosk.conf "
             "&& sudo systemctl restart lightdm")
-# One line to paste in a Terminal if Code-only mode ever stops working (rewrites the three files and clears a leftover "desktop once" note;
-# needs the installed Code 0.3.x or newer; asks for the sudo password):
+# One line to paste in a Terminal if CodeAque-only mode ever stops working (rewrites the three files and clears a leftover "desktop once" note;
+# needs the installed CodeAque 0.3.x or newer; asks for the sudo password):
 RESTORE_COMMAND = ("cd ~/.local/share/atari-launcher && rm -f ~/.config/atari/desktop-once && "
                    "python3 -c \"from atarilauncher import kiosk; print(kiosk.enable_script('$USER'))\" | sudo sh")
 FAST_BOOT_TIPS = [
-    "Optional - make the computer start faster. Code changes none of this by itself.",
+    "Optional - make the computer start faster. CodeAque changes none of this by itself.",
     "See what is slow:  systemd-analyze blame   (in a Terminal).",
     "Printer-less PC:  sudo systemctl disable --now cups cups-browsed",
     "No mobile modem:  sudo systemctl disable --now ModemManager",
@@ -79,25 +79,25 @@ class Check:
 
 
 def in_session(env: dict | None = None) -> bool:
-    """True when Code runs as the whole Code-only session (the session script sets ATARI_KIOSK=1)."""
+    """True when CodeAque runs as the whole CodeAque-only session (the session script sets ATARI_KIOSK=1)."""
     return (env if env is not None else os.environ).get("ATARI_KIOSK") == "1"
 
 
 def shell_mode(layout: "Layout | None" = None, env: dict | None = None) -> bool:
-    """Code must behave as the whole screen (always full screen again when an app closes): it runs as the Code-only session, OR
-    Code-only mode is installed on this computer but this copy was started some other way (desktop menu, autostart, a fallback to the
+    """CodeAque must behave as the whole screen (always full screen again when an app closes): it runs as the CodeAque-only session, OR
+    CodeAque-only mode is installed on this computer but this copy was started some other way (desktop menu, autostart, a fallback to the
     desktop) - that is exactly when closing an app used to show the Mint desktop."""
     return in_session(env) or enabled(layout or DEFAULT)
 
 
 def running_description(env: dict | None = None) -> tuple[str, str]:
-    """('code-only'|'desktop', plain text): which kind of session THIS running Code is in."""
+    """('code-only'|'desktop', plain text): which kind of session THIS running CodeAque is in."""
     env = env if env is not None else os.environ
     if in_session(env):
-        return "code-only", "Code is running as the Code-only session (started by the session program)."
+        return "code-only", "CodeAque is running as the CodeAque-only session (started by the session program)."
     desk = env.get("XDG_CURRENT_DESKTOP") or env.get("DESKTOP_SESSION") or "unknown"
-    return "desktop", (f"Code is running INSIDE the {desk} desktop (started from the menu, an autostart entry or after a fall-back to the "
-                       "desktop), not by the Code-only session.")
+    return "desktop", (f"CodeAque is running INSIDE the {desk} desktop (started from the menu, an autostart entry or after a fall-back to the "
+                       "desktop), not by the CodeAque-only session.")
 
 
 def log_event(text: str, home: Path | None = None) -> None:
@@ -115,7 +115,7 @@ def log_event(text: str, home: Path | None = None) -> None:
 
 
 def run_script_path() -> Path:
-    """Code's own start script (run.sh in the install folder)."""
+    """CodeAque's own start script (run.sh in the install folder)."""
     return Path(__file__).resolve().parent.parent / "run.sh"
 
 
@@ -157,24 +157,24 @@ def preflight(layout: Layout = DEFAULT, which: Callable = shutil.which, dm_file:
     dm = default_display_manager(dm_file)
     out.append(Check("lightdm", "lightdm" in dm, True,
                      "The login screen is LightDM (Linux Mint's normal one)." if "lightdm" in dm else
-                     "This computer does not use LightDM (found: " + (os.path.basename(dm) or "unknown") + "), so Code-only mode "
+                     "This computer does not use LightDM (found: " + (os.path.basename(dm) or "unknown") + "), so CodeAque-only mode "
                      "cannot be set up from here."))
     out.append(Check("user", user != "root", True, "You are a normal user." if user != "root" else
-                     "Run Code as your normal user, not as root."))
+                     "Run CodeAque as your normal user, not as root."))
     out.append(Check("pkexec", bool(rootauth.can_elevate(which)), True, "The password window (pkexec) is available." if rootauth.can_elevate(which) else
                      "The password window (pkexec) is missing: install the 'policykit-1' package."))
     out.append(Check("xsessions", layout.p("usr/share/xsessions").is_dir(), True,
                      "The session list exists." if layout.p("usr/share/xsessions").is_dir() else
                      "No /usr/share/xsessions folder - this does not look like a normal desktop install."))
-    out.append(Check("run", run_sh.is_file(), True, "Code's start script was found." if run_sh.is_file() else
-                     "Code's start script (run.sh) was not found - install Code with ./install.sh first."))
+    out.append(Check("run", run_sh.is_file(), True, "CodeAque's start script was found." if run_sh.is_file() else
+                     "CodeAque's start script (run.sh) was not found - install CodeAque with ./install.sh first."))
     st = (session_type if session_type is not None else os.environ.get("XDG_SESSION_TYPE", "")).lower()
     out.append(Check("x11", st != "wayland", False, "You are on the normal X11 desktop." if st != "wayland" else
-                     "This login uses Wayland. Code-only mode starts an X11 session, which is fine on Mint."))
+                     "This login uses Wayland. CodeAque-only mode starts an X11 session, which is fine on Mint."))
     conflict = autologin_conflict(lightdm_conf)
     out.append(Check("conflict", not conflict, False, "No other auto-login setting found." if not conflict else
-                     f"{lightdm_conf} already has its own auto-login lines, and they win over Code's. "
-                     "Remove those two lines, or Code-only mode will not start by itself."))
+                     f"{lightdm_conf} already has its own auto-login lines, and they win over CodeAque's. "
+                     "Remove those two lines, or CodeAque-only mode will not start by itself."))
     return out
 
 
@@ -192,14 +192,14 @@ def enabled(layout: Layout = DEFAULT) -> bool:
 
 
 # ------------------------------------------------------------------ the three files
-SESSION_VERSION = 3     # 2 = 0.4.1 (restarts Code instead of ending the session); 3 = 0.4.2 (also writes ~/.local/share/atari/session.log)
-EXIT_LOGOUT = 64        # the one exit code that means "log out on purpose" (anything else: the session starts Code again)
+SESSION_VERSION = 3     # 2 = 0.4.1 (restarts CodeAque instead of ending the session); 3 = 0.4.2 (also writes ~/.local/share/atari/session.log)
+EXIT_LOGOUT = 64        # the one exit code that means "log out on purpose" (anything else: the session starts CodeAque again)
 MAX_QUICK_CRASHES = 5   # only this many crashes in a row, each within seconds of starting, send the session to the desktop
 
 
 def session_outdated(layout: Layout = DEFAULT) -> bool:
-    """Code-only mode is on, but its session script was written by an older Code (it ends the session - and so logs out to the
-    desktop - when Code stops). /usr/local/bin is root's, so updating Code cannot rewrite it: the person presses Update once."""
+    """CodeAque-only mode is on, but its session script was written by an older CodeAque (it ends the session - and so logs out to the
+    desktop - when CodeAque stops). /usr/local/bin is root's, so updating CodeAque cannot rewrite it: the person presses Update once."""
     try:
         text = layout.p(layout.session_script).read_text(errors="replace")
     except OSError:
@@ -210,13 +210,13 @@ def session_outdated(layout: Layout = DEFAULT) -> bool:
 
 def render_session_script(run_sh: Path, desktop_exec: str, home_hint: str = "") -> str:
     return f"""#!/bin/sh
-# Code-only session. Written by Code > Settings > Code-only mode. Remove it with Settings > Back to Mint desktop.
+# CodeAque-only session. Written by CodeAque > Settings > CodeAque-only mode. Remove it with Settings > Back to Mint desktop.
 # atari-session-version: {SESSION_VERSION}
-# This script IS the session: it never ends while Code is wanted. Whenever Code stops - a crash, a game that took it down,
-# "Restart Code" - it starts Code again after a second. Launching and closing games, browsers and emulators never reaches here.
-# Exceptions: the "Open the Mint desktop once" flag, Code exiting with code {EXIT_LOGOUT} (log out on purpose), and a real crash
+# This script IS the session: it never ends while CodeAque is wanted. Whenever CodeAque stops - a crash, a game that took it down,
+# "Restart CodeAque" - it starts CodeAque again after a second. Launching and closing games, browsers and emulators never reaches here.
+# Exceptions: the "Open the Mint desktop once" flag, CodeAque exiting with code {EXIT_LOGOUT} (log out on purpose), and a real crash
 # loop ({MAX_QUICK_CRASHES} crashes in a row, each within seconds): then the Mint desktop starts so you are never locked out.
-# Everything it decides is written to ~/.local/share/atari/session.log (Settings > Code-only mode shows the last lines).
+# Everything it decides is written to ~/.local/share/atari/session.log (Settings > CodeAque-only mode shows the last lines).
 RUN={shlex.quote(str(run_sh))}
 FLAG="$HOME/.config/atari/desktop-once"
 LOG="$HOME/.local/share/atari/session.log"
@@ -229,29 +229,29 @@ desktop() {{
     exec {desktop_exec}
 }}
 log "session start (script version {SESSION_VERSION}, user $USER, display $DISPLAY)"
-# "Open the Mint desktop once" in Code's settings leaves this flag file.
+# "Open the Mint desktop once" in CodeAque's settings leaves this flag file.
 if [ -e "$FLAG" ]; then rm -f "$FLAG"; desktop "the 'Open the Mint desktop once' note was found ($FLAG)"; fi
-[ -e "$RUN" ] || desktop "Code's start script is missing: $RUN"
-# a black screen instead of the grey X pattern while Code starts
+[ -e "$RUN" ] || desktop "CodeAque's start script is missing: $RUN"
+# a black screen instead of the grey X pattern while CodeAque starts
 command -v xsetroot >/dev/null 2>&1 && xsetroot -solid black 2>/dev/null
-# tells Code it is the whole session: Quit means Restart, and it re-takes the screen when any app closes
+# tells CodeAque it is the whole session: Quit means Restart, and it re-takes the screen when any app closes
 export ATARI_KIOSK=1
-# a small window manager keeps the full-screen window focused (optional; Code also runs without one)
+# a small window manager keeps the full-screen window focused (optional; CodeAque also runs without one)
 for wm in openbox metacity marco xfwm4; do
     if command -v "$wm" >/dev/null 2>&1; then "$wm" >/dev/null 2>&1 & log "window manager: $wm"; break; fi
 done
 crashes=0
 while :; do
     t=$(date +%s)
-    log "starting Code"
+    log "starting CodeAque"
     if [ -x "$RUN" ]; then "$RUN" --fullscreen; else sh "$RUN" --fullscreen; fi
     rc=$?
     ran=$(( $(date +%s) - t ))
-    log "Code ended: exit code $rc after $ran s"
+    log "CodeAque ended: exit code $rc after $ran s"
     [ "$rc" -eq {EXIT_LOGOUT} ] && {{ log "log out on purpose"; exit 0; }}
     if [ -e "$FLAG" ]; then rm -f "$FLAG"; desktop "the 'Open the Mint desktop once' note was found ($FLAG)"; fi
     if [ "$ran" -lt 3 ] || {{ [ "$rc" -ne 0 ] && [ "$ran" -lt 10 ]; }}; then crashes=$((crashes + 1)); else crashes=0; fi
-    if [ "$crashes" -ge {MAX_QUICK_CRASHES} ]; then desktop "Code stopped {MAX_QUICK_CRASHES} times in a row within seconds of starting (last exit code $rc)"; fi
+    if [ "$crashes" -ge {MAX_QUICK_CRASHES} ]; then desktop "CodeAque stopped {MAX_QUICK_CRASHES} times in a row within seconds of starting (last exit code $rc)"; fi
     sleep "$DELAY"
 done
 """
@@ -259,8 +259,8 @@ done
 
 def render_xsession(session_script: str = "/usr/local/bin/atari-session") -> str:
     return f"""[Desktop Entry]
-Name=Code
-Comment=Code game launcher as the whole session (no desktop)
+Name=CodeAque
+Comment=CodeAque game launcher as the whole session (no desktop)
 Exec={session_script}
 TryExec={session_script}
 Type=XSession
@@ -268,7 +268,7 @@ Type=XSession
 
 
 def render_lightdm(user: str) -> str:
-    return f"""# Written by Code > Settings > Code-only mode. Remove with Settings > Back to Mint desktop.
+    return f"""# Written by CodeAque > Settings > CodeAque-only mode. Remove with Settings > Back to Mint desktop.
 [Seat:*]
 autologin-user={user}
 autologin-user-timeout=0
@@ -316,9 +316,9 @@ def _result_text(rc: int, ok_text: str, fail_text: str) -> tuple[bool, str]:
     return False, f"{fail_text} (code {rc}). Nothing else was changed."
 
 
-ON_TEXT = ("Code-only mode is ON. Next time the computer starts (or after you log out) it goes straight into Code. "
+ON_TEXT = ("CodeAque-only mode is ON. Next time the computer starts (or after you log out) it goes straight into CodeAque. "
            "To get the normal desktop back: Settings > Back to Mint desktop.")
-OFF_TEXT = ("Code-only mode is OFF. The normal Mint login comes back after the next restart (or log out and in).")
+OFF_TEXT = ("CodeAque-only mode is OFF. The normal Mint login comes back after the next restart (or log out and in).")
 
 
 WM_NAMES = ("openbox", "metacity", "marco", "xfwm4")
@@ -343,7 +343,7 @@ def install_wm_script() -> str:
 
 def install_wm(run: Callable | None = None, out: Callable[[str], None] = lambda s: None,
                which: Callable[[str], str | None] | None = None) -> tuple[bool, str]:
-    """One password: install openbox, so the Code-only session has a real window manager (Steam dialogs, focus). Never raises."""
+    """One password: install openbox, so the CodeAque-only session has a real window manager (Steam dialogs, focus). Never raises."""
     try:
         if window_manager(which):
             return True, "A window manager is already installed. " + WM_OK_TEXT.split(". ", 1)[1]
@@ -371,23 +371,23 @@ def enable(layout: Layout = DEFAULT, run: Callable | None = None, out: Callable[
             return False, why
         user = user or getpass.getuser()
         rc = _pkexec(enable_script(user, layout, run_sh, desktop_exec), out, run)
-        ok, text = _result_text(rc, ON_TEXT, "Could not turn Code-only mode on")
+        ok, text = _result_text(rc, ON_TEXT, "Could not turn CodeAque-only mode on")
         if ok and not enabled(layout):
             return False, "The files were not written - nothing changed. Try again, or ask for help (Settings > Help > Copy log)."
         return ok, text
-    except Exception as exc:  # never take Code down
-        return False, f"Could not turn Code-only mode on: {exc}"
+    except Exception as exc:  # never take CodeAque down
+        return False, f"Could not turn CodeAque-only mode on: {exc}"
 
 
 def disable(layout: Layout = DEFAULT, run: Callable | None = None, out: Callable[[str], None] = lambda s: None) -> tuple[bool, str]:
     try:
         rc = _pkexec(disable_script(layout), out, run)
-        ok, text = _result_text(rc, OFF_TEXT, "Could not turn Code-only mode off")
+        ok, text = _result_text(rc, OFF_TEXT, "Could not turn CodeAque-only mode off")
         if ok and enabled(layout):
             return False, "The files are still there. In a Terminal run:  sudo rm /etc/lightdm/lightdm.conf.d/90-atari-kiosk.conf"
         return ok, text
     except Exception as exc:
-        return False, f"Could not turn Code-only mode off: {exc}"
+        return False, f"Could not turn CodeAque-only mode off: {exc}"
 
 
 def desktop_once_flag(home: Path | None = None) -> Path:
@@ -397,7 +397,7 @@ def desktop_once_flag(home: Path | None = None) -> Path:
 def open_desktop_once(home: Path | None = None, run: Callable = None, which: Callable = shutil.which,
                       env: dict | None = None) -> tuple[bool, str]:
     """No password needed: leave a flag file, then log out. The session program sees the flag and starts the Mint desktop
-    for that one login (the flag is deleted at once, so the next boot is Code-only again)."""
+    for that one login (the flag is deleted at once, so the next boot is CodeAque-only again)."""
     import subprocess
     run = run or subprocess.run
     env = env if env is not None else os.environ
@@ -458,25 +458,25 @@ def diagnose(layout: Layout = DEFAULT, home: Path | None = None) -> list[str]:
         m = re.search(r"^RUN=(.+)$", text, re.M)
         if m:
             run = Path(shlex.split(m.group(1))[0])
-            out.append(f"{'OK     ' if run.is_file() else 'MISSING'} Code's start script: {run}")
+            out.append(f"{'OK     ' if run.is_file() else 'MISSING'} CodeAque's start script: {run}")
         v = re.search(r"atari-session-version:\s*(\d+)", text)
-        out.append(f"{'OK     ' if v and int(v.group(1)) >= SESSION_VERSION else 'OLD    '} session program version {v.group(1) if v else '1 (from Code 0.3.x or older)'} "
-                   f"(this Code writes {SESSION_VERSION})")
+        out.append(f"{'OK     ' if v and int(v.group(1)) >= SESSION_VERSION else 'OLD    '} session program version {v.group(1) if v else '1 (from CodeAque 0.3.x or older)'} "
+                   f"(this CodeAque writes {SESSION_VERSION})")
     except OSError:
         pass
     if not any(shutil.which(w) for w in ("openbox", "metacity", "marco", "xfwm4")):
-        out.append("WRONG  no window manager (openbox) is installed, so after an app closes nothing hands the screen back to Code. "
-                   "Fix:  Settings > Code-only mode > Install the window manager (or  sudo apt install openbox). "
+        out.append("WRONG  no window manager (openbox) is installed, so after an app closes nothing hands the screen back to CodeAque. "
+                   "Fix:  Settings > CodeAque-only mode > Install the window manager (or  sudo apt install openbox). "
                    "Without it Steam's own windows (Properties, Settings) can open out of sight.")
     if (home / ".config" / "autostart" / "atari.desktop").exists():
-        out.append("NOTE   Code is also started by the desktop's autostart (~/.config/autostart/atari.desktop). In the Code-only session "
-                   "that is not needed; if the computer starts the Mint desktop first, Code appears on top of it.")
+        out.append("NOTE   CodeAque is also started by the desktop's autostart (~/.config/autostart/atari.desktop). In the CodeAque-only session "
+                   "that is not needed; if the computer starts the Mint desktop first, CodeAque appears on top of it.")
     kind, text = running_description()
     out.append(("OK     " if kind == "code-only" else "NOTE   ") + text)
     flag = desktop_once_flag(home)
     out.append(("WILL OPEN THE DESKTOP ONCE  " if flag.exists() else "OK     no 'Open the Mint desktop once' note: ") + str(flag))
     conflict = autologin_conflict(str(layout.p("etc/lightdm/lightdm.conf")))
-    out.append(("WRONG  /etc/lightdm/lightdm.conf has its own auto-login lines, and they win over Code's" if conflict
+    out.append(("WRONG  /etc/lightdm/lightdm.conf has its own auto-login lines, and they win over CodeAque's" if conflict
                 else "OK     /etc/lightdm/lightdm.conf has no competing auto-login lines"))
     tail = log_tail(6, home)
     out.append("session log (" + str(session_log_path(home)) + "): " + ("" if tail else "nothing written yet - the session program has not run since the update"))
@@ -496,7 +496,7 @@ def main(argv: list[str] | None = None) -> int:
         print("\n".join(diagnose()))
         return 0
     if args == ["--status"]:
-        print("not installed" if not enabled() else ("OUTDATED (press Update Code-only mode)" if session_outdated() else "up to date"))
+        print("not installed" if not enabled() else ("OUTDATED (press Update CodeAque-only mode)" if session_outdated() else "up to date"))
         return 0
     print("usage: python3 -m atarilauncher.kiosk --print-session | --status | --check", file=sys.stderr)
     return 2

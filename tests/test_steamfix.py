@@ -207,7 +207,7 @@ def test_guard_stays_quiet_for_a_steam_code_started_and_resets_when_steam_closes
     assert g.tick(True, 110) is True                  # a new Steam process is watched again
 
 
-# ------------------------------------------------------------------ the Steam tile in Code-only mode
+# ------------------------------------------------------------------ the Steam tile in CodeAque-only mode
 def test_big_picture_is_forced_in_code_only_mode(monkeypatch):
     cfg = config.Config()
     cfg.steam_bigpicture = False
@@ -247,7 +247,7 @@ def test_session_script_still_starts_a_window_manager_first():
     assert "openbox" in s and "apt-get install -y openbox" in s
 
 
-# ------------------------------------------------------------------ inside Code (backend)
+# ------------------------------------------------------------------ inside CodeAque (backend)
 pytest.importorskip("PySide6")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from tests.test_features_ui import conf  # noqa: E402
@@ -317,7 +317,7 @@ def test_watcher_asks_a_foreign_steam_for_big_picture(app, tmp_path, monkeypatch
             time.sleep(0.05)
         assert calls and calls[0][-1] == "steam://open/bigpicture"
         assert b._steam_busy is False
-        # a Steam that Code started itself is left alone
+        # a Steam that CodeAque started itself is left alone
         calls.clear()
         b._steam_guard = steamfix.Guard((0, 5))
         b._running_gid = "app:steam"

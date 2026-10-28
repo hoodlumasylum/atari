@@ -187,7 +187,7 @@ def say(ui):
 
 
 def pad(ui, action, ms=60):
-    """A controller button: Code turns it into a key press WITHOUT text (unlike a real keyboard's key)."""
+    """A controller button: CodeAque turns it into a key press WITHOUT text (unlike a real keyboard's key)."""
     ui.backend.send_action(action)
     pump(ui.app, ms)
 
@@ -382,7 +382,7 @@ def test_no_wifi_adapter_shows_a_clear_message_and_turn_on_works_when_the_radio_
 
 
 def test_the_wifi_screen_works_in_code_only_mode_no_desktop_applet_needed():
-    """Code-only mode = no panel / nm-applet. Everything goes through nmcli with the password stored in the connection itself."""
+    """CodeAque-only mode = no panel / nm-applet. Everything goes through nmcli with the password stored in the connection itself."""
     import inspect
     src = inspect.getsource(wifi)
     assert "nm-applet" not in src and "pkexec" not in src and "sudo" not in src

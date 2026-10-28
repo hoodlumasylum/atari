@@ -119,7 +119,7 @@ def test_status_catches_each_thing_that_is_not_applied(machine):
     (d / "zzz-late.cfg").write_text("GRUB_TIMEOUT_STYLE=menu\n")
     facts = quietboot.status(lay, cmdline="BOOT_IMAGE=/vmlinuz ro", lsinitramfs=lsi("some/other\n"))
     bad = " | ".join(f.text for f in facts if f.state == "bad")
-    assert "'mint-logo'" in bad and "does NOT contain the Code theme" in bad and "zzz-late.cfg sets GRUB_TIMEOUT_STYLE=menu AFTER" in bad
+    assert "'mint-logo'" in bad and "does NOT contain the CodeAque theme" in bad and "zzz-late.cfg sets GRUB_TIMEOUT_STYLE=menu AFTER" in bad
     assert find(facts, "THIS start-up")[0].state == "info"
     assert "NOT" in quietboot.status_summary(facts)
 
@@ -315,9 +315,9 @@ def test_boot_report_has_the_boot_settings_and_no_secrets(machine, tmp_path):
     cfg = lay.p(lay.grub_menu)
     cfg.write_text(cfg.read_text() + RECORDFAIL + OSPROBER + 'password_pbkdf2 root grub.pbkdf2.sha512.10000.AAAA\n')
     rep = quietboot.boot_report(lay, run=fake_run, version="0.4.6", now="2026-10-28 15:00")
-    for want in ("Code boot report", "Code 0.4.6", "Linux Mint 22", "6.8.0-1-generic", "SecureBoot disabled", "GRUB_TIMEOUT_STYLE=hidden", "GRUB_DISABLE_OS_PROBER=false",
+    for want in ("CodeAque boot report", "CodeAque 0.4.6", "Linux Mint 22", "6.8.0-1-generic", "SecureBoot disabled", "GRUB_TIMEOUT_STYLE=hidden", "GRUB_DISABLE_OS_PROBER=false",
                  "50_linuxmint.cfg", "BEGIN code-quiet-boot", "recordfail=1", "timeout_style=hidden", "Windows Boot Manager", "WINRE_DRV", "30_os-prober found another system",
-                 "Read back by Code just now", "About the Dell logo", "firmware (UEFI / BIOS)", "Fastboot"):
+                 "Read back by CodeAque just now", "About the Dell logo", "firmware (UEFI / BIOS)", "Fastboot"):
         assert want in rep, want
     assert "hunter2secret" not in rep and "pbkdf2.sha512" not in rep and "some_secret_token" not in rep and "(line left out" in rep
     assert "# a comment" not in rep
@@ -325,7 +325,7 @@ def test_boot_report_has_the_boot_settings_and_no_secrets(machine, tmp_path):
 
 def test_boot_report_never_raises_when_everything_is_missing(tmp_path):
     rep = quietboot.boot_report(quietboot.Layout(root=tmp_path / "empty"), run=lambda c: "")
-    assert "Code boot report" in rep and "(nothing / not available)" in rep
+    assert "CodeAque boot report" in rep and "(nothing / not available)" in rep
 
 
 def test_the_report_is_saved_in_downloads(tmp_path):

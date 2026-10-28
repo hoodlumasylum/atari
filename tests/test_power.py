@@ -182,8 +182,8 @@ def test_restart_code_in_the_code_only_session_ends_code_so_the_session_starts_i
     monkeypatch.setattr(ui.backend, "quit", lambda: quits.append(1))
     ui.backend._restart_spawn = lambda cmd, **kw: spawned.append(cmd)
     monkeypatch.setenv("ATARI_KIOSK", "1")
-    assert [r["title"] for r in ui.backend.pageRows("power") if r.get("id") == "power_restartcode"] == ["Restart Code"]
-    assert "power_quitcode" not in ids(ui)                                   # in Code-only mode there is no Quit
+    assert [r["title"] for r in ui.backend.pageRows("power") if r.get("id") == "power_restartcode"] == ["Restart CodeAque"]
+    assert "power_quitcode" not in ids(ui)                                   # in CodeAque-only mode there is no Quit
     ui.backend.pageActivate("power", "power_restartcode")
     assert quits == [1] and spawned == []                                    # no second copy: the session program restarts it
 

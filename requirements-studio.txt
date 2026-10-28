@@ -1,2 +1,2 @@
-# Optional: the music Studio (Code > Studio). Code works without it; the Studio screen then says how to add it.
+# Optional: the music Studio (CodeAque > Studio). CodeAque works without it; the Studio screen then says how to add it.
 numpy>=1.24

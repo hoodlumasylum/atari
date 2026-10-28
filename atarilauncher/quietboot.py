@@ -1,19 +1,19 @@
-"""Quiet boot ("hide the Mint branding") - an optional extra for Code-only mode. Everything it does can be undone from the same screen.
+"""Quiet boot ("hide the Mint branding") - an optional extra for CodeAque-only mode. Everything it does can be undone from the same screen.
 
 What turning it ON does (one password window, `pkexec`; nothing else is touched):
   1. /etc/default/grub.d/zz-code-quiet.cfg      GRUB: "quiet splash" and less kernel / systemd text; the boot menu is hidden for a
                                                  2 second window in which Shift (old BIOS) or Esc (UEFI) shows it again - and it is
                                                  NOT hidden when another operating system (Windows, macOS ...) is on the disk
-  2. /usr/share/plymouth/themes/code/           a boot-splash theme: black background, the Code logo (code-logo.png) in the middle,
+  2. /usr/share/plymouth/themes/code/           a boot-splash theme: black background, the CodeAque logo (code-logo.png) in the middle,
                                                  made the default with update-alternatives (the Mint logo theme stays installed)
   3. /etc/code-boot/quiet-boot                  a note that this is on (and what was changed)
   then `update-grub` and `update-initramfs -u` (the splash is part of the initramfs). If either fails, everything is put back.
-Turning it OFF removes exactly those files, takes the Code theme out of update-alternatives (Mint's own splash comes back), and runs
+Turning it OFF removes exactly those files, takes the CodeAque theme out of update-alternatives (Mint's own splash comes back), and runs
 update-grub / update-initramfs again.
 
 Recovery is never removed: the boot menu is one key away (Shift / Esc within the 2 s window; since 0.4.6 it no longer pops up by itself
 after a hard power-off either, because /boot/grub/custom.cfg has the last word), "Advanced options" / recovery mode are untouched, and from a text console (Ctrl+Alt+F2) RECOVERY below undoes it all.
-Not done on purpose: LightDM's own (Mint) login screen is not restyled - with Code-only mode's auto-login it is skipped anyway.
+Not done on purpose: LightDM's own (Mint) login screen is not restyled - with CodeAque-only mode's auto-login it is skipped anyway.
 Paths are relative to a root so tests can run the scripts in a temporary folder."""
 from __future__ import annotations
 
@@ -32,9 +32,9 @@ RECOVERY = ("To undo quiet boot by hand (Ctrl+Alt+F2, log in): sudo rm -f /etc/d
             "sudo update-alternatives --remove default.plymouth /usr/share/plymouth/themes/code/code.plymouth; "
             "sudo update-grub && sudo update-initramfs -u && sudo rm -rf /etc/code-boot /usr/share/plymouth/themes/code")
 BIOS_LOGO_NOTE = ("The Dell / manufacturer logo shown right at power-on is drawn by the computer's own firmware (UEFI / BIOS) before Linux or GRUB starts, "
-                  "so Code cannot remove it. In the BIOS setup (tap F2 at power-on; F12 is the one-time boot menu) look for Fast Boot (e.g. Settings > POST "
+                  "so CodeAque cannot remove it. In the BIOS setup (tap F2 at power-on; F12 is the one-time boot menu) look for Fast Boot (e.g. Settings > POST "
                   "Behavior > Fastboot: Minimal / Auto) and for any 'logo' / 'Full Screen Logo' / 'Quiet' option under Boot, Display or POST Behavior. "
-                  "Some models have no switch at all, and Code cannot change firmware settings from Linux.")
+                  "Some models have no switch at all, and CodeAque cannot change firmware settings from Linux.")
 HOW_TO_SHOW_MENU = "To see the boot menu: hold Shift (older BIOS) or tap Esc (UEFI) right when the computer starts."
 CMDLINE = "quiet splash loglevel=3 rd.systemd.show_status=false systemd.show_status=false rd.udev.log_level=3 vt.global_cursor_default=0"
 OTHER_OS = re.compile(r"menuentry\s+['\"]([^'\"]*(Windows|Microsoft|macOS|Mac OS|Darwin|FreeBSD|OpenBSD)[^'\"]*)['\"]", re.I)
@@ -44,7 +44,7 @@ OTHER_OS = re.compile(r"menuentry\s+['\"]([^'\"]*(Windows|Microsoft|macOS|Mac OS
 class Layout:
     root: Path = Path("/")
     grub_cfg: str = "etc/default/grub.d/zz-code-quiet.cfg"          # "zz": read after every other grub.d file, so nothing overrides it
-    legacy_grub_cfg: str = "etc/default/grub.d/90-code-quiet.cfg"   # written by Code 0.4.2; cleaned up
+    legacy_grub_cfg: str = "etc/default/grub.d/90-code-quiet.cfg"   # written by CodeAque 0.4.2; cleaned up
     plymouth_conf: str = "etc/plymouth/plymouthd.conf"
     theme_dir: str = "usr/share/plymouth/themes/code"
     marker_dir: str = "etc/code-boot"
@@ -149,8 +149,8 @@ def preflight(layout: Layout = DEFAULT, which: Callable = None, logo: Path | Non
     add(bool(mods), True, "Plymouth's script module is there.", "Plymouth's script module (script.so) was not found.")
     add(layout.p("etc/alternatives/default.plymouth").exists() or layout.p("usr/share/plymouth/themes/default.plymouth").exists(), True,
         "The boot splash can be switched with update-alternatives (Mint / Ubuntu / Debian).",
-        "This computer does not manage its boot splash with update-alternatives, so Code will not touch it.")
-    add(bool(logo and logo.is_file()), True, "Code's logo file was found.", "Code's logo file (code-logo.png) was not found - reinstall Code.")
+        "This computer does not manage its boot splash with update-alternatives, so CodeAque will not touch it.")
+    add(bool(logo and logo.is_file()), True, "CodeAque's logo file was found.", "CodeAque's logo file (code-logo.png) was not found - reinstall CodeAque.")
     has_grub = bool(which("update-grub")) and layout.p(layout.grub_menu).exists()
     add(has_grub, False, "GRUB is the boot menu, so its text and menu can be quietened.",
         "GRUB was not found (another boot loader?): only the splash logo is changed, the boot menu is left alone.")
@@ -175,7 +175,7 @@ def blocked(checks: list[Check]) -> str:
 
 # ------------------------------------------------------------------ file contents
 def render_grub(hide_menu: bool, disable_os_prober: bool = False) -> str:
-    lines = ["# Written by Code > Settings > Quiet boot. Remove with Settings > Quiet boot > Turn off."]
+    lines = ["# Written by CodeAque > Settings > Quiet boot. Remove with Settings > Quiet boot > Turn off."]
     if hide_menu:
         lines += ["GRUB_TIMEOUT_STYLE=hidden", "GRUB_TIMEOUT=2", "GRUB_HIDDEN_TIMEOUT_QUIET=true",     # Shift / Esc inside these 2 seconds shows the menu
                   "GRUB_RECORDFAIL_TIMEOUT=2"]          # Ubuntu / Mint's 00_header otherwise shows the menu for 30 s after a boot that did not finish (hard power-off)
@@ -185,7 +185,7 @@ def render_grub(hide_menu: bool, disable_os_prober: bool = False) -> str:
     return "\n".join(lines)
 
 
-CUSTOM_BEGIN = "# BEGIN code-quiet-boot (written by Code > Settings > Quiet boot; Turn off removes this block)"
+CUSTOM_BEGIN = "# BEGIN code-quiet-boot (written by CodeAque > Settings > Quiet boot; Turn off removes this block)"
 CUSTOM_END = "# END code-quiet-boot"
 
 
@@ -198,8 +198,8 @@ def render_custom() -> str:
 
 def render_plymouth(theme_dir: str) -> str:
     return f"""[Plymouth Theme]
-Name=Code
-Description=Code logo on black
+Name=CodeAque
+Description=CodeAque logo on black
 ModuleName=script
 
 [script]
@@ -231,16 +231,16 @@ def _write(path: str, content: str, mode: str = "644") -> str:
 
 
 STEPS = {          # exit code of the pkexec script -> what was being done (the script puts everything back and ends with this code)
-    81: "writing the GRUB setting file", 82: "writing the Code boot-splash theme", 83: "rebuilding the boot menu (update-grub)",
-    84: "checking that GRUB took the setting (another file overrides it)", 85: "choosing the Code boot-splash theme",
-    86: "rebuilding the boot image (update-initramfs)", 87: "checking that the boot image contains the Code theme", 88: "writing the note that quiet boot is on",
+    81: "writing the GRUB setting file", 82: "writing the CodeAque boot-splash theme", 83: "rebuilding the boot menu (update-grub)",
+    84: "checking that GRUB took the setting (another file overrides it)", 85: "choosing the CodeAque boot-splash theme",
+    86: "rebuilding the boot image (update-initramfs)", 87: "checking that the boot image contains the CodeAque theme", 88: "writing the note that quiet boot is on",
     89: "restoring Mint's boot-splash theme", 90: "checking that update-grub really rewrote /boot/grub/grub.cfg",
     91: "writing the last-word menu setting (custom.cfg)",
 }
 
 
 def drop_custom(cc: str) -> str:
-    """Shell that removes Code's block from custom.cfg (and the file itself when nothing else is in it). Never fails."""
+    """Shell that removes CodeAque's block from custom.cfg (and the file itself when nothing else is in it). Never fails."""
     return (f"if [ -f {_q(cc)} ]; then sed -i '/^# BEGIN code-quiet-boot/,/^# END code-quiet-boot/d' {_q(cc)} || true; "
             f"[ -s {_q(cc)} ] || rm -f {_q(cc)}; fi")
 
@@ -266,7 +266,7 @@ def enable_script(layout: Layout = DEFAULT, logo: Path | None = None, hide_menu:
         "trap 'rc=$?; if [ $rc -ne 0 ]; then undo; exit $STEP; fi' EXIT",
         "if command -v plymouth-set-default-theme >/dev/null 2>&1; then PREV=\"$(plymouth-set-default-theme 2>/dev/null || true)\"; fi",
         f"if [ \"$PREV\" = code ] && [ -f {_q(m)} ]; then PREV=\"$(sed -n 's/^previous_theme=//p' {_q(m)} | head -n 1)\"; fi",   # enabling twice keeps Mint's theme as the one to restore
-        f"rm -f {_q(lg)}",                                           # the file Code 0.4.2 wrote
+        f"rm -f {_q(lg)}",                                           # the file CodeAque 0.4.2 wrote
     ]
     if grub:
         lines.append(_write(g, render_grub(hide_menu, disable_os_prober)))
@@ -331,7 +331,7 @@ def disable_script(layout: Layout = DEFAULT) -> str:
 
 
 def logo_path() -> Path:
-    return Path(__file__).resolve().parent / "assets" / "code-logo.png"
+    return Path(__file__).resolve().parent / "assets" / "codeaque-logo.png"
 
 
 OFF_TEXT = "Quiet boot is OFF. Mint's own boot screens come back at the next start."
@@ -339,9 +339,9 @@ OFF_TEXT = "Quiet boot is OFF. Mint's own boot screens come back at the next sta
 
 def on_text(menu_hidden: bool) -> str:
     if menu_hidden:
-        return ("Quiet boot is ON. From the next start: no boot menu, no Mint logo, the Code logo on black, hardly any text. "
+        return ("Quiet boot is ON. From the next start: no boot menu, no Mint logo, the CodeAque logo on black, hardly any text. "
                 + HOW_TO_SHOW_MENU)
-    return ("Quiet boot is ON (logo and text only). From the next start: the Code logo on black and hardly any text. "
+    return ("Quiet boot is ON (logo and text only). From the next start: the CodeAque logo on black and hardly any text. "
             "The boot menu was left visible because another system is on the disk or GRUB was not found.")
 
 
@@ -408,7 +408,7 @@ def enable(layout: Layout = DEFAULT, run: Callable | None = None, out: Callable[
         text = on_text(hide) + readback_text(layout, hide, fstypes)
         _log("on", True, text, [])
         return True, text
-    except Exception as exc:  # never take Code down
+    except Exception as exc:  # never take CodeAque down
         text = f"Could not turn quiet boot on: {exc}"
         _log("on", False, text, lines)
         return False, text
@@ -467,14 +467,14 @@ class Override:
     file: str
     key: str
     value: str
-    wins: bool          # sourced after Code's file, so it would beat it
+    wins: bool          # sourced after CodeAque's file, so it would beat it
 
 
 GRUB_KEYS = ("GRUB_TIMEOUT_STYLE", "GRUB_TIMEOUT", "GRUB_HIDDEN_TIMEOUT", "GRUB_HIDDEN_TIMEOUT_QUIET", "GRUB_DISABLE_OS_PROBER")
 
 
 def grub_overrides(layout: Layout = DEFAULT) -> list[Override]:
-    """Other places that set the boot-menu keys. /etc/default/grub is read BEFORE the grub.d files (Code's file is 'zz-...', the last
+    """Other places that set the boot-menu keys. /etc/default/grub is read BEFORE the grub.d files (CodeAque's file is 'zz-...', the last
     one), so only a grub.d file that sorts after it - or after it in the same name - could win. Mint's own 50_linuxmint.cfg sorts before."""
     ours = Path(layout.grub_cfg).name
     found: list[Override] = []
@@ -525,7 +525,7 @@ def menu_forcers(cfg: str) -> list[str]:
 
 
 def _custom_state(layout: Layout) -> tuple[bool, bool]:
-    """(Code's block is in custom.cfg, grub.cfg sources custom.cfg)."""
+    """(CodeAque's block is in custom.cfg, grub.cfg sources custom.cfg)."""
     try:
         block = CUSTOM_BEGIN.split(" (")[0] in layout.p(layout.grub_custom).read_text(errors="replace")
     except OSError:
@@ -538,7 +538,7 @@ def _custom_state(layout: Layout) -> tuple[bool, bool]:
 
 
 def status(layout: Layout = DEFAULT, fstypes: Callable | None = None, cmdline: str | None = None, lsinitramfs: Callable | None = None) -> list[Fact]:
-    """What is REALLY applied, read back from the files GRUB and Plymouth use (not what Code hopes it did). Never raises."""
+    """What is REALLY applied, read back from the files GRUB and Plymouth use (not what CodeAque hopes it did). Never raises."""
     import shutil
     import subprocess
     out: list[Fact] = []
@@ -547,9 +547,9 @@ def status(layout: Layout = DEFAULT, fstypes: Callable | None = None, cmdline: s
         out.append(Fact(state, text))
     try:
         on = enabled(layout)
-        add("ok" if on else "info", "Quiet boot is ON (Code's marker file exists)." if on else "Quiet boot is OFF (no Code marker file).")
+        add("ok" if on else "info", "Quiet boot is ON (CodeAque's marker file exists)." if on else "Quiet boot is OFF (no CodeAque marker file).")
         f = layout.p(layout.grub_cfg)
-        add("ok" if f.exists() else "bad", "Code's GRUB setting file is in /etc/default/grub.d." if f.exists() else "Code's GRUB setting file is not there.")
+        add("ok" if f.exists() else "bad", "CodeAque's GRUB setting file is in /etc/default/grub.d." if f.exists() else "CodeAque's GRUB setting file is not there.")
         try:
             cfg = layout.p(layout.grub_menu).read_text(errors="replace")
             hidden = "timeout_style=hidden" in cfg
@@ -571,7 +571,7 @@ def status(layout: Layout = DEFAULT, fstypes: Callable | None = None, cmdline: s
             if block and sourced:
                 add("ok", "Last-word setting: /boot/grub/custom.cfg (read at the very end of grub.cfg) sets the menu hidden, so it wins over os-prober and the failed-boot menu.")
             elif on and hide_marker:
-                add("bad", "Code's custom.cfg block is " + ("missing" if not block else "there, but grub.cfg does not read custom.cfg (no 41_custom)") + ": Mint / Ubuntu rules below can still show the menu.")
+                add("bad", "CodeAque's custom.cfg block is " + ("missing" if not block else "there, but grub.cfg does not read custom.cfg (no 41_custom)") + ": Mint / Ubuntu rules below can still show the menu.")
             for fcr in forcers:
                 add("info" if (block and sourced) else "bad", ("Overridden by custom.cfg: " if (block and sourced) else "Can show the menu: ") + fcr + ".")
             try:
@@ -585,19 +585,19 @@ def status(layout: Layout = DEFAULT, fstypes: Callable | None = None, cmdline: s
                 add("info", "Quiet boot was turned on WITHOUT hiding the menu (another system looked present). Use 'Hide the boot menu too' on this page if you do not use it.")
         for o in grub_overrides(layout):
             if o.wins:
-                add("bad", f"{o.file} sets {o.key}={o.value} AFTER Code's file, so it can override quiet boot.")
+                add("bad", f"{o.file} sets {o.key}={o.value} AFTER CodeAque's file, so it can override quiet boot.")
             elif layout.p(layout.grub_cfg).exists() and o.key in ("GRUB_TIMEOUT_STYLE", "GRUB_TIMEOUT", "GRUB_HIDDEN_TIMEOUT"):
-                add("info", f"{Path(o.file).name} also sets {o.key}={o.value}; Code's file is read later and wins.")
+                add("info", f"{Path(o.file).name} also sets {o.key}={o.value}; CodeAque's file is read later and wins.")
         try:
             conf = layout.p(layout.plymouth_conf).read_text(errors="replace")
             th = re.search(r"^\s*Theme\s*=\s*(\S+)", conf, re.M)
             name = th.group(1) if th else "(not set)"
-            add("ok" if name == "code" else "bad", f"Plymouth's theme (plymouthd.conf) is '{name}'" + ("." if name == "code" else " - not the Code theme."))
+            add("ok" if name == "code" else "bad", f"Plymouth's theme (plymouthd.conf) is '{name}'" + ("." if name == "code" else " - not the CodeAque theme."))
         except OSError:
             add("bad" if on else "info", "Plymouth's config (plymouthd.conf) was not found, so the theme is not set that way.")
         theme = layout.p(layout.theme_dir)
         have = (theme / "code.plymouth").exists() and (theme / "code-logo.png").exists()
-        add("ok" if have else "bad", "The Code boot-splash theme and logo are installed." if have else "The Code boot-splash theme / logo files are missing.")
+        add("ok" if have else "bad", "The CodeAque boot-splash theme and logo are installed." if have else "The CodeAque boot-splash theme / logo files are missing.")
         initrd = _newest_initrd(layout)
         if initrd is None:
             add("info", "No boot image (initrd) was found to check.")
@@ -609,7 +609,7 @@ def status(layout: Layout = DEFAULT, fstypes: Callable | None = None, cmdline: s
                 r = lsi(initrd)
                 if r.returncode == 0:
                     ok = "plymouth/themes/code/code.plymouth" in r.stdout
-                    add("ok" if ok else "bad", f"The boot image {initrd.name} " + ("contains the Code theme." if ok else "does NOT contain the Code theme (the logo will not show until update-initramfs runs)."))
+                    add("ok" if ok else "bad", f"The boot image {initrd.name} " + ("contains the CodeAque theme." if ok else "does NOT contain the CodeAque theme (the logo will not show until update-initramfs runs)."))
                 else:
                     add("info", f"The boot image {initrd.name} could not be listed (it needs the administrator).")
             except (OSError, subprocess.SubprocessError):
@@ -628,7 +628,7 @@ def status(layout: Layout = DEFAULT, fstypes: Callable | None = None, cmdline: s
             words = cmdline.split()
             q, sp = "quiet" in words, "splash" in words
             add("ok" if (q and sp) else "info", "THIS start-up used: " + ("quiet splash." if q and sp else "no quiet / splash (it was started before quiet boot, or the menu edited it)."))
-    except Exception as exc:  # pragma: no cover - never take Code down
+    except Exception as exc:  # pragma: no cover - never take CodeAque down
         add("info", f"Could not read everything back ({exc}).")
     return out
 
@@ -692,8 +692,8 @@ def boot_report(layout: Layout = DEFAULT, run: Callable | None = None, version: 
         except OSError:
             return ""
     try:
-        out.append("Code boot report")
-        out.append(f"Code {version or '?'}   made {now or time.strftime('%Y-%m-%d %H:%M')} (this computer's clock)")
+        out.append("CodeAque boot report")
+        out.append(f"CodeAque {version or '?'}   made {now or time.strftime('%Y-%m-%d %H:%M')} (this computer's clock)")
         out.append("No passwords are in this file. It lists boot settings only.")
         osr = {k: v.strip('"') for k, _, v in (ln.partition("=") for ln in read("etc/os-release").splitlines()) if k in ("PRETTY_NAME", "VERSION_CODENAME", "UBUNTU_CODENAME")}
         section("System", [f"{k}={v}" for k, v in osr.items()] + ["kernel: " + (run(["uname", "-r"]).strip() or "?"),
@@ -703,8 +703,8 @@ def boot_report(layout: Layout = DEFAULT, run: Callable | None = None, version: 
         if sb:
             out.append("secure boot: " + sb.splitlines()[0])
         on, hide = enabled(layout), marker_hide(layout)
-        section("Quiet boot (Code)", [f"marker: {'ON' if on else 'OFF'}" + (f", menu hidden requested: {'yes' if hide else 'no'}" if hide is not None else ""),
-                                       "Code's GRUB file: " + ("present" if layout.p(layout.grub_cfg).exists() else "missing")] +
+        section("Quiet boot (CodeAque)", [f"marker: {'ON' if on else 'OFF'}" + (f", menu hidden requested: {'yes' if hide else 'no'}" if hide is not None else ""),
+                                       "CodeAque's GRUB file: " + ("present" if layout.p(layout.grub_cfg).exists() else "missing")] +
                 ["  " + t for t in _clean(read(layout.grub_cfg))])
         section("/etc/default/grub (uncommented lines)", _clean(read("etc/default/grub")))
         d = layout.p("etc/default/grub.d")
@@ -727,13 +727,13 @@ def boot_report(layout: Layout = DEFAULT, run: Callable | None = None, version: 
         section("Plymouth", _clean(read(layout.plymouth_conf)) + ["plymouth-set-default-theme: " + (run(["plymouth-set-default-theme"]).strip() or "?")])
         try:
             facts = status(layout)
-            section("Read back by Code just now", [f"{ {'ok': 'OK', 'bad': 'NOT APPLIED', 'info': 'note'}[f.state] }: {f.text}" for f in facts])
+            section("Read back by CodeAque just now", [f"{ {'ok': 'OK', 'bad': 'NOT APPLIED', 'info': 'note'}[f.state] }: {f.text}" for f in facts])
         except Exception as exc:  # pragma: no cover
-            section("Read back by Code just now", [f"(could not: {exc})"])
+            section("Read back by CodeAque just now", [f"(could not: {exc})"])
         tail = [t for t in kiosk.log_tail(60) if re.search(r"quiet boot|steam launch|code-only|kiosk", t, re.I)][-25:]
-        section("Code's session log (boot-related lines)", [t[:240] for t in tail if not _SECRET.search(t)])
+        section("CodeAque's session log (boot-related lines)", [t[:240] for t in tail if not _SECRET.search(t)])
         section("About the Dell logo", [BIOS_LOGO_NOTE])
-    except Exception as exc:  # pragma: no cover - never take Code down
+    except Exception as exc:  # pragma: no cover - never take CodeAque down
         out.append(f"(report stopped early: {exc})")
     return "\n".join(out) + "\n"
 
@@ -759,16 +759,16 @@ def diagnose(layout: Layout = DEFAULT, fstypes: Callable | None = None) -> list[
     def line(ok: bool, text: str):
         out.append(("OK     " if ok else "WRONG  ") + text)
     line(enabled(layout), f"quiet boot marker {layout.p(layout.marker)} " + ("exists" if enabled(layout) else "is missing (it is OFF, or failed and was rolled back)"))
-    for label, f in (("GRUB setting file", layout.p(layout.grub_cfg)), ("Code boot theme", layout.p(layout.theme_dir) / "code.plymouth")):
+    for label, f in (("GRUB setting file", layout.p(layout.grub_cfg)), ("CodeAque boot theme", layout.p(layout.theme_dir) / "code.plymouth")):
         line(f.exists(), f"{label}: {f}")
     if layout.p(layout.legacy_grub_cfg).exists():
-        out.append(f"NOTE   leftover file from Code 0.4.2: {layout.p(layout.legacy_grub_cfg)} (turning quiet boot on again removes it)")
+        out.append(f"NOTE   leftover file from CodeAque 0.4.2: {layout.p(layout.legacy_grub_cfg)} (turning quiet boot on again removes it)")
     try:
         cfg = layout.p(layout.grub_menu).read_text(errors="replace")
         line("timeout_style=hidden" in cfg, "the generated boot menu (grub.cfg) says timeout_style=hidden - if not, GRUB still shows its menu")
         line(bool(re.search(r"\bsplash\b", cfg)), "the generated boot menu has 'splash' on the kernel line")
         block, sourced = _custom_state(layout)
-        line(block and sourced, "/boot/grub/custom.cfg has Code's hidden-menu block AND grub.cfg reads custom.cfg (the last word over os-prober / failed-boot menus)")
+        line(block and sourced, "/boot/grub/custom.cfg has CodeAque's hidden-menu block AND grub.cfg reads custom.cfg (the last word over os-prober / failed-boot menus)")
         for fcr in menu_forcers(cfg):
             out.append("NOTE   can show the menu: " + fcr)
     except OSError:

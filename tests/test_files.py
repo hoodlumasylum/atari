@@ -172,7 +172,7 @@ def test_a_broken_or_unfinished_archive_is_explained(home):
     assert not res.ok and "could not be opened" in res.text and not (home / "Downloads" / "bad").exists()
     part = home / "Downloads" / "x.zip.part"
     part.write_text("x")
-    assert files.extract(part, home=home).text == "That is not an archive Code can unpack (zip, tar, 7z, rar)."
+    assert files.extract(part, home=home).text == "That is not an archive CodeAque can unpack (zip, tar, 7z, rar)."
     assert "gone" in files.extract(home / "Downloads" / "no.zip", home=home).text
     assert "inside Downloads" in files.extract(home.parent / "o.zip", home=home).text
 
@@ -329,7 +329,7 @@ def test_cancel_stops_a_zip_and_cleans_up(home):
     assert not res.ok and res.text == "Cancelled." and not (home / "Downloads" / "big").exists()
 
 
-# ------------------------------------------------------------------ in Code
+# ------------------------------------------------------------------ in CodeAque
 @pytest.fixture
 def ui(app, tmp_path, monkeypatch):
     conf(tmp_path)

@@ -1,7 +1,7 @@
 """Free Games: a small hand-checked list of free-to-play games that really run on Linux.
 
 Each entry opens through Steam (steam://install/<id> or steam://rungameid/<id>) or, for open-source games, through a Flatpak.
-Code downloads nothing by itself; Steam / Flatpak do it after you press Play.
+CodeAque downloads nothing by itself; Steam / Flatpak do it after you press Play.
 
 "Works on Linux" badges (checked on 2026-10-28):
   Verified - runs well: a native Linux build, or ProtonDB tier gold/platinum with hundreds of reports.
@@ -81,7 +81,7 @@ BY_ID = {g.id: g for g in GAMES}
 LEFT_OUT = ("Apex Legends (silver, Easy Anti-Cheat blocks Linux), Destiny 2 (borked), Rainbow Six Siege (borked), PUBG (borked), "
             "Rocket League (no longer on Steam; the Epic version was not verified)")
 MINECRAFT_NOTE = ("Minecraft (Java) works through Prism Launcher in PC Apps - you need your own Minecraft licence. "
-                  "Code does not include or download Minecraft.")
+                  "CodeAque does not include or download Minecraft.")
 
 
 def steam_command_for(game: FreeGame, installed: bool) -> str:

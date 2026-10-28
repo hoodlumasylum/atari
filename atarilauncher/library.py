@@ -135,7 +135,7 @@ def build_library(cfg: Config, home: Path | None = None, covers_root: Path | Non
             note = ""
             if g.on_ntfs:
                 note = "Installed on a Windows (NTFS) drive - may not run well on Linux"
-            # Steam's own local library cache first; pictures Code downloaded (Settings > Download covers) after
+            # Steam's own local library cache first; pictures CodeAque downloaded (Settings > Download covers) after
             cover = steam.find_art(scan.root, g.appid) or covers_mod.find_downloaded_steam_art(g.appid, "cover", covers_root)
             header = (steam.find_header(scan.root, g.appid)
                       or covers_mod.find_downloaded_steam_art(g.appid, "header", covers_root))
@@ -231,7 +231,7 @@ def build_library(cfg: Config, home: Path | None = None, covers_root: Path | Non
     for finder in (apps.heroic_games, apps.lutris_games):
         try:
             found = finder(home)
-        except Exception as exc:  # an odd file there must never break Code
+        except Exception as exc:  # an odd file there must never break CodeAque
             print(f"[atari] {finder.__name__} failed: {exc}")
             found = []
         for sg in found:
@@ -251,7 +251,7 @@ def apply_icons(games: list, home: Path | None = None, icons_root: Path | None =
             continue
         try:
             path, fit = icons.resolve(spec, home, icons_root)
-        except Exception as exc:          # a strange icon folder must never break Code
+        except Exception as exc:          # a strange icon folder must never break CodeAque
             print(f"[atari] icon lookup failed for {g.gid}: {exc}")
             continue
         if path:

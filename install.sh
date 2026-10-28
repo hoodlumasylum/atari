@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Code installer: copies the app to ~/.local/share/atari-launcher, makes a private Python
+# CodeAque installer: copies the app to ~/.local/share/atari-launcher, makes a private Python
 # environment and adds an app-menu entry. No root needed (except optionally for a few system
 # libraries, and it asks first). Safe to run again to upgrade: your settings, favourites and
 # play history (~/.config/atari, ~/.local/share/atari) are never touched.
 #
 #   ./install.sh                 normal install / upgrade
-#   ./install.sh --autostart     also start Code automatically when you log in
+#   ./install.sh --autostart     also start CodeAque automatically when you log in
 #   ./install.sh --yes           don't ask questions (install missing system libraries automatically)
 #   ./install.sh --no-gamepad    skip the controller library
 #   ./install.sh --no-studio     skip numpy (only needed by the music Studio)
-#   ./install.sh --no-system-packages   never use sudo / the package manager (used by Code's own updater)
+#   ./install.sh --no-system-packages   never use sudo / the package manager (used by CodeAque's own updater)
 set -euo pipefail
 
 SRC_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
@@ -46,7 +46,7 @@ elif command -v apt-get >/dev/null 2>&1; then
     MISSING=""
     for p in $PKGS; do dpkg -s "$p" >/dev/null 2>&1 || MISSING="$MISSING $p"; done
     if [ -n "$MISSING" ]; then
-        echo "Code needs these packages:$MISSING"
+        echo "CodeAque needs these packages:$MISSING"
         if ask "Install them now with sudo apt?"; then
             sudo apt-get update && sudo apt-get install -y $MISSING || warn "Some packages could not be installed; continuing anyway."
         fi
@@ -58,7 +58,7 @@ elif command -v dnf >/dev/null 2>&1; then
     MISSING=""
     for p in $PKGS; do rpm -q "$p" >/dev/null 2>&1 || MISSING="$MISSING $p"; done
     if [ -n "$MISSING" ]; then
-        echo "Code needs these packages:$MISSING"
+        echo "CodeAque needs these packages:$MISSING"
         if ask "Install them now with sudo dnf?"; then
             sudo dnf install -y $MISSING || warn "Some packages could not be installed (on Bazzite/Silverblue-style systems this is normal); continuing."
         fi
@@ -66,7 +66,7 @@ elif command -v dnf >/dev/null 2>&1; then
         echo "All needed packages are already installed."
     fi
 else
-    echo "Unknown package manager. If Code fails to start, install Python 3 with venv/pip, plus the Qt/xcb libraries (see README)."
+    echo "Unknown package manager. If CodeAque fails to start, install Python 3 with venv/pip, plus the Qt/xcb libraries (see README)."
 fi
 
 command -v python3 >/dev/null 2>&1 || { warn "python3 was not found. Install Python 3 and run this again."; exit 1; }
@@ -80,8 +80,8 @@ VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$SRC_DIR/atarilauncher/__ini
 OLD_VERSION=""
 [ -f "$APP_DIR/atarilauncher/__init__.py" ] && OLD_VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$APP_DIR/atarilauncher/__init__.py")"
 if [ "$SRC_DIR" != "$APP_DIR" ]; then
-    if [ -n "$OLD_VERSION" ]; then say "Upgrading Code $OLD_VERSION -> ${VERSION:-new} (your settings and favourites are kept)"
-    else say "Installing Code ${VERSION:-} into $APP_DIR"; fi
+    if [ -n "$OLD_VERSION" ]; then say "Upgrading CodeAque $OLD_VERSION -> ${VERSION:-new} (your settings and favourites are kept)"
+    else say "Installing CodeAque ${VERSION:-} into $APP_DIR"; fi
     mkdir -p "$APP_DIR"
     rm -rf "$APP_DIR/atarilauncher" "$APP_DIR/scripts" "$APP_DIR/packaging"
     for item in atarilauncher scripts packaging run.sh install.sh uninstall.sh requirements.txt requirements-gamepad.txt requirements-studio.txt pyproject.toml README.md LICENSE; do
@@ -101,20 +101,20 @@ elif ! python3 -m venv --clear "$APP_DIR/.venv"; then
 fi
 "$APP_DIR/.venv/bin/python" -m pip install --quiet --upgrade pip
 
-say "Installing Code's Python libraries (this downloads about 150 MB the first time)"
+say "Installing CodeAque's Python libraries (this downloads about 150 MB the first time)"
 "$APP_DIR/.venv/bin/python" -m pip install -r "$APP_DIR/requirements.txt"
 if [ "$GAMEPAD" = 1 ]; then
     say "Installing controller support"
     "$APP_DIR/.venv/bin/python" -m pip install -r "$APP_DIR/requirements-gamepad.txt" \
-        || warn "Controller support could not be installed. Code still works with the keyboard."
+        || warn "Controller support could not be installed. CodeAque still works with the keyboard."
 fi
 
 if [ "$STUDIO" = 1 ]; then
     say "Installing music Studio support (numpy, about 20 MB)"
     "$APP_DIR/.venv/bin/python" -m pip install -r "$APP_DIR/requirements-studio.txt" \
         || { echo "Trying once more..."; sleep 3; "$APP_DIR/.venv/bin/python" -m pip install -r "$APP_DIR/requirements-studio.txt"; } \
-        || warn "Studio support could not be installed. Everything else works; in Code press Studio > Fix Studio (or Help > Fix Studio) to add it."
-    if "$APP_DIR/.venv/bin/python" -c "import numpy" >/dev/null 2>&1; then echo "Studio support: OK"; else warn "Studio support is NOT installed yet (Code's Studio screen has a Fix Studio button)."; fi
+        || warn "Studio support could not be installed. Everything else works; in CodeAque press Studio > Fix Studio (or Help > Fix Studio) to add it."
+    if "$APP_DIR/.venv/bin/python" -c "import numpy" >/dev/null 2>&1; then echo "Studio support: OK"; else warn "Studio support is NOT installed yet (CodeAque's Studio screen has a Fix Studio button)."; fi
 fi
 
 say "Testing that the app can start"
@@ -138,19 +138,20 @@ fi
 echo "OK"
 
 # ---------------------------------------------------------------- app menu entry
-say "Adding Code to your application menu"
+say "Adding CodeAque to your application menu"
 chmod +x "$APP_DIR/run.sh"
 BIN_DIR="$HOME/.local/bin"; APPS_DIR="$DATA_HOME/applications"
 ICON_DIR="$DATA_HOME/icons/hicolor/scalable/apps"
 mkdir -p "$BIN_DIR" "$APPS_DIR" "$ICON_DIR"
-ln -sf "$APP_DIR/run.sh" "$BIN_DIR/atari"          # the original command name keeps working (older shortcuts, autostart, Code-only mode)
+ln -sf "$APP_DIR/run.sh" "$BIN_DIR/codeaque"       # the CodeAque command (the product name)
+ln -sf "$APP_DIR/run.sh" "$BIN_DIR/atari"          # the original command name keeps working (older shortcuts, autostart, CodeAque-only mode)
 # `code` is the new command name. Visual Studio Code also installs a command called `code`, so never take that name over:
 # only add ours when nothing else on this computer already answers to `code` (or when it is already our own link).
 CODE_LINK="$BIN_DIR/code"; CODE_NOTE=""
 if [ -L "$CODE_LINK" ] && [ "$(readlink "$CODE_LINK")" = "$APP_DIR/run.sh" ]; then
     :
 elif [ -e "$CODE_LINK" ] || [ -L "$CODE_LINK" ] || PATH="$(printf '%s' "$PATH" | sed "s|$BIN_DIR:||g;s|:$BIN_DIR||g")" command -v code >/dev/null 2>&1; then
-    CODE_NOTE="The name 'code' is already used on this computer (probably Visual Studio Code), so it was left alone. Use 'atari' or 'code-launcher' to start Code from a terminal."
+    CODE_NOTE="The name 'code' is already used on this computer (probably Visual Studio Code), so it was left alone. Use 'codeaque', 'atari' or 'code-launcher' to start CodeAque from a terminal."
 else
     ln -s "$APP_DIR/run.sh" "$CODE_LINK"
 fi
@@ -158,7 +159,7 @@ ln -sf "$APP_DIR/run.sh" "$BIN_DIR/code-launcher"
 ln -sf "$APP_DIR/scripts/install-everything.sh" "$BIN_DIR/atari-install-everything"
 ln -sf "$APP_DIR/scripts/install-emulators.sh" "$BIN_DIR/atari-install-emulators"
 cp "$APP_DIR/packaging/atari-launcher.svg" "$ICON_DIR/atari-launcher.svg"
-for n in 512 256 128 64; do                         # the Code logo as ordinary icon sizes too (some menus ignore SVG icons)
+for n in 512 256 128 64; do                         # the CodeAque logo as ordinary icon sizes too (some menus ignore SVG icons)
     if [ -f "$APP_DIR/packaging/icons/code-$n.png" ]; then
         mkdir -p "$DATA_HOME/icons/hicolor/${n}x${n}/apps"
         cp "$APP_DIR/packaging/icons/code-$n.png" "$DATA_HOME/icons/hicolor/${n}x${n}/apps/atari-launcher.png"
@@ -175,12 +176,12 @@ fi
 if [ "$AUTOSTART" = 1 ]; then
     mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
     cp "$APPS_DIR/atari.desktop" "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/atari.desktop"
-    echo "Code will now start automatically when you log in."
+    echo "CodeAque will now start automatically when you log in."
 fi
 
 say "Done!"
 cat <<EOT
-Code ${VERSION:-} is installed. Start it from your application menu (look for "Code" under Games),
+CodeAque ${VERSION:-} is installed. Start it from your application menu (look for "CodeAque" under Games),
 or in a terminal with:   code   or   atari      (add --windowed to run in a window)
 ${CODE_NOTE:+$CODE_NOTE
 }
@@ -188,6 +189,6 @@ You can now delete the folder you extracted - the app lives in $APP_DIR.
 The first start shows a setup screen; "Add Games" copies games from a USB stick.
 Need emulators or apps (PlayStation, Nintendo, Xbox, Roblox, ...)?  Open Settings > Emulators > Install emulators and apps,
 or run in a terminal:   atari-install-everything
-To start Code at login:  ./install.sh --autostart
+To start CodeAque at login:  ./install.sh --autostart
 EOT
 case ":$PATH:" in *":$BIN_DIR:"*) ;; *) echo "Note: $BIN_DIR is not on your PATH yet; log out/in to use the 'atari' command." ;; esac

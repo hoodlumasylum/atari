@@ -27,7 +27,7 @@ def controller_text(sys_class: str = "/sys/class/input") -> str:
     if not names:
         return ("No game controller found. Plug one in (or turn it on over Bluetooth) and it shows up here - "
                 "the keyboard works the whole time.")
-    return "Controller found: " + ", ".join(names) + ". It works in Code's menus, and inside most emulators."
+    return "Controller found: " + ", ".join(names) + ". It works in CodeAque's menus, and inside most emulators."
 
 
 def check_game(cfg, game, sys_class: str = "/sys/class/input") -> list[dict]:
@@ -89,7 +89,7 @@ def check_game(cfg, game, sys_class: str = "/sys/class/input") -> list[dict]:
 def summary(rows: list[dict]) -> str:
     bad = [r for r in rows if r["state"] == BAD]
     if not bad:
-        return "Everything Code can check looks fine. If the game still misbehaves, try Options > Copy log and ask for help."
+        return "Everything CodeAque can check looks fine. If the game still misbehaves, try Options > Copy log and ask for help."
     return "Found " + str(len(bad)) + (" problem" if len(bad) == 1 else " problems") + " - the fix is written under each."
 
 

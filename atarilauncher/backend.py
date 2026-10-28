@@ -10,10 +10,10 @@ import dataclasses
 import time
 from pathlib import Path
 
-from PySide6.QtCore import Property, QObject, QProcess, Qt, QTimer, Signal, Slot
+from PySide6.QtCore import Property, QObject, QProcess, Qt, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QKeyEvent
 
-from . import donate, gamesroot, power, rootauth, files, steamfix, downloads, golive, icons, inputfix, intro, kiosk, quietboot, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
+from . import branding, donate, gamedelete, gamesroot, power, rootauth, files, steamfix, downloads, golive, icons, inputfix, intro, kiosk, quietboot, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
 from . import __version__
 from .config import Config, load_config, save_config
 from .import_model import ImportModel
@@ -56,6 +56,7 @@ class Backend(QObject):
     importScanned = Signal(object)    # ScanResult (from worker thread)
     importProgressed = Signal(float, str)
     importFinished = Signal(object)   # CopyResult (from worker thread)
+    deleteFinished = Signal(object)   # gamedelete.Result (from the worker thread)
     importUnpacked = Signal(object)   # a BIOS pack that could not be opened (files.Extraction, from the worker thread)
     sessionEnded = Signal(str, str, float, str)  # gid, title, seconds, error (from worker thread)
     gamepadNote = Signal(str)
@@ -73,7 +74,7 @@ class Backend(QObject):
     inputChanged = Signal()
     launchStatus = Signal(str, str)         # (phase, text) from the Steam launch worker -> queued to the GUI thread
     runningStatusChanged = Signal()
-    kioskDone = Signal(bool, str)           # (worked, text) from the Code-only mode worker thread
+    kioskDone = Signal(bool, str)           # (worked, text) from the CodeAque-only mode worker thread
     inputFixDone = Signal(bool, str)        # (worked, text) from the permissions-fix thread
     iconArrived = Signal(str, str, bool)    # gid, file, fit (from the icon worker thread)
     iconsDone = Signal()
@@ -152,7 +153,7 @@ class Backend(QObject):
         self._fm_busy = ""                      # what the worker is doing ("" = nothing)
         self._fm_prog = None                    # files.Progress of the unpack in the background (None = nothing yet)
         self._fm_progress = ""
-        self._fm_tool = ""                      # app id Code can install so the pick can be unpacked
+        self._fm_tool = ""                      # app id CodeAque can install so the pick can be unpacked
         self._fm_cancel = threading.Event()
         self._fm_pending_delete = False
         self._dl_from_files = False
@@ -174,6 +175,12 @@ class Backend(QObject):
         self._qb_layout = quietboot.DEFAULT
         self.importProgressed.connect(self._on_import_progress, Qt.QueuedConnection)
         self.importUnpacked.connect(self._on_import_unpacked, Qt.QueuedConnection)
+        self.deleteFinished.connect(self._on_delete_finished, Qt.QueuedConnection)
+        self._del_plan = None
+        self._del_saves = False
+        self._del_cover = False
+        self._del_busy = False
+        self._del_result = None
         self.importFinished.connect(self._on_import_finished, Qt.QueuedConnection)
         self._lib = LibraryResult()
         self._all = []
@@ -244,7 +251,7 @@ class Backend(QObject):
         self._last_tick = 0.0
         self._start_timer = QTimer(self, singleShot=True, interval=700)
         self._start_timer.timeout.connect(lambda: self.playSound("start"))
-        # start-up intro (your own video, or Code's own short animation)
+        # start-up intro (your own video, or CodeAque's own short animation)
         self._intro_plan = intro.Plan() if self._demo else intro.plan(self.cfg)
         self._intro_mode = self._intro_plan.mode
         self._intro_play = None
@@ -261,13 +268,20 @@ class Backend(QObject):
             QTimer.singleShot(2500, self._wifi_poll)         # the WiFi name next to the clock
         if not self._demo:
             kiosk.log_event("started - " + kiosk.running_description()[1] + f" (pid {os.getpid()}, DESKTOP_SESSION={os.environ.get('DESKTOP_SESSION', '')})")
+        if not self._demo and not os.environ.get("ATARI_NO_BRANDFIX"):
+            try:
+                changed = branding.refresh()
+                if changed:
+                    kiosk.log_event("branding: refreshed " + ", ".join(changed))
+            except Exception as exc:  # pragma: no cover
+                print(f"[atari] branding refresh failed: {exc}")
         if not self._demo and self._lib.unknown and not self._first_run:
             QTimer.singleShot(4500, lambda: self.show_toast(
                 gamesroot.hint_text(self.cfg, self._lib.unknown[0])
                 + ("  (more in Settings)" if len(self._lib.unknown) > 1 else "  (see Settings)"), 14000))
         if not self._demo and kiosk.session_outdated(self._kiosk_layout):
-            QTimer.singleShot(7000, lambda: self.show_toast("Code-only mode needs a one-time update so Code never drops to the desktop: "
-                                                            "Settings > \"Update Code-only mode\".", 15000))
+            QTimer.singleShot(7000, lambda: self.show_toast("CodeAque-only mode needs a one-time update so CodeAque never drops to the desktop: "
+                                                            "Settings > \"Update CodeAque-only mode\".", 15000))
         if not self._demo and not os.environ.get("ATARI_NO_STEAMFIX") and self._shell_mode():
             self._start_steam_guard()
         if not self._demo and not os.environ.get("ATARI_NO_MEDIA"):
@@ -382,7 +396,7 @@ class Backend(QObject):
                 self.send_action(line)
 
     def send_action(self, action: str) -> None:
-        """Turn a gamepad action into a key press for the UI (only while Code has focus)."""
+        """Turn a gamepad action into a key press for the UI (only while CodeAque has focus)."""
         key = ACTION_KEYS.get(action)
         win = self._window
         if self._intro_active and action != "none":      # any controller button skips the intro (the player has the focus)
@@ -749,7 +763,7 @@ class Backend(QObject):
         self._inst_for_gid = for_gid
         items = self._inst_items()
         if not items:
-            self.show_toast("Code does not know how to install that. See Help.", 6000)
+            self.show_toast("CodeAque does not know how to install that. See Help.", 6000)
             return
         self._inst_what = what or (items[0][0].title if len(items) == 1 else f"{len(items)} programs")
         self._inst_state, self._inst_lines, self._inst_summary, self._inst_step, self._inst_ok = "ask", [], "", "", False
@@ -831,8 +845,8 @@ class Backend(QObject):
         if st == "ask":
             t = [x for x, _c in self._inst_items()]
             many = len(t) > 1
-            how = ("Code downloads it for your user only (Flathub, official sites). Code may ask for your password on this screen for a few of them."
-                   if many else "Code downloads it for you (Flathub, or your system's software list - then Code asks for your password on this screen).")
+            how = ("CodeAque downloads it for your user only (Flathub, official sites). CodeAque may ask for your password on this screen for a few of them."
+                   if many else "CodeAque downloads it for you (Flathub, or your system's software list - then CodeAque asks for your password on this screen).")
             rows = [self._info(f"{what[:1].upper() + what[1:]} {'are' if many else 'is'} not installed yet. {how} Needs internet."
                                + (f"  {len(t)} programs: this can take 20 minutes or more." if len(t) > 6 else ""))]
             for x in t[:6]:
@@ -861,12 +875,12 @@ class Backend(QObject):
 
     def _installmenu_rows(self) -> list:
         return [
-            self._info("Choose what to install. Code only installs what is missing, for your user only, and never downloads games, BIOS files or keys. "
+            self._info("Choose what to install. CodeAque only installs what is missing, for your user only, and never downloads games, BIOS files or keys. "
                        "You can run it again at any time."),
             {"kind": "item", "id": "inst_essentials", "title": "Install essentials only",
              "detail": "RetroArch with all its cores (PlayStation 1, Genesis, SNES ...), PCSX2, Dolphin, PPSSPP, melonDS, mGBA, Flycast. Quicker (about 10 minutes)."},
             {"kind": "item", "id": "inst_all", "title": "Install everything",
-             "detail": "Every emulator and app Code can start (about 38 programs, several GB, 20+ minutes). Fine to leave running."},
+             "detail": "Every emulator and app CodeAque can start (about 38 programs, several GB, 20+ minutes). Fine to leave running."},
             {"kind": "item", "id": "inst_terminal", "title": "Open it in a terminal instead",
              "detail": "Same installer with a text window (atari-install-everything --essentials / --all)."},
             {"kind": "item", "id": "back", "title": "Back"},
@@ -893,10 +907,10 @@ class Backend(QObject):
     def fixInputPermissions(self) -> None:
         """One press: install Valve's udev rules so Steam stops saying "Missing permissions for input devices"."""
         if self._input_fixing:
-            self.show_toast("Already working on it - Code may be waiting for your password.", 5000)
+            self.show_toast("Already working on it - CodeAque may be waiting for your password.", 5000)
             return
         self._input_fixing = True
-        self.show_toast("Fixing controller permissions - Code asks for your password on this screen...", 8000)
+        self.show_toast("Fixing controller permissions - CodeAque asks for your password on this screen...", 8000)
 
         def work():
             lines: list = []
@@ -956,15 +970,15 @@ class Backend(QObject):
                 rows.append(self._info(t))
             rows.append(self._info("5  Sober has the permissions it asks for (\"Permission Update Required\")"))
             rows.append(self._info(sober.OVERRIDE_PLAIN))
-            rows.append(self._info("Press \"Run fix\": Code checks all of this, adds the Flathub store if it is missing, gives Sober that permission if it "
+            rows.append(self._info("Press \"Run fix\": CodeAque checks all of this, adds the Flathub store if it is missing, gives Sober that permission if it "
                                    "lacks it, updates Sober, tells you the cause - and starts Roblox again if it changed something."))
         rows.append({"kind": "done", "id": "rbxrun", "title": "Working..." if self._rbx_state == "running" else "Run fix"})
         rows.append({"kind": "item", "id": "rbxopen", "title": "Open Roblox again", "detail": "Sober retries the download by itself."})
         rows.append(self._info("Sober's log:  " + sober.LATEST_LOG + "   (Sober's \"state\" file, which names the Roblox version it wants, is next to it)"))
-        rows.append(self._info("Code's log:  " + str(paths.log_file())))
-        rows.append({"kind": "item", "id": "copylog", "title": "Copy Code's log (to send to someone who is helping you)"})
+        rows.append(self._info("CodeAque's log:  " + str(paths.log_file())))
+        rows.append({"kind": "item", "id": "copylog", "title": "Copy CodeAque's log (to send to someone who is helping you)"})
         rows.append(self._info("Honest limit: if everything above is OK and Roblox still asks for a bundle, Sober's own download service is failing. "
-                               "Code cannot fix that and never downloads a Roblox file for you. Choosing a file by hand only works with the exact "
+                               "CodeAque cannot fix that and never downloads a Roblox file for you. Choosing a file by hand only works with the exact "
                                "Roblox version it names plus the x86_64 part, from a source you trust - not recommended."))
         rows.append({"kind": "item", "id": "back", "title": "Back"})
         return rows
@@ -1089,7 +1103,7 @@ class Backend(QObject):
 
     @Slot()
     def previewIntro(self) -> None:
-        """Settings > Play the intro now: your video if you chose one, else Code's own animation. Ignores the toggles."""
+        """Settings > Play the intro now: your video if you chose one, else CodeAque's own animation. Ignores the toggles."""
         if self._intro_active:
             return
         f = intro.custom_file()
@@ -1147,72 +1161,72 @@ class Backend(QObject):
         rows = []
         if f is not None:
             rows.append({"kind": "introvideo", "title": "Intro video (your own)", "value": "ON" if self.cfg.intro_enabled else "OFF",
-                         "detail": f"Plays {f.name} full screen when Code starts. Any key, click or controller button skips it. "
+                         "detail": f"Plays {f.name} full screen when CodeAque starts. Any key, click or controller button skips it. "
                                    "Sound follows the Sound effects switch."})
         else:
             rows.append({"kind": "introvideo", "title": "Intro video (your own)", "value": "None",
                          "detail": "No video chosen yet. Press \"Choose intro video\" to pick an .mp4 / .webm / .mkv / .mov file."})
         rows.append({"kind": "introchoose", "title": "Choose intro video", "value": "",
-                     "detail": "Pick a video from Downloads, Videos or a USB stick. Code keeps its own copy."})
+                     "detail": "Pick a video from Downloads, Videos or a USB stick. CodeAque keeps its own copy."})
         if f is not None:
             rows.append({"kind": "introremove", "title": "Remove intro video", "value": "",
-                         "detail": "Deletes Code's copy only (your original file stays where it is)."})
-        rows.append({"kind": "introdefault", "title": "Code's start-up video (default)", "value": "ON" if self.cfg.intro_default else "OFF",
-                     "detail": "The 10-second Code logo reveal that comes with Code. It plays only when you have no intro video of your own "
+                         "detail": "Deletes CodeAque's copy only (your original file stays where it is)."})
+        rows.append({"kind": "introdefault", "title": "CodeAque's start-up video (default)", "value": "ON" if self.cfg.intro_default else "OFF",
+                     "detail": "The 10-second CodeAque logo reveal that comes with CodeAque. It plays only when you have no intro video of your own "
                                "(and, with no video player installed, a short animation is shown instead)."})
         rows.append({"kind": "introsound", "title": "Intro sound", "value": "ON" if self.cfg.intro_sound else "OFF",
                      "detail": "The intro plays with its own sound (the music in the video), whatever Sound effects is set to. OFF = silent intro."})
         rows.append({"kind": "intropreview", "title": "Play the intro now", "value": "", "detail": "Shows what happens at start-up."})
         return rows
 
-    # ----- Code-only mode (boot straight into Code) ----------------------------------
+    # ----- CodeAque-only mode (boot straight into CodeAque) ----------------------------------
     def _kiosk_rows(self) -> list:
         lay = self._kiosk_layout
         rows: list = []
         if self._kiosk_busy:
-            return [self._info("Working - Code asks for your password on this screen first..."), {"kind": "item", "id": "back", "title": "Back"}]
+            return [self._info("Working - CodeAque asks for your password on this screen first..."), {"kind": "item", "id": "back", "title": "Back"}]
         if self._kiosk_msg:
             rows.append(self._info("Result:  " + self._kiosk_msg))
         if kiosk.enabled(lay):
             if kiosk.session_outdated(lay):
-                rows.append(self._info("Code-only mode's session file is from an older Code. With it, closing Code (or an app taking Code down) can drop you "
-                                       "to the Mint desktop. Press \"Update Code-only mode\" once (password) to fix it."))
+                rows.append(self._info("CodeAque-only mode's session file is from an older CodeAque. With it, closing CodeAque (or an app taking CodeAque down) can drop you "
+                                       "to the Mint desktop. Press \"Update CodeAque-only mode\" once (password) to fix it."))
             else:
-                rows.append(self._info("Code-only mode's session file is up to date. \"Update Code-only mode\" below just writes it again (safe any time)."))
-            rows.append({"kind": "done", "id": "kioskupdate", "title": "Update Code-only mode",
+                rows.append(self._info("CodeAque-only mode's session file is up to date. \"Update CodeAque-only mode\" below just writes it again (safe any time)."))
+            rows.append({"kind": "done", "id": "kioskupdate", "title": "Update CodeAque-only mode",
                          "detail": "Asks for your password once. Rewrites the same three files; nothing else changes."})
             if not kiosk.window_manager():
                 rows.append(self._info("No window manager is installed, so Steam's own windows (game Properties, Settings, pop-ups) can open out of "
-                                       "sight. Code now hides itself while Steam runs, but the fix is the one below (password once, then restart)."))
+                                       "sight. CodeAque now hides itself while Steam runs, but the fix is the one below (password once, then restart)."))
                 rows.append({"kind": "done", "id": "kioskwm", "title": "Install the window manager (openbox)",
                              "detail": "Asks for your password once. Installs the small 'openbox' package so windows stack, focus and can be clicked."})
             kind, rtext = kiosk.running_description()
             if kind != "code-only":
                 rows.append(self._info("Note: " + rtext + " Closing an app can then show the desktop. Restart the computer (or log out and in) so the "
-                                       "Code-only session starts Code."))
+                                       "CodeAque-only session starts CodeAque."))
             facts = kiosk.diagnose(lay)
-            problems = [t for t in facts if not t.startswith(("OK ", "    ", "session log")) and "Code is running" not in t]
+            problems = [t for t in facts if not t.startswith(("OK ", "    ", "session log")) and "CodeAque is running" not in t]
             tail = kiosk.log_tail(3)
             if problems:
                 rows.append(self._info("Check: " + " | ".join(t.strip() for t in problems)))
             if tail:
                 rows.append(self._info("Last start-ups (" + str(kiosk.session_log_path()) + "):  " + "  /  ".join(tail)))
-            rows += [self._info("Code-only mode is ON: the computer starts straight into Code, with no Linux Mint desktop."),
-                     {"kind": "done", "id": "kioskoff", "title": "Back to Mint desktop (turn Code-only mode off)",
+            rows += [self._info("CodeAque-only mode is ON: the computer starts straight into CodeAque, with no Linux Mint desktop."),
+                     {"kind": "done", "id": "kioskoff", "title": "Back to Mint desktop (turn CodeAque-only mode off)",
                       "detail": "Asks for your password once. The normal login and desktop come back after the next restart or log out."},
                      {"kind": "item", "id": "kioskonce", "title": "Open the Mint desktop once (log out now)",
-                      "detail": "No password. This login only - the next start is Code-only again."},
+                      "detail": "No password. This login only - the next start is CodeAque-only again."},
                      self._info(kiosk.RECOVERY),
-                     self._info("If it ever starts the Mint desktop instead of Code, paste this in a Terminal to put it right: " + kiosk.RESTORE_COMMAND)]
+                     self._info("If it ever starts the Mint desktop instead of CodeAque, paste this in a Terminal to put it right: " + kiosk.RESTORE_COMMAND)]
         else:
             checks = kiosk.preflight(lay)
             why = kiosk.blocked(checks)
-            rows += [self._info("Code-only mode makes this computer start straight into Code, like a games console: no Linux Mint desktop, "
+            rows += [self._info("CodeAque-only mode makes this computer start straight into CodeAque, like a games console: no Linux Mint desktop, "
                                 "no login screen. Your files and games are not touched."),
                      self._info("What changes (needs your password once): three small files named \"atari\" - the login screen's auto-login and a "
-                                "\"session\" that starts Code. Turning it off removes exactly those files."),
+                                "\"session\" that starts CodeAque. Turning it off removes exactly those files."),
                      self._info("Ways back, always: Settings > Back to Mint desktop; or at the login screen pick the Cinnamon session; "
-                                "or if Code crashes five times in a row right after starting, the Mint desktop starts by itself."),
+                                "or if CodeAque crashes five times in a row right after starting, the Mint desktop starts by itself."),
                      self._info(kiosk.RECOVERY)]
             for c in checks:
                 if not c.ok:
@@ -1220,8 +1234,8 @@ class Backend(QObject):
             if why:
                 rows.append({"kind": "item", "id": "back", "title": "Back"})
                 return rows
-            rows.append({"kind": "done", "id": "kioskon", "title": "Yes, turn Code-only mode ON",
-                         "detail": "Code asks for your password on this screen. You can undo it any time."})
+            rows.append({"kind": "done", "id": "kioskon", "title": "Yes, turn CodeAque-only mode ON",
+                         "detail": "CodeAque asks for your password on this screen. You can undo it any time."})
         rows += [self._info(t) for t in kiosk.FAST_BOOT_TIPS]
         rows.append({"kind": "item", "id": "back", "title": "No, keep my normal desktop" if not kiosk.enabled(lay) else "Back"})
         return rows
@@ -1238,9 +1252,9 @@ class Backend(QObject):
             return [self._info(f"Really {what}?  Anything you are playing that is not saved will be lost."),
                     {"kind": "item", "id": "power_no", "title": "No, go back"},          # first: a stray Enter cancels
                     {"kind": "item", "id": "power_yes", "title": "Yes, " + what + " now"}]
-        return [{"kind": "item", "id": "power_restartcode", "title": "Restart Code" if kiosk.in_session() else "Restart Code (close it and open it again)",
-                 "detail": "Starts Code again. Your games keep their settings and play time."},
-                *([] if kiosk.in_session() else [{"kind": "item", "id": "power_quitcode", "title": "Quit Code"}]),
+        return [{"kind": "item", "id": "power_restartcode", "title": "Restart CodeAque" if kiosk.in_session() else "Restart CodeAque (close it and open it again)",
+                 "detail": "Starts CodeAque again. Your games keep their settings and play time."},
+                *([] if kiosk.in_session() else [{"kind": "item", "id": "power_quitcode", "title": "Quit CodeAque"}]),
                 {"kind": "item", "id": "power_reboot", "title": "Restart device", "detail": "Restarts the whole computer (asks first)."},
                 {"kind": "item", "id": "power_poweroff", "title": "Shut down", "detail": "Turns the computer off (asks first)."},
                 {"kind": "item", "id": "power_suspend", "title": "Sleep", "detail": "Suspends the computer; press the power button to wake it."},
@@ -1270,7 +1284,7 @@ class Backend(QObject):
 
     @Slot()
     def restartCode(self) -> None:
-        """In the Code-only session the session program starts Code again when it ends; otherwise Code starts itself again."""
+        """In the CodeAque-only session the session program starts CodeAque again when it ends; otherwise CodeAque starts itself again."""
         if self._demo:
             self.show_toast("Demo mode: nothing restarts.")
         elif kiosk.in_session():
@@ -1303,7 +1317,7 @@ class Backend(QObject):
     def _quietboot_rows(self) -> list:
         lay = self._qb_layout
         if self._qb_busy:
-            return [self._info("Working - Code asks for your password on this screen first; then rebuilding the boot menu and boot image "
+            return [self._info("Working - CodeAque asks for your password on this screen first; then rebuilding the boot menu and boot image "
                                "takes up to a minute. Do not press anything."),
                     {"kind": "item", "id": "noop", "title": "Working ..."}]
         rows: list = []
@@ -1324,7 +1338,7 @@ class Backend(QObject):
                          {"kind": "done", "id": "qbforce", "title": "Hide the boot menu too",
                           "detail": "Only if you do not use Windows / another system on this computer any more. Shift / Esc still shows the menu."}]
             else:
-                rows.append(self._info("Quiet boot is ON: no boot menu, no Mint logo, the Code logo on black, hardly any text."))
+                rows.append(self._info("Quiet boot is ON: no boot menu, no Mint logo, the CodeAque logo on black, hardly any text."))
             rows += [self._info(quietboot.HOW_TO_SHOW_MENU),
                      {"kind": "done", "id": "qboff", "title": "Turn quiet boot off (Mint's boot screens come back)",
                       "detail": "Asks for your password on this screen. Removes exactly the files quiet boot added."},
@@ -1332,12 +1346,12 @@ class Backend(QObject):
         else:
             checks = quietboot.preflight(lay, logo=quietboot.logo_path())
             why = quietboot.blocked(checks)
-            rows += [self._info("Quiet boot replaces the Linux Mint start-up look with Code's: the boot menu is hidden, the Mint logo screen becomes the "
-                                "Code logo on black, and the start-up text is switched off. Works best together with Code-only mode."),
+            rows += [self._info("Quiet boot replaces the Linux Mint start-up look with CodeAque's: the boot menu is hidden, the Mint logo screen becomes the "
+                                "CodeAque logo on black, and the start-up text is switched off. Works best together with CodeAque-only mode."),
                      self._info("What changes (password once): a GRUB setting file, a boot-splash theme called \"code\", and a rebuild of the boot image "
                                 "(update-grub, update-initramfs). Turning it off removes exactly those. " + quietboot.HOW_TO_SHOW_MENU),
                      self._info("Safe by design: the boot menu is NOT hidden when another system is really on the disk, Esc / Shift within 2 s at start-up still shows the menu "
-                                "(it no longer pops up by itself after a power cut), recovery mode is untouched, and if anything fails Code puts everything back and says which step failed.")]
+                                "(it no longer pops up by itself after a power cut), recovery mode is untouched, and if anything fails CodeAque puts everything back and says which step failed.")]
             for c in checks:
                 if not c.ok or "leftover" in c.text:
                     rows.append(self._info(("CANNOT CONTINUE: " if c.fatal else "Note: ") + c.text))
@@ -1345,7 +1359,7 @@ class Backend(QObject):
                 rows += self._qb_report_rows()
                 rows.append({"kind": "item", "id": "back", "title": "Back"})
                 return rows
-            rows.append({"kind": "done", "id": "qbon", "title": "Yes, turn quiet boot ON", "detail": "Code asks for your password on this screen. You can undo it any time."})
+            rows.append({"kind": "done", "id": "qbon", "title": "Yes, turn quiet boot ON", "detail": "CodeAque asks for your password on this screen. You can undo it any time."})
             if any(not c.ok and "Another system" in c.text for c in checks):
                 rows.append({"kind": "item", "id": "qbforce", "title": "Turn it ON and hide the boot menu anyway",
                              "detail": "Only if no other system is on this disk (the entry above is a leftover). Shift / Esc still shows the menu."})
@@ -1438,7 +1452,7 @@ class Backend(QObject):
 
     @Slot()
     def updateKioskSession(self) -> None:
-        """The Settings row: the same one-password update as the button on the Code-only page."""
+        """The Settings row: the same one-password update as the button on the CodeAque-only page."""
         if kiosk.enabled(self._kiosk_layout):
             self._kiosk_activate("kioskupdate")
 
@@ -1487,9 +1501,9 @@ class Backend(QObject):
         else:
             rows.append({"kind": "done", "id": "steaminstall", "title": "Install Steam"})
         rows.append({"kind": "item", "id": "steamrescan", "title": "Rescan Steam",
-                     "detail": "Use this after Steam installed a game, so it shows up in Code."})
+                     "detail": "Use this after Steam installed a game, so it shows up in CodeAque."})
         if self._shell_mode():
-            rows.append(self._info("Code-only mode: Steam ALWAYS opens in Big Picture (from the tile, or started any other way). Use Big Picture's own "
+            rows.append(self._info("CodeAque-only mode: Steam ALWAYS opens in Big Picture (from the tile, or started any other way). Use Big Picture's own "
                                    "menus for game Properties and Settings - the desktop Steam windows are not made for a TV and can open out of sight. "
                                    "Steam Play (Proton) is switched on for all games by default."))
             rows.append({"kind": "item", "id": "steamproton", "title": "Turn Steam Play (Proton) on for all games now",
@@ -1638,7 +1652,7 @@ class Backend(QObject):
         self.libraryChanged.emit()
         if not initial and toast:
             n = self._real_count()
-            more = ("  - Code found games in a folder it does not know: see Settings."
+            more = ("  - CodeAque found games in a folder it does not know: see Settings."
                     if self._lib.unknown and not self._demo else "")
             self.show_toast(f"Library updated: {n} game" + ("" if n == 1 else "s") + more)
         self._schedule_covers()
@@ -1732,6 +1746,129 @@ class Backend(QObject):
         return "No games here."
 
     # ----- actions ---------------------------------------------------------
+    # ----- delete a game ------------------------------------------------------------
+    @Slot(int, result=bool)
+    def openDeleteGame(self, row: int) -> bool:
+        """The Delete game page for this game. Returns False (with a toast) when it is not something CodeAque can delete."""
+        g = self.model.game_at(row)
+        if g is None:
+            return False
+        if gamedelete.kind_of(g) == "none":
+            self.show_toast("CodeAque can only delete games from your games folders (and Windows games you added). "
+                            "Use the other program to remove this one.", 6000)
+            return False
+        self._del_plan = gamedelete.plan_for(g, self.cfg)
+        self._del_saves = False                      # saves are kept unless asked
+        self._del_cover = False
+        self._del_busy = False
+        self._del_result = None
+        return True
+
+    def _about_rows(self) -> list:
+        logo = branding.logo_file()
+        row = {"kind": "item", "id": "aboutlogo", "title": f"{branding.NAME} {__version__}",
+               "detail": branding.TAGLINE[0].upper() + branding.TAGLINE[1:]}
+        if logo.is_file():
+            row["image"] = QUrl.fromLocalFile(str(logo)).toString()
+        return [row,
+                self._info(f"{branding.NAME} is free and open source (MIT licence). It is a personal project and is not affiliated with any company."),
+                self._info("It was called Code before. Nothing you set up is lost: the commands codeaque, code, atari and code-launcher all start it, "
+                           "and your settings (~/.config/atari), data (~/.local/share/atari) and games (~/Games/Atari, ~/Games/Code, ~/Games/CodeAque) stay where they are."),
+                self._info("The logo is original artwork by the project owner, made with AI tools. The picture CodeAque ships is 1254 pixels wide at most: sharp on a TV, "
+                           "too small for large prints or metal stickers."),
+                self._info("CodeAque never includes or downloads BIOS files, firmware, keys or games."),
+                {"kind": "item", "id": "aboutsupport", "title": donate.TITLE, "detail": "Optional. Opens the donate page in a web browser."},
+                {"kind": "item", "id": "back", "title": "Back"}]
+
+    def _delete_rows(self) -> list:
+        pl = self._del_plan
+        if pl is None:
+            return [self._info("Nothing to delete."), {"kind": "item", "id": "back", "title": "Back"}]
+        if self._del_busy:
+            return [self._info(f"Deleting {pl.title} ... please wait. Large games take a moment.")]
+        if self._del_result is not None:
+            r = self._del_result
+            return [self._info(("DONE:  " if r.ok else "PROBLEM:  ") + r.text), {"kind": "done", "id": "back", "title": "Back to my games"}]
+        rows: list = []
+        if pl.kind == "steam":
+            rows += [self._info(f"\"{pl.title}\" is a Steam game."), self._info(pl.message),
+                     {"kind": "item", "id": "delno", "title": "No, go back", "detail": "Nothing is changed."},
+                     {"kind": "done", "id": "delsteam", "title": "Open Steam to uninstall it",
+                      "detail": "Opens Steam's own uninstall window (starts Steam if needed). CodeAque deletes nothing."}]
+            return rows
+        if not pl.removable:
+            return [self._info(f"\"{pl.title}\" cannot be deleted from here."), self._info(pl.message),
+                    {"kind": "item", "id": "back", "title": "Back"}]
+        rows.append(self._info(f"Delete \"{pl.title}\" ({pl.system})?"))
+        if pl.deletable:
+            what = "folder" if pl.folder else "file"
+            rows.append(self._info(f"The game {what}: {pl.where}"))
+            rows.append(self._info(f"Size: {pl.size_text()}.  This cannot be undone."
+                                   + ("  Everything inside the folder goes, including any saves kept in it." if pl.folder else "")))
+        else:
+            rows.append(self._info(pl.message))
+        rows.append({"kind": "item", "id": "delno", "title": "No, keep it", "detail": "Nothing is changed."})
+        if pl.saves:
+            rows.append({"kind": "item", "id": "delsaves", "title": "Its save files next to the game: " + ("DELETE them too" if self._del_saves else "KEEP them"),
+                         "detail": f"{len(pl.saves)} file{'s' if len(pl.saves) != 1 else ''}, {importer.human_size(pl.saves_size)}. Press to change. "
+                                   "Saves an emulator keeps in its own folders are never touched."})
+        if pl.cover is not None and pl.deletable:
+            rows.append({"kind": "item", "id": "delcover", "title": "Its cover picture: " + ("DELETE it too" if self._del_cover else "KEEP it"),
+                         "detail": f"{pl.cover.name}, {importer.human_size(pl.cover_size)}. Press to change."})
+        rows.append({"kind": "done", "id": "delyes", "title": "Yes, delete it" if pl.deletable else "Yes, remove it from CodeAque",
+                     "detail": "Only files inside your games folders are deleted." if pl.deletable else "Its files stay where they are."})
+        return rows
+
+    def _delete_activate(self, rid: str) -> str:
+        pl = self._del_plan
+        if self._del_busy:
+            return ""
+        if rid == "back":
+            return "close"
+        if pl is None or rid == "delno":
+            return "close"
+        if rid == "delsaves":
+            self._del_saves = not self._del_saves
+            return "refresh"
+        if rid == "delcover":
+            self._del_cover = not self._del_cover
+            return "refresh"
+        if rid == "delsteam" and pl.kind == "steam":
+            try:
+                big = self._shell_mode()
+            except Exception:
+                big = False
+            ok, text = gamedelete.open_steam_uninstall(self.cfg, pl.appid, big_picture=big) if not os.environ.get("ATARI_NO_STEAM_SPAWN") \
+                else (True, "(Steam start skipped)")
+            self.show_toast(text, 9000)
+            self._del_result = gamedelete.Result(ok, text)
+            return "refresh"
+        if rid == "delyes" and pl.removable:
+            self._del_busy = True
+            cfg, saves, cover = self.cfg, self._del_saves, self._del_cover
+
+            def work():
+                try:
+                    res = gamedelete.delete(pl, cfg, saves, cover)
+                except Exception as exc:  # pragma: no cover - never leave the page stuck on "Deleting"
+                    res = gamedelete.Result(False, f"Something went wrong: {exc}")
+                self.deleteFinished.emit(res)
+            threading.Thread(target=work, daemon=True, name="atari-delete").start()
+            return "refresh"
+        return ""
+
+    @Slot(object)
+    def _on_delete_finished(self, res) -> None:
+        pl = self._del_plan
+        self._del_busy = False
+        self._del_result = res
+        if pl is not None and (res.deleted or res.ok):
+            self.store.games.pop(pl.gid, None)           # forget favourite / recent / play time of a game that is gone
+            self.store.save()
+        self.rescan(toast=False)
+        self.show_toast(res.text, 9000)
+        self.pageChanged.emit()
+
     @Slot(int)
     def toggleFavorite(self, row: int) -> None:
         g = self.model.game_at(row)
@@ -1770,12 +1907,12 @@ class Backend(QObject):
 
     @Slot()
     def supportCode(self) -> None:
-        """Settings / Options > Support Code: open the donate page (donate.DONATE_URL) in the web browser. Only ever on a button press."""
+        """Settings / Options > Support CodeAque: open the donate page (donate.DONATE_URL) in the web browser. Only ever on a button press."""
         if self._running:
             return
         ok, _text = webapps.status(self.cfg, webapps.SUPPORT)
         if not ok:
-            self.show_toast("Support Code opens a web page, and no web browser is installed yet. Install one in Options > Emulators > "
+            self.show_toast("Support CodeAque opens a web page, and no web browser is installed yet. Install one in Options > Emulators > "
                             "Install emulators and apps, then try again. (Page: " + donate.DONATE_URL + ")", 12000)
             return
         self._launch_game(Game(gid=webapps.SUPPORT.gid, title=webapps.SUPPORT.title, platform=webapps.STREAMING,
@@ -1835,7 +1972,7 @@ class Backend(QObject):
 
     @Slot(str, str)
     def _on_launch_status(self, phase: str, text: str) -> None:
-        """Live progress of a Steam game start (Steam starting, asking, waiting, playing). In Code-only mode Code steps aside as soon as
+        """Live progress of a Steam game start (Steam starting, asking, waiting, playing). In CodeAque-only mode CodeAque steps aside as soon as
         Steam's own windows may need to be seen (reveal) or the game is up (playing)."""
         if not self._running:
             return
@@ -1844,13 +1981,13 @@ class Backend(QObject):
         self.runningStatusChanged.emit()
         guard = getattr(self, "_steam_guard", None)
         if guard is not None and phase in ("starting", "launching"):
-            guard.handled_by_code()                       # Code itself is starting Steam: the watcher must not interfere
+            guard.handled_by_code()                       # CodeAque itself is starting Steam: the watcher must not interfere
         if phase in ("reveal", "playing") and self._shell_mode() and self._window is not None and not os.environ.get("ATARI_NO_MINIMIZE"):
             self._hide_for_game()
 
     @Slot()
     def cancelLaunch(self) -> None:
-        """Esc / B / the Cancel button while a Steam game is starting: stop waiting and come back to Code (Steam keeps running)."""
+        """Esc / B / the Cancel button while a Steam game is starting: stop waiting and come back to CodeAque (Steam keeps running)."""
         if self._running and self._run_cancelable:
             kiosk.log_event("steam launch: cancel pressed on the Now Playing screen")
             self._launch_cancel.set()
@@ -1860,20 +1997,20 @@ class Backend(QObject):
 
     @Slot()
     def _on_session_started(self) -> None:
-        """The emulator process is up. Code's own (full screen) window must not sit between the keyboard and the
+        """The emulator process is up. CodeAque's own (full screen) window must not sit between the keyboard and the
         emulator, so after a moment it is minimised; it comes back when the game ends."""
         steam_here = self._shell_mode() and getattr(self, "_running_gid", "") == "app:steam"
         if (getattr(self, "_running_is_rom", False) or steam_here) and not os.environ.get("ATARI_NO_MINIMIZE") and self._window is not None:
-            self._hide_timer.start()               # (Steam: its dialogs - Properties, Settings - must not open behind Code's full screen window)
+            self._hide_timer.start()               # (Steam: its dialogs - Properties, Settings - must not open behind CodeAque's full screen window)
 
     def _hide_for_game(self) -> None:
         if self._running and self._window is not None and not self._minimized_for_game:
             self._minimized_for_game = True
             self._window.showMinimized()
 
-    # ----- in-app text / password dialog (no pkexec window: there is no desktop in Code-only mode) ---------------------
+    # ----- in-app text / password dialog (no pkexec window: there is no desktop in CodeAque-only mode) ---------------------
     def ask_text(self, title: str, prompt: str, secret: bool, initial: str, error: str, callback) -> None:
-        """Show Code's on-screen-keyboard dialog. callback(text | None) runs on the GUI thread; None = cancelled. Safe from any thread."""
+        """Show CodeAque's on-screen-keyboard dialog. callback(text | None) runs on the GUI thread; None = cancelled. Safe from any thread."""
         self._input_queue.append([title, prompt, bool(secret), initial, error, callback])
         self.inputRequested.emit()
 
@@ -1978,7 +2115,7 @@ class Backend(QObject):
         home = self._fm_home()
         if self._fm_dir is None:
             places = files.roots(home)
-            rows.append(self._info("Your files: pick a place. Code only shows Downloads, Games and Videos, and only changes things inside them."))
+            rows.append(self._info("Your files: pick a place. CodeAque only shows Downloads, Games and Videos, and only changes things inside them."))
             for i, (label, p) in enumerate(places):
                 rows.append({"kind": "item", "id": f"fmroot:{i}", "title": label, "value": "",
                              "detail": f"{p}   -   {files.free_text(p)}"})
@@ -2066,7 +2203,7 @@ class Backend(QObject):
             tool = files.missing_tool(kind)
             if tool:
                 name = "7-Zip" if tool == "7zip" else "unrar"
-                rows.append(self._info(f"Unpacking .{kind} files needs {name}. It is free and installs in one press (Code asks for your password on this screen)."))
+                rows.append(self._info(f"Unpacking .{kind} files needs {name}. It is free and installs in one press (CodeAque asks for your password on this screen)."))
                 rows.append({"kind": "done", "id": f"fminstall:{tool}", "title": f"Install {name}", "detail": "Then come back and press Extract here."})
             rows.append({"kind": "done", "id": "fmextract", "title": "Extract here  (unzip into a new folder)",
                          "detail": f"Makes the folder \"{files.archive_stem(p)}\" next to it. A password-protected archive asks for the password on this screen."})
@@ -2200,6 +2337,8 @@ class Backend(QObject):
     @Slot(str, result=str)
     def pageEscape(self, name: str) -> str:
         """Esc / B on a page: what to do. Most pages just close; the file viewer goes up one level."""
+        if name == "deletegame" and self._del_busy:
+            return ""
         if name == "fileact":
             if self._fm_busy:
                 self._fm_cancel.set()
@@ -2216,9 +2355,9 @@ class Backend(QObject):
                 return "page:files"
         return "back"
 
-    # ----- Steam in Code-only mode: always Big Picture --------------------------------
+    # ----- Steam in CodeAque-only mode: always Big Picture --------------------------------
     def _start_steam_guard(self) -> None:
-        """Code-only mode: a `steam` wrapper first in PATH, Steam's own start-up setting, Steam Play for all games, and a watcher that
+        """CodeAque-only mode: a `steam` wrapper first in PATH, Steam's own start-up setting, Steam Play for all games, and a watcher that
         opens Big Picture on a Steam client that was started some other way."""
         self._steam_guard = steamfix.Guard()
         steamfix.put_shim_first(os.environ)
@@ -2231,7 +2370,7 @@ class Backend(QObject):
         try:
             for line in steamfix.apply(self.cfg):
                 kiosk.log_event("steam: " + line)
-        except Exception as exc:  # pragma: no cover - never let this touch Code
+        except Exception as exc:  # pragma: no cover - never let this touch CodeAque
             kiosk.log_event(f"steam: setup problem: {exc}")
 
     def _steam_tick(self) -> None:
@@ -2253,7 +2392,7 @@ class Backend(QObject):
         try:
             cmd, how = apps.app_command(self.cfg, apps.BY_ID["steam"])
             if how and cmd:
-                kiosk.log_event("steam: a Steam client Code did not start is open - asking it for Big Picture")
+                kiosk.log_event("steam: a Steam client CodeAque did not start is open - asking it for Big Picture")
                 self._steam_run(cmd + ["steam://open/bigpicture"], env=launcher.clean_env(), stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, timeout=20)
         except Exception as exc:
@@ -2262,7 +2401,7 @@ class Backend(QObject):
             self._steam_busy = False
 
     def _shell_mode(self) -> bool:
-        """Code-only session, or Code-only mode installed but this copy was started from the desktop (see kiosk.shell_mode)."""
+        """CodeAque-only session, or CodeAque-only mode installed but this copy was started from the desktop (see kiosk.shell_mode)."""
         try:
             return kiosk.shell_mode(self._kiosk_layout)
         except Exception:  # pragma: no cover - never let a file check break the window logic
@@ -2287,14 +2426,14 @@ class Backend(QObject):
             else:
                 win.showNormal()
         elif self._shell_mode():
-            win.showFullScreen()            # Code-only: always take the whole screen back, whatever the app did to the window
+            win.showFullScreen()            # CodeAque-only: always take the whole screen back, whatever the app did to the window
         win.raise_()
         win.requestActivate()
         if not self._demo:
-            kiosk.log_event(f"an app closed ({self._running_title or 'app'}): Code takes the screen back")
+            kiosk.log_event(f"an app closed ({self._running_title or 'app'}): CodeAque takes the screen back")
             QTimer.singleShot(2000, lambda: self._log_window("2 s after the app closed"))
         # window managers sometimes ignore the first focus request right after a full-screen app closed: ask again
-        for ms in ((300, 1000, 2500, 5000) if self._shell_mode() else (300, 1000)):       # Code-only: nothing else may keep the screen
+        for ms in ((300, 1000, 2500, 5000) if self._shell_mode() else (300, 1000)):       # CodeAque-only: nothing else may keep the screen
             QTimer.singleShot(ms, self._reactivate)
 
     def _reactivate(self) -> None:
@@ -2305,7 +2444,7 @@ class Backend(QObject):
             if not win.isActive():
                 win.raise_()
                 win.requestActivate()
-        except RuntimeError:       # the window is already gone (Code is closing)
+        except RuntimeError:       # the window is already gone (CodeAque is closing)
             pass
 
     @Slot(str, str, float, str)
@@ -2353,14 +2492,14 @@ class Backend(QObject):
     # ----- emulators page --------------------------------------------------
     @Slot(result="QVariantList")
     def emulatorRows(self):
-        rows = [{"kind": "info", "title": "Emulators are separate programs. Code finds them automatically "
+        rows = [{"kind": "info", "title": "Emulators are separate programs. CodeAque finds them automatically "
                                           "(installed programs and Flatpaks).", "value": "", "detail": ""},
                 {"kind": "info", "title": "Press Enter on a console to switch between its emulators. "
-                                          "Code never includes BIOS, firmware, keys or games - bring your own.",
+                                          "CodeAque never includes BIOS, firmware, keys or games - bring your own.",
                  "value": "", "detail": ""},
                 {"kind": "install", "title": "Install emulators and apps",
                  "value": "",
-                 "detail": "Opens a window that installs every emulator and PC app Code knows (safe to run again). "
+                 "detail": "Opens a window that installs every emulator and PC app CodeAque knows (safe to run again). "
                            "Needs an internet connection and takes a while."},
                 {"kind": "bios", "title": "Add BIOS files",
                  "value": "",
@@ -2489,7 +2628,7 @@ class Backend(QObject):
                      "(for example a card reader or a folder on another drive)", "value": ""})
         if self._imp_kind == "bios":
             rows.append({"kind": "pack", "title": "Choose a zipped BIOS pack...",
-                         "detail": "A .zip, .7z, .rar or .tar file you made from your own consoles (also from a USB stick). Code unpacks it "
+                         "detail": "A .zip, .7z, .rar or .tar file you made from your own consoles (also from a USB stick). CodeAque unpacks it "
                                    "here with a progress bar, copies the files each emulator needs and deletes the unpacked copy. "
                                    "You can also open the file in My files and choose \"Use as BIOS pack\".", "value": ""})
         rows.append({"kind": "close", "title": "Back", "detail": "", "value": ""})
@@ -2534,7 +2673,7 @@ class Backend(QObject):
         if tmp is not None:
             shutil.rmtree(tmp, ignore_errors=True)
         try:
-            self._unpack_dir().rmdir()                            # Code's own work folder, removed when empty
+            self._unpack_dir().rmdir()                            # CodeAque's own work folder, removed when empty
         except OSError:
             pass
 
@@ -2554,11 +2693,11 @@ class Backend(QObject):
         self._imp_pack = archive.name
         if not kind:
             self._imp_state = "drives"
-            self._imp_msg = (f"\"{archive.name}\" is not a folder or a BIOS pack Code can open (zip, tar, 7z, rar). "
+            self._imp_msg = (f"\"{archive.name}\" is not a folder or a BIOS pack CodeAque can open (zip, tar, 7z, rar). "
                              "Pick the folder it is in instead, or unpack it first in My files.")
             self.importChanged.emit()
             return
-        shutil.rmtree(self._unpack_dir(), ignore_errors=True)       # leftovers of an earlier run (Code's own folder)
+        shutil.rmtree(self._unpack_dir(), ignore_errors=True)       # leftovers of an earlier run (CodeAque's own folder)
         dest = self._unpack_dir() / f"pack-{time.monotonic_ns()}"
         self._imp_tmp = dest
         self._imp_state = "unpacking"
@@ -2673,7 +2812,7 @@ class Backend(QObject):
                    " (the console is unclear):\n" + "\n".join(lines) + (f"\n  ...and {more} more." if more > 0 else "") + \
                    "\n  Press CHOOSE SYSTEM to tell me which console they are for."
         elif not n:
-            msg += " Code looks for game files such as .iso, .zip, .cue, .nes and folders with a default.xbe (Xbox) or PS3_GAME (PS3)."
+            msg += " CodeAque looks for game files such as .iso, .zip, .cue, .nes and folders with a default.xbe (Xbox) or PS3_GAME (PS3)."
         if self._imp_truncated:
             msg += " Only the first files are shown (very large folder)."
         return msg
@@ -2995,7 +3134,7 @@ class Backend(QObject):
 
     @Property(bool, constant=True)
     def kioskSession(self):
-        """Code is the whole session (Code-only mode): quitting only restarts it."""
+        """CodeAque is the whole session (CodeAque-only mode): quitting only restarts it."""
         return kiosk.in_session()
 
     @Property(QObject, constant=True)
@@ -3145,7 +3284,7 @@ class Backend(QObject):
         if err:
             self._set_update("error", err)
         elif rel:
-            self._set_update("available", f"Code {rel.version} is available (you have {__version__}).")
+            self._set_update("available", f"CodeAque {rel.version} is available (you have {__version__}).")
         else:
             self._set_update("uptodate", f"You have the newest version ({__version__}).")
 
@@ -3159,7 +3298,7 @@ class Backend(QObject):
             self._set_update("error", why)
             return
         if self._upd_release is not None:
-            self._set_update("available", f"Code {self._upd_release.version} is available (you have {__version__}).")
+            self._set_update("available", f"CodeAque {self._upd_release.version} is available (you have {__version__}).")
         else:
             self._start_check(manual=True)
 
@@ -3181,9 +3320,9 @@ class Backend(QObject):
         def worker():
             try:
                 updater.perform(rel, root, lambda st, tx, fr: self.updateEvent.emit(st, tx, fr), cancel)
-                self.updateEvent.emit("done", f"Code {rel.version} is installed. Restart Code to use it.", 1.0)
+                self.updateEvent.emit("done", f"CodeAque {rel.version} is installed. Restart CodeAque to use it.", 1.0)
             except updater.Cancelled:
-                self.updateEvent.emit("available", f"Cancelled. Code {rel.version} is still available.", -1.0)
+                self.updateEvent.emit("available", f"Cancelled. CodeAque {rel.version} is still available.", -1.0)
             except updater.UpdateError as exc:
                 self.updateEvent.emit("error", str(exc), -1.0)
             except Exception as exc:  # pragma: no cover - safety net
@@ -3204,14 +3343,14 @@ class Backend(QObject):
 
     @Slot()
     def restartAtari(self) -> None:
-        """Start the new Code a moment after this one has quit."""
+        """Start the new CodeAque a moment after this one has quit."""
         root = Path(os.environ.get("ATARI_UPDATE_ROOT") or updater.app_dir())
         cmd = updater.restart_command(root, sys.argv[1:])
         try:
             self._restart_spawn(cmd, start_new_session=True, stdin=subprocess.DEVNULL,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except OSError as exc:
-            self.show_toast(f"Could not restart: {exc}. Please start Code again yourself.", 8000)
+            self.show_toast(f"Could not restart: {exc}. Please start CodeAque again yourself.", 8000)
             return
         self.quit()
 
@@ -3406,7 +3545,7 @@ class Backend(QObject):
         rows.append({"kind": "coversauto", "title": "Download covers automatically after a scan",
                      "value": "ON" if self.cfg.covers_auto else "OFF",
                      "detail": "Only when the internet is reachable; runs quietly in the background."})
-        rows.append({"kind": "update", "title": "Update Code",
+        rows.append({"kind": "update", "title": "Update CodeAque",
                      "value": ("New: " + self._upd_release.version) if self._upd_release else "Version " + __version__,
                      "detail": ("A newer version is ready to install." if self._upd_release else
                                 "Checks for a newer version and installs it. Your games and settings are kept.")})
@@ -3436,28 +3575,28 @@ class Backend(QObject):
         rows += self._intro_rows()
         rows.append({"kind": "wifipage", "title": "WiFi", "value": self.wifi.summary or "",
                      "detail": "Find a network, type its password with the on-screen keyboard, see if it connected, or forget a network. "
-                               "Works in Code-only mode too."})
-        rows.append({"kind": "kioskpage", "title": ("Back to Mint desktop (Code-only mode is ON)" if kiosk.enabled(self._kiosk_layout)
-                                          else "Code-only mode (start straight into Code)"),
+                               "Works in CodeAque-only mode too."})
+        rows.append({"kind": "kioskpage", "title": ("Back to Mint desktop (CodeAque-only mode is ON)" if kiosk.enabled(self._kiosk_layout)
+                                          else "CodeAque-only mode (start straight into CodeAque)"),
                      "value": "ON" if kiosk.enabled(self._kiosk_layout) else "OFF",
-                     "detail": "Makes the computer boot into Code with no Mint desktop. Asks you to confirm first, and there is always a way back."})
+                     "detail": "Makes the computer boot into CodeAque with no Mint desktop. Asks you to confirm first, and there is always a way back."})
         rows.append({"kind": "quietbootpage", "title": "Quiet boot: hide the Mint logo and menus",
                      "value": "ON" if quietboot.enabled(self._qb_layout) else "OFF",
-                     "detail": "Boot menu hidden, Code logo on black instead of the Mint logo, start-up text off. Reversible; the boot menu stays one key away."})
+                     "detail": "Boot menu hidden, CodeAque logo on black instead of the Mint logo, start-up text off. Reversible; the boot menu stays one key away."})
         rows.append({"kind": "bootreport", "title": "Copy boot report (to send for help)", "value": "",
                      "detail": "Saves ~/Downloads/code-boot-report.txt with the boot menu / GRUB / firmware boot list settings. No passwords."})
         rows.append({"kind": "info", "title": "About the Dell logo at power-on", "value": "", "detail": quietboot.BIOS_LOGO_NOTE})
         if kiosk.enabled(self._kiosk_layout):
             old = kiosk.session_outdated(self._kiosk_layout)
-            rows.append({"kind": "kioskupdate", "title": "Update Code-only mode", "value": "UPDATE NEEDED" if old else "Up to date",
-                         "detail": "One press (password once) rewrites the Code-only session file so closing an app or a crash never drops you to the "
+            rows.append({"kind": "kioskupdate", "title": "Update CodeAque-only mode", "value": "UPDATE NEEDED" if old else "Up to date",
+                         "detail": "One press (password once) rewrites the CodeAque-only session file so closing an app or a crash never drops you to the "
                                    "Mint desktop. Needed once after an update from 0.3.x / 0.4.0."})
         rows.append({"kind": "bigpicture", "title": "Open Steam in Big Picture (full screen)",
                      "value": "ON" if self.cfg.steam_bigpicture else "OFF",
                      "detail": "The Steam tile opens Steam full screen with big buttons for a controller. Press Esc twice (or hold Guide and press B) "
-                               "to leave it and come back to Code - Steam keeps running. OFF = Steam opens in a normal window (Code-only mode always uses Big Picture). "
+                               "to leave it and come back to CodeAque - Steam keeps running. OFF = Steam opens in a normal window (CodeAque-only mode always uses Big Picture). "
                                "Steam's desktop dialogs (Properties) are not made for a TV: use Big Picture's own menus."})
-        rows.append({"kind": "escexit", "title": "Esc twice returns to Code (Netflix, YouTube, Kodi...)",
+        rows.append({"kind": "escexit", "title": "Esc twice returns to CodeAque (Netflix, YouTube, Kodi...)",
                      "value": "ON" if self.cfg.esc_exit else "OFF",
                      "detail": "Press Esc twice quickly, or hold Esc for 1 second (or Ctrl+Esc; on a controller hold Guide and press B) "
                                "to close a streaming app and come back here. One Esc still leaves video full screen as usual."})
@@ -3586,7 +3725,7 @@ class Backend(QObject):
                 "install": "INSTALL", "installmenu": "INSTALL EMULATORS & APPS", "steam": "STEAM",
                 "recordings": "RECORDINGS", "coverpick": "PICK A COVER", "nocovers": "COVERS NOT FOUND",
                 "addgames": "ADD GAMES", "kiosk": "CODE-ONLY MODE", "quietboot": "QUIET BOOT", "power": "POWER", "downloads": "DOWNLOADS", "golive": "GO LIVE", "robloxfix": "FIX ROBLOX",
-                "dlsystem": "WHICH SYSTEM IS THIS FILE FOR?", "files": "MY FILES", "fileact": "WHAT TO DO WITH IT"}.get(name, name.upper())
+                "dlsystem": "WHICH SYSTEM IS THIS FILE FOR?", "files": "MY FILES", "fileact": "WHAT TO DO WITH IT", "deletegame": "DELETE GAME", "about": "ABOUT CODEAQUE"}.get(name, name.upper())
 
     @Slot(str, result=str)
     def pageSub(self, name: str) -> str:
@@ -3596,8 +3735,10 @@ class Backend(QObject):
                 "downloads": "Enter / A on a finished file adds it to your games.  Esc / B = back.",
                 "files": "Downloads, Games, Videos.  Enter / A opens;  Esc / B goes up.",
                 "fileact": "Enter / A on the button you want.  Esc / B = back to the list.",
+                "about": "Esc / B = back.",
+                "deletegame": "Nothing is deleted until you press Yes.  Esc / B = no, go back.",
                 "dlsystem": "Enter / A picks the system - the file moves into that games folder.  Esc / B = back.",
-                "fix": "Code checked everything it can.  Esc / B = back.",
+                "fix": "CodeAque checked everything it can.  Esc / B = back.",
                 "winform": "Check the details, then choose \"Add this game\".  Esc / B = cancel.",
                 "winchoose": "Pick the main program (the biggest .exe is usually it).  Esc / B = cancel.",
                 "winwork": "Please wait - big games take a minute.  Esc / B = cancel.",
@@ -3623,11 +3764,11 @@ class Backend(QObject):
                             "Not installed yet. One button, free, open source."), "value": "" if ok else "Install"}]
         for gid, title in (("web:twitchlive", "Twitch: open the Creator Dashboard"), ("web:tiktoklive", "TikTok LIVE: open the web LIVE page"),
                            ("web:youtubelive", "YouTube Live: open YouTube Studio")):
-            rows.append({"kind": "item", "id": "go:" + gid, "title": title, "detail": "Opens in the web browser window. Esc twice returns to Code."})
+            rows.append({"kind": "item", "id": "go:" + gid, "title": title, "detail": "Opens in the web browser window. Esc twice returns to CodeAque."})
         rows += [self._info(golive.TWITCH_TEXT), self._info(golive.YOUTUBE_TEXT), self._info("TikTok on Linux: " + golive.TIKTOK_TEXT),
                  self._info(golive.SECRET_TEXT),
                  self._info("Linux has no OBS \"Game Capture\": the scene captures the whole screen (on Wayland a system window asks which screen). "
-                            "To only record, not stream, press F9 for Code's own screen recorder."),
+                            "To only record, not stream, press F9 for CodeAque's own screen recorder."),
                  {"kind": "item", "id": "recordings", "title": "My recordings", "detail": "Videos made with the screen recorder (F9)."},
                  {"kind": "item", "id": "back", "title": "Back"}]
         return rows
@@ -3658,7 +3799,7 @@ class Backend(QObject):
         ok, text = webapps.status(self.cfg, webapps.BY_ID["browser"])
         tok, _t = apps.app_status(self.cfg, apps.BY_ID["transmission"])
         rows = [self._info("Browse the web yourself, download a file you own or may use, then come back here. Files land in ~/Downloads. "
-                           "Code does not recommend or link any download site."),
+                           "CodeAque does not recommend or link any download site."),
                 {"kind": "done", "id": "dlfiles", "title": "OPEN THE FILE VIEWER  (unzip, rename, delete, add to my games)",
                  "detail": "Browse Downloads, Games and Videos with sizes and free space. One button unzips a .zip / .7z / .rar / .tar."},
                 {"kind": "item", "id": "dlbrowser", "title": "Open the web browser", "detail": text,
@@ -3764,13 +3905,13 @@ class Backend(QObject):
         except Exception:
             drives = []
         usb = (f"Found: {drives[0].label}" + (f" (+{len(drives) - 1} more)" if len(drives) > 1 else "")) if drives else "Plug the USB stick in first, then press this."
-        rows = [self._info("Step 1 of 2 - where are the games?  Pick one. Code only reads from your stick or folder; nothing there is changed.")]
+        rows = [self._info("Step 1 of 2 - where are the games?  Pick one. CodeAque only reads from your stick or folder; nothing there is changed.")]
         rows += [
             {"kind": "item", "id": "usb", "title": "From a USB stick", "detail": usb, "value": "USB" if drives else ""},
             {"kind": "item", "id": "folder", "title": "From a folder on this computer",
              "detail": "Starts at your USB sticks, Downloads and Home. Pick the folder that holds the games."},
             {"kind": "item", "id": "windows", "title": "A Windows game (.exe or .zip)",
-             "detail": "A PC game you downloaded yourself. Code sets it up to run with Proton / Wine."},
+             "detail": "A PC game you downloaded yourself. CodeAque sets it up to run with Proton / Wine."},
             {"kind": "item", "id": "bios", "title": "BIOS files (for PlayStation, Saturn, Dreamcast ...)",
              "detail": "Files from your own console; some emulators need them."},
             {"kind": "item", "id": "downloads", "title": "Files I downloaded from the web (Downloads)",
@@ -3796,6 +3937,10 @@ class Backend(QObject):
             return self._files_rows()
         if name == "fileact":
             return self._fileact_rows()
+        if name == "deletegame":
+            return self._delete_rows()
+        if name == "about":
+            return self._about_rows()
         if name == "dlsystem":
             return self._dlsystem_rows()
         if name == "help":
@@ -3835,6 +3980,8 @@ class Backend(QObject):
     def _help_rows(self) -> list:
         n_games = self._real_count()
         rows = [self._info(diagnose.controller_text())]
+        rows.append({"kind": "item", "id": "about", "title": f"About {branding.NAME}  (version {__version__})",
+                     "detail": "The logo, the version, where things are kept, and the old names that still work."})
         rows.append(self._info("Getting started - press each step in order (you can skip steps you do not need):"))
         for step in diagnose.checklist(self.cfg, n_games > 0):
             done = step["done"] and not (step["id"] == "covers")
@@ -3862,7 +4009,7 @@ class Backend(QObject):
             {"kind": "item", "id": "soberfix", "title": "Roblox asks for an application bundle? Open the step-by-step fix",
              "detail": "Checks Flathub, updates Sober, tests the internet, DNS and clock, and names the cause. Needs internet."},
             self._info("Q: Can I get games from the web?  A: Options > Downloads opens a web browser (it starts at a neutral search engine; "
-                       "Code recommends no sites) and lists what you downloaded. Press a finished file, choose its system, and it moves into "
+                       "CodeAque recommends no sites) and lists what you downloaded. Press a finished file, choose its system, and it moves into "
                        "~/Games/Atari/<system>. Only add games you own or may legally use. A torrent client (Transmission) installs with one "
                        "button on the same screen; it is not set up with any torrents or sites."),
             self._info("Q: How do I stream to Twitch / TikTok / YouTube?  A: Options > Go Live. OBS installs with one button and opens with a "
@@ -3870,28 +4017,28 @@ class Backend(QObject):
                        "OBS with the key from TikTok's web LIVE page (only for accounts TikTok allows)."),
             self._info("Q: A game does not start.  A: highlight it, press the Options button (F10 / Start), choose \"Fix my game\"."),
             self._info("Q: The game has no picture.  A: step 4 above downloads covers (needs internet). Names must look like the real game title."),
-            self._info("Q: A console says it needs a BIOS.  A: those are files from your own console. Code cannot download them - use step 3 with a USB stick or folder."),
-            self._info("Q: Where are my games?  A: ~/Games/Atari/<console>/ . Your favourites and play time are kept when you update Code."),
-            self._info("Q: How do I quit a game?  A: use the emulator's own exit (see Controls). Code comes back by itself."),
+            self._info("Q: A console says it needs a BIOS.  A: those are files from your own console. CodeAque cannot download them - use step 3 with a USB stick or folder."),
+            self._info("Q: Where are my games?  A: ~/Games/Atari/<console>/ . Your favourites and play time are kept when you update CodeAque."),
+            self._info("Q: How do I quit a game?  A: use the emulator's own exit (see Controls). CodeAque comes back by itself."),
             self._info("Q: How do I get back from Netflix / YouTube / Kodi?  A: press Esc twice quickly (or hold Esc for 1 second, or Ctrl+Esc). "
-                       "Code closes the app and comes back. One Esc still leaves video full screen as normal. On a controller: hold Guide / Home and press B. "
+                       "CodeAque closes the app and comes back. One Esc still leaves video full screen as normal. On a controller: hold Guide / Home and press B. "
                        "(Needs the normal Linux Mint X11 desktop; turn it off in Settings.)"),
-            self._info("Q: Can I have my own start-up video?  A: Code comes with a 10-second intro. To use your own instead: Settings > Choose intro video (mp4, webm, mkv or mov). It plays before the home screen; "
+            self._info("Q: Can I have my own start-up video?  A: CodeAque comes with a 10-second intro. To use your own instead: Settings > Choose intro video (mp4, webm, mkv or mov). It plays before the home screen; "
                        "any key, click or controller button skips it. Remove it any time in Settings. Needs mpv, ffplay or VLC to be installed."),
             self._info("Q: How do I connect to WiFi?  A: press the WiFi button next to the clock (or Settings > WiFi). Pick your network, type the password with "
                        "the on-screen keyboard (controller: D-pad + A, L1 = delete, R1 = switch letters / capitals / symbols), then CONNECT. "
-                       "It works in Code-only mode too. \"Forget\" removes a saved network."),
-            self._info("Q: How do I make the computer start straight into Code, like a console?  A: Settings > Code-only mode. "
+                       "It works in CodeAque-only mode too. \"Forget\" removes a saved network."),
+            self._info("Q: How do I make the computer start straight into CodeAque, like a console?  A: Settings > CodeAque-only mode. "
                        "To get the normal desktop back: Settings > Back to Mint desktop (or pick the Cinnamon session on the login screen)."),
             {"kind": "item", "id": "inputfix", "title": "Steam says \"Missing permissions for input devices\"? Fix controller permissions",
-             "detail": "Installs Valve's controller rules (steam-devices) so Steam and Code can use your gamepad. Asks for your password once."},
+             "detail": "Installs Valve's controller rules (steam-devices) so Steam and CodeAque can use your gamepad. Asks for your password once."},
             {"kind": "item", "id": "studiofix", "title": "Studio does not work? Fix Studio",
              "detail": "Checks numpy, the recording tools and the microphone, and installs what is missing (needs internet)."},
             {"kind": "item", "id": "copylog", "title": "Copy log (to send to someone who is helping you)",
-             "detail": "Copies Code's recent messages and your setup to the clipboard. It contains no passwords."},
+             "detail": "Copies CodeAque's recent messages and your setup to the clipboard. It contains no passwords."},
             {"kind": "item", "id": "reset",
              "title": "Press again to reset my settings" if self._reset_armed else "Safe mode: reset my settings",
-             "detail": "Puts Code's settings back to normal if something looks wrong. Your games, favourites and "
+             "detail": "Puts CodeAque's settings back to normal if something looks wrong. Your games, favourites and "
                        "play time are kept, and the old settings are saved next to the new ones."},
             {"kind": "item", "id": "back", "title": "Back"},
         ]
@@ -3927,9 +4074,9 @@ class Backend(QObject):
         rows.append({"kind": "item", "id": "copylog", "title": "Copy log"})
         if g.platform == windows.PLATFORM:
             rows.append({"kind": "item", "id": "remove",
-                         "title": "Press again to remove this game from Code" if self._remove_armed
-                         else "Remove this game from Code",
-                         "detail": "Only Code's entry goes - the game's files stay on your disk."})
+                         "title": "Press again to remove this game from CodeAque" if self._remove_armed
+                         else "Remove this game from CodeAque",
+                         "detail": "Only CodeAque's entry goes - the game's files stay on your disk."})
         rows.append({"kind": "item", "id": "back", "title": "Back"})
         return rows
 
@@ -3951,7 +4098,7 @@ class Backend(QObject):
             lines = Path(paths.log_file()).read_text(errors="replace").splitlines()[-150:]
         except OSError:
             pass
-        head = [f"Code {__version__}  python {sys.version.split()[0]}  {os.environ.get('XDG_CURRENT_DESKTOP', '')}",
+        head = [f"CodeAque {__version__}  python {sys.version.split()[0]}  {os.environ.get('XDG_CURRENT_DESKTOP', '')}",
                 diagnose.controller_text(), "Studio: " + studio_fix.summary(studio_fix.problems(studio_fix.numpy_ok()))
                 if hasattr(studio_fix, "numpy_ok") else diagnose.controller_text(), ""]
         slog = studio_fix.read_log(40)
@@ -3959,7 +4106,7 @@ class Backend(QObject):
         cb = QGuiApplication.clipboard()
         if cb is not None:
             cb.setText(text)
-        self.show_toast("Copied Code's log to the clipboard - paste it into a message to whoever is helping you.", 7000)
+        self.show_toast("Copied CodeAque's log to the clipboard - paste it into a message to whoever is helping you.", 7000)
         return text
 
     @Slot(result=str)
@@ -4005,6 +4152,12 @@ class Backend(QObject):
             return self._files_activate(rid)
         if name == "fileact":
             return self._fileact_activate(rid)
+        if name == "deletegame":
+            return self._delete_activate(rid)
+        if name == "about":
+            if rid == "aboutsupport":
+                self.supportCode()
+            return ""
         if name == "dlsystem":
             return self._dlsystem_activate(rid)
         if name == "addgames":
@@ -4072,7 +4225,7 @@ class Backend(QObject):
                 self._remove_armed = False
                 windows.remove_game(self._fix_gid)
                 self.rescan(toast=False)
-                self.show_toast("Removed from Code. The game's files are still on your disk.")
+                self.show_toast("Removed from CodeAque. The game's files are still on your disk.")
                 return "close"
         if name == "winform":
             if rid == "name":
@@ -4127,8 +4280,10 @@ class Backend(QObject):
                 self.show_toast("The Studio looks fine. If it still fails, press Copy log and send it to whoever is helping you.", 7000)
             else:
                 st.fix()
-                self.show_toast("Fixing the Studio - Code adds what is missing. This can take a minute.", 7000)
+                self.show_toast("Fixing the Studio - CodeAque adds what is missing. This can take a minute.", 7000)
             return ""
+        if rid == "about":
+            return "page:about"
         if rid == "ck_emus":
             return "page:installmenu"
         if rid == "ck_steam" or rid == "steampage":
@@ -4241,7 +4396,7 @@ class Backend(QObject):
         cands = payload or []
         self._win_cands = cands
         if not cands:
-            self.show_toast("Code could not find a Windows program (.exe) inside that archive. "
+            self.show_toast("CodeAque could not find a Windows program (.exe) inside that archive. "
                             "Files were opened in " + text, 10000)
             self.pageRequested.emit("close")
         elif len(cands) == 1:
@@ -4263,7 +4418,7 @@ class Backend(QObject):
     def _winform_rows(self) -> list:
         ok, label = windows.runner_status(self.cfg)
         return [
-            self._info("Code runs Windows games with " + (label if ok else "a helper that is not installed yet") + "."
+            self._info("CodeAque runs Windows games with " + (label if ok else "a helper that is not installed yet") + "."
                        + ("" if ok else "  " + windows.UMU_HINT)),
             self._info("Program: " + self._win_exe),
             {"kind": "item", "id": "name", "title": "Name", "value": self._win_name or "(none)",

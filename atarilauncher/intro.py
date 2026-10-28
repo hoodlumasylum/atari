@@ -2,12 +2,12 @@
 
 Two kinds, both skippable with any key, a click or a controller button:
   * YOUR video: ~/.local/share/atari/intro.mp4 (or .webm / .mkv / .mov) plays full screen before the home screen.
-    It is played by mpv, else ffplay, else VLC (Code's own Qt build has no video library). No player, or a player that
-    fails = the intro is skipped quietly and Code starts normally. It can never keep Code waiting longer than the clip
+    It is played by mpv, else ffplay, else VLC (CodeAque's own Qt build has no video library). No player, or a player that
+    fails = the intro is skipped quietly and CodeAque starts normally. It can never keep CodeAque waiting longer than the clip
     itself (plus a second's grace).
-  * the video that ships with Code (assets/intro/code-intro.mp4, ~10 s, original artwork) when you have none of your own;
-  * Code's own short animation (original artwork + a soft original sound) when no video player is installed.
-Code contains no third-party logo; Settings > Choose intro video replaces the shipped one with your own file.
+  * the video that ships with CodeAque (assets/intro/code-intro.mp4, ~10 s, original artwork) when you have none of your own;
+  * CodeAque's own short animation (original artwork + a soft original sound) when no video player is installed.
+CodeAque contains no third-party logo; Settings > Choose intro video replaces the shipped one with your own file.
 Pure Python (no Qt) so it can be tested; players and the clock are injectable."""
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from . import paths
 
 VIDEO_EXT = (".mp4", ".webm", ".mkv", ".mov")
 BUNDLED_NAME = "code-intro.mp4"
-DEFAULT_SECONDS = 3.6                   # length of Code's own animation (matches assets/sfx/intro.wav)
+DEFAULT_SECONDS = 3.6                   # length of CodeAque's own animation (matches assets/sfx/intro.wav)
 GRACE = 1.5                             # seconds a clip may overrun its length before it is stopped
 UNKNOWN_CAP = 60.0                      # longest we wait when the clip length cannot be read
 FAIL_WINDOW = 1.0                       # a player that dies this fast with an error = playback failed -> skip quietly
@@ -51,7 +51,7 @@ def install(src: str | Path, data_dir: Path | None = None) -> tuple[bool, str]:
     base = data_dir or paths.data_dir()
     ext = src.suffix.lower()
     if ext not in VIDEO_EXT:
-        return False, "That does not look like a video Code can use. Choose an .mp4, .webm, .mkv or .mov file."
+        return False, "That does not look like a video CodeAque can use. Choose an .mp4, .webm, .mkv or .mov file."
     try:
         if not src.is_file() or src.stat().st_size == 0:
             return False, "That file could not be read (or it is empty)."
@@ -67,7 +67,7 @@ def install(src: str | Path, data_dir: Path | None = None) -> tuple[bool, str]:
         os.replace(tmp, base / f"intro{ext}")
     except OSError as exc:
         return False, f"Could not copy the video: {exc.strerror or exc}"
-    return True, f"Intro video set: {src.name}. It plays when Code starts."
+    return True, f"Intro video set: {src.name}. It plays when CodeAque starts."
 
 
 def remove(data_dir: Path | None = None) -> int:
@@ -85,12 +85,12 @@ def remove(data_dir: Path | None = None) -> int:
 # ------------------------------------------------------------------ what should play
 @dataclass
 class Plan:
-    mode: str = ""             # "" (nothing) | "custom" (your video) | "builtin" (the video shipped with Code) | "default" (Code's own animation, no player needed)
+    mode: str = ""             # "" (nothing) | "custom" (your video) | "builtin" (the video shipped with CodeAque) | "default" (CodeAque's own animation, no player needed)
     file: Path | None = None
 
 
 def bundled_file() -> Path | None:
-    """The intro video that ships with Code (original artwork chosen by the project owner)."""
+    """The intro video that ships with CodeAque (original artwork chosen by the project owner)."""
     f = Path(__file__).resolve().parent / "assets" / "intro" / BUNDLED_NAME
     try:
         return f if f.is_file() and f.stat().st_size > 0 else None
@@ -99,7 +99,7 @@ def bundled_file() -> Path | None:
 
 
 def default_plan(which: Callable = shutil.which) -> Plan:
-    """No video of your own: the bundled video if a player is installed, else Code's own short animation."""
+    """No video of your own: the bundled video if a player is installed, else CodeAque's own short animation."""
     b = bundled_file()
     if b is not None and find_player(which)[1]:
         return Plan("builtin", b)

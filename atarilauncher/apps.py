@@ -1,10 +1,10 @@
-"""PC apps and stores shown in Code's "PC Apps / Stores" section, and games imported from Heroic and Lutris.
+"""PC apps and stores shown in CodeAque's "PC Apps / Stores" section, and games imported from Heroic and Lutris.
 
 Every app is described by one AppDef (a Flathub id plus how to find a native install), so adding another is one line.
-Code only *starts* these programs; you sign in to each store / service yourself, inside its own window.
+CodeAque only *starts* these programs; you sign in to each store / service yourself, inside its own window.
 
 Roblox has no official Linux client. "Sober" (Flatpak org.vinegarhq.Sober, VinegarHQ) is an unofficial community runner
-that can break after a Roblox update. Wine / Vinegar do not work (Roblox blocks them), so Code does not try them.
+that can break after a Roblox update. Wine / Vinegar do not work (Roblox blocks them), so CodeAque does not try them.
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ class AppDef:
     note: str = ""                  # shown on the tile / Emulators page
     apt: str = ""                   # apt package name when there is one
     group: str = "apps"             # which tile it lives on: "apps" (PC Apps) or "streaming" (Streaming & Social)
-    background: bool = False        # keeps running behind Code (music): Esc twice / Guide+B brings Code back and leaves it playing
+    background: bool = False        # keeps running behind CodeAque (music): Esc twice / Guide+B brings CodeAque back and leaves it playing
 
     @property
     def name(self) -> str:          # lets the installer treat apps like emulators
@@ -47,15 +47,15 @@ class AppDef:
 
 APP_DEFS: list[AppDef] = [
     AppDef("steam", "Steam", "com.valvesoftware.Steam", ("steam",),
-           "Valve's game store. Press Install if it is missing; then sign in to your own Steam account. Installed games show up in Code "
+           "Valve's game store. Press Install if it is missing; then sign in to your own Steam account. Installed games show up in CodeAque "
            "(press Rescan Steam in Settings after installing one).", apt="steam-installer"),
     AppDef("roblox", "Roblox", "org.vinegarhq.Sober", ("sober",),
            "Runs through Sober, an unofficial community app (not made by Roblox). It can break after a Roblox "
            "update. The first start helps you install Roblox; sign in to your own Roblox account there."),
     AppDef("heroic", "Heroic Games Launcher", "com.heroicgameslauncher.hgl", ("heroic",),
-           "Epic, GOG and Amazon games. Sign in to your own accounts inside Heroic; installed games show up in Code."),
+           "Epic, GOG and Amazon games. Sign in to your own accounts inside Heroic; installed games show up in CodeAque."),
     AppDef("lutris", "Lutris", "net.lutris.Lutris", ("lutris",),
-           "Runs many Windows and retro games. Installed Lutris games show up in Code."),
+           "Runs many Windows and retro games. Installed Lutris games show up in CodeAque."),
     AppDef("bottles", "Bottles", "com.usebottles.bottles", ("bottles",),
            "Runs Windows programs and games."),
     AppDef("itch", "itch.io", "io.itch.itch", ("itch",),
@@ -70,7 +70,7 @@ APP_DEFS: list[AppDef] = [
            "Plays your own videos, music and photos; add-ons are up to you.", apt="kodi", group="streaming"),
     AppDef("transmission", "Transmission (torrent client)", "com.transmissionbt.Transmission",
            ("transmission-gtk", "transmission-qt"),
-           "Open-source torrent downloader. Code does not preload any torrents, trackers or sites: you add your own .torrent file or "
+           "Open-source torrent downloader. CodeAque does not preload any torrents, trackers or sites: you add your own .torrent file or "
            "magnet link, and only for files you own or may legally share. Saves to ~/Downloads; Options > Downloads moves finished "
            "files into your games.", apt="transmission-gtk"),
     AppDef("obs", "OBS Studio (live streaming)", "com.obsproject.Studio", ("obs",),
@@ -78,9 +78,9 @@ APP_DEFS: list[AppDef] = [
            "it with a ready screen-capture scene; you add your own stream key. Linux has no 'Game Capture' - it captures the screen.",
            apt="obs-studio"),
     AppDef("spotify", "Spotify", "com.spotify.Client", ("spotify",),
-           "Spotify's own app (a Spotify account is needed; free accounts have ads). It keeps playing behind Code: press Esc twice "
+           "Spotify's own app (a Spotify account is needed; free accounts have ads). It keeps playing behind CodeAque: press Esc twice "
            "(or Guide + B) to come back, and use the music buttons in the top bar (they need playerctl). The Flathub package is "
-           "community-maintained, not made by Spotify or Code.", group="streaming", background=True),
+           "community-maintained, not made by Spotify or CodeAque.", group="streaming", background=True),
     AppDef("moonlight", "Moonlight (game streaming)", "com.moonlight_stream.Moonlight", ("moonlight", "moonlight-qt"),
            "Streams games from another PC running Sunshine or GeForce Experience."),
 ]
@@ -92,7 +92,7 @@ HELPERS: list[AppDef] = [
     AppDef("chrome", "Google Chrome (for YouTube, Netflix and other web apps)", "com.google.Chrome",
            ("google-chrome-stable", "google-chrome"), "Streaming web apps open in it. Has Widevine for Netflix & co."),
     AppDef("playerctl", "playerctl (music buttons in the top bar)", "", ("playerctl",),
-           "Lets Code's top bar play / pause / skip Spotify and other players. Small and free.", apt="playerctl"),
+           "Lets CodeAque's top bar play / pause / skip Spotify and other players. Small and free.", apt="playerctl"),
     AppDef("antimicrox", "AntiMicroX (optional: gamepad as mouse)", "io.github.antimicrox.antimicrox", ("antimicrox",),
            "Lets a controller move the mouse inside web apps. Optional."),
     AppDef("ffmpeg", "FFmpeg (screen recorder)", "", ("ffmpeg",), "Records the screen to an MP4 file (F9).", apt="ffmpeg"),
@@ -100,7 +100,7 @@ HELPERS: list[AppDef] = [
            apt="p7zip-full"),
     AppDef("unrar", "unrar (opens .rar archives)", "", ("unrar",), "Opens .rar archives (the file viewer's Extract button).", apt="unrar"),
     AppDef("umu", "umu-launcher (runs Windows games with Proton)", "", ("umu-run",),
-           "Code's first choice for Windows games. Installed from its official GitHub release."),
+           "CodeAque's first choice for Windows games. Installed from its official GitHub release."),
 ]
 
 
@@ -232,7 +232,7 @@ def lutris_dbs(home: Path) -> list[Path]:
 
 
 def lutris_games(home: Path | None = None) -> list[StoreGame]:
-    """Installed Lutris games from its pga.db (read only). Steam entries are skipped: Code already lists Steam."""
+    """Installed Lutris games from its pga.db (read only). Steam entries are skipped: CodeAque already lists Steam."""
     home = home or Path.home()
     out: list[StoreGame] = []
     seen: set[str] = set()

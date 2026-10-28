@@ -64,7 +64,7 @@ def test_all_good_says_honestly_it_is_sobers_service_and_names_the_version(tmp_p
     steps, verdict = fix(flat, home=str(tmp_path))
     assert all(s.ok for s in steps) and [s.id for s in steps][:4] == ["flathub", "installed", "update", "permissions"]
     assert "looks right" in verdict and "2.741.1061" in verdict and "Sober's own download service" in verdict
-    assert "nothing Code can repair" in verdict
+    assert "nothing CodeAque can repair" in verdict
 
 
 def test_requested_version_comes_from_sobers_state_file(tmp_path):
@@ -121,7 +121,7 @@ def test_a_wrong_clock_is_found_from_the_servers_date():
 def test_a_missing_portal_is_only_a_note_not_the_cause():
     steps, verdict = fix(portal=lambda: False)
     p = by_id(steps)["portal"]
-    assert not p.ok and "Code-only mode" in p.detail and "looks right" in verdict            # the verdict ignores it
+    assert not p.ok and "CodeAque-only mode" in p.detail and "looks right" in verdict            # the verdict ignores it
 
 
 def test_missing_flatpak_stops_with_a_clear_message(monkeypatch):
@@ -155,7 +155,7 @@ def titles(rows):
 def test_page_lists_steps_run_fix_logs_and_the_honest_limit_then_shows_results(be_, monkeypatch, _qt_app):
     rows = be_.pageRows("robloxfix")
     text = titles(rows)
-    assert "Run fix" in text and "Open Roblox again" in text and "latest.log" in text and "Code's log" in text
+    assert "Run fix" in text and "Open Roblox again" in text and "latest.log" in text and "CodeAque's log" in text
     assert "Honest limit" in text and "never downloads a Roblox file" in text
     assert any(r.get("id") == "rbxrun" for r in rows)
     steps = [sober.Step("dns", "DNS works", False, "blocked"), sober.Step("clock", "Clock", True, "Yes.")]

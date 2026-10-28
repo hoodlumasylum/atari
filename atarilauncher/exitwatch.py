@@ -1,7 +1,7 @@
 """Esc-to-return for full-screen web apps (Netflix, YouTube, Instagram, ... and Kodi).
 
-A browser window in full screen owns the keyboard, so Code cannot see any key while a web app runs. This module is a
-small watcher that Code starts next to the browser. It never grabs or swallows a key (a single Esc still leaves video
+A browser window in full screen owns the keyboard, so CodeAque cannot see any key while a web app runs. This module is a
+small watcher that CodeAque starts next to the browser. It never grabs or swallows a key (a single Esc still leaves video
 full screen exactly as the page expects); it only *looks* at which keys are down and quits the app on a deliberate gesture:
 
     Esc, Esc          two presses within 0.6 s           (the first one still exits video full screen as normal)
@@ -10,12 +10,12 @@ full screen exactly as the page expects); it only *looks* at which keys are down
     gamepad Guide + B at once (the controller helper reports it, see gamepad_helper.py)
 
 Quitting = ask the browser to close (SIGTERM to its process group; `flatpak kill` for Flatpak apps; SIGKILL after a few
-seconds if it ignores that). When the process is gone, launcher.py returns, and Code raises and focuses its own window.
+seconds if it ignores that). When the process is gone, launcher.py returns, and CodeAque raises and focuses its own window.
 
 How the keys are seen: on X11 (Linux Mint's Cinnamon, the default) `XQueryKeymap` from libX11, loaded with ctypes, says
 which keys are physically down. It is polled ~60 times a second. It needs no extra Python package, no root, no
 /dev/input access and no key grab, and it works whichever window has the focus. On a pure Wayland session there is no
-such call for other programs' keys, so only the gamepad chord works there (and Code is still raised when the browser
+such call for other programs' keys, so only the gamepad chord works there (and CodeAque is still raised when the browser
 closes); Mint's Cinnamon session is X11, and an XWayland-only display is detected and reported as "unavailable".
 
 Why not a browser extension? Google Chrome 137+ ignores --load-extension (removed in branded builds, and the
@@ -38,9 +38,9 @@ HOLD_SECONDS = 1.0       # Esc held down this long
 POLL = 0.008             # key state polling interval
 GRACE = 4.0              # seconds a browser gets to close before SIGKILL
 
-HINT = "Press Esc twice (or hold Esc for 1 second) to return to Code"
+HINT = "Press Esc twice (or hold Esc for 1 second) to return to CodeAque"
 HINT_PAD = "Gamepad: hold Guide + press B."
-HINT_SHORT = "Esc, Esc  =  back to Code"
+HINT_SHORT = "Esc, Esc  =  back to CodeAque"
 
 XK_ESCAPE, XK_CONTROL_L, XK_CONTROL_R = 0xFF1B, 0xFFE3, 0xFFE4
 
@@ -352,7 +352,7 @@ def notify(text: str) -> None:
     if not exe or os.environ.get("ATARI_NO_NOTIFY") or not os.environ.get("DISPLAY"):
         return
     try:
-        subprocess.Popen([exe, "-a", "Code", "-t", "6000", "Code", text], stdout=subprocess.DEVNULL,
+        subprocess.Popen([exe, "-a", "CodeAque", "-t", "6000", "CodeAque", text], stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, start_new_session=True)
     except OSError:
         pass

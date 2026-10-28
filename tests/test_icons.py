@@ -54,7 +54,7 @@ def test_web_app_icon_is_downloaded_once_and_cached(fake, tmp_path):
     n = len(fake.hits)
     rep = fetcher(fake, tmp_path).run([spec], home=tmp_path)                       # cached: not a single request
     assert rep["skipped"] == 1 and len(fake.hits) == n
-    assert fake.ua_seen and all("Code" in u for u in fake.ua_seen)                 # an honest User-Agent
+    assert fake.ua_seen and all("Code-Launcher" in u for u in fake.ua_seen)                 # an honest User-Agent
 
 
 def test_favicon_fallbacks_when_the_page_names_no_icon(fake, tmp_path):

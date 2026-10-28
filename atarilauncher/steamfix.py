@@ -1,13 +1,13 @@
-"""Steam in Code-only mode: always Big Picture, and Steam Play (Proton) for every game by default.
+"""Steam in CodeAque-only mode: always Big Picture, and Steam Play (Proton) for every game by default.
 
 Four layers, because Steam can be started in many ways and Valve gives no single switch:
   1. Steam's own setting: Registry > HKCU > Software > Valve > Steam > StartupMode = 1 in ~/.steam/registry.vdf ("Start Steam in
      Big Picture Mode"). Only written while Steam is NOT running (Steam rewrites the file when it quits), after a one-time backup.
-  2. A `steam` wrapper in Code's own PATH (shims folder): a plain `steam` started by anything Code launched gets -gamepadui, or
+  2. A `steam` wrapper in CodeAque's own PATH (shims folder): a plain `steam` started by anything CodeAque launched gets -gamepadui, or
      steam://open/bigpicture when Steam is already open. Entries that point at /usr/games/steam by full path bypass it (layer 3).
-  3. A watcher in Code (Code-only mode): when a Steam client appears that Code did not start itself, it is told once to open
+  3. A watcher in CodeAque (CodeAque-only mode): when a Steam client appears that CodeAque did not start itself, it is told once to open
      Big Picture (steam://open/bigpicture - harmless when Big Picture is already open), once more a little later.
-  4. The Steam tile always uses -gamepadui in Code-only mode (the "Open Steam in Big Picture" setting cannot turn it off there).
+  4. The Steam tile always uses -gamepadui in CodeAque-only mode (the "Open Steam in Big Picture" setting cannot turn it off there).
 Steam Play: config/config.vdf > InstallConfigStore > Software > Valve > Steam > CompatToolMapping > "0" (the default for every game)
 is set to proton-experimental when nobody chose a tool yet. Same rules: Steam closed, backup first, never overwrites a choice.
 Both edits are best effort: Valve's files are undocumented and can change; every failure is reported and logged, never raised."""
@@ -199,7 +199,7 @@ def set_default_proton(home: Path | None = None, cfg_root: str = "", running: Ca
 
 # ------------------------------------------------------------------ the `steam` wrapper
 WRAPPER = """#!/bin/sh
-# Written by Code. In Code-only mode every plain `steam` that Code (or anything it started) runs opens Big Picture.
+# Written by CodeAque. In CodeAque-only mode every plain `steam` that CodeAque (or anything it started) runs opens Big Picture.
 case "$0" in */*) SHIM_DIR="${0%/*}" ;; *) SHIM_DIR="$(pwd)" ;; esac
 real=
 OLD_IFS="$IFS"; IFS=:
@@ -244,9 +244,9 @@ def put_shim_first(env: dict, home: Path | None = None) -> bool:
     return True
 
 
-# ------------------------------------------------------------------ the watcher (pure logic; Code calls tick() every few seconds)
+# ------------------------------------------------------------------ the watcher (pure logic; CodeAque calls tick() every few seconds)
 class Guard:
-    """Tells a Steam client that Code did not start to open Big Picture: at NUDGE_AT seconds after it appeared, twice at most."""
+    """Tells a Steam client that CodeAque did not start to open Big Picture: at NUDGE_AT seconds after it appeared, twice at most."""
 
     def __init__(self, nudge_at=NUDGE_AT):
         self.nudge_at = tuple(nudge_at)
@@ -255,7 +255,7 @@ class Guard:
         self.handled = False
 
     def handled_by_code(self) -> None:
-        """Code started Steam in Big Picture itself: no nudges for this Steam process."""
+        """CodeAque started Steam in Big Picture itself: no nudges for this Steam process."""
         self.handled = True
 
     def tick(self, running: bool, now: float) -> bool:

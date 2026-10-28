@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 def parse_args(argv=None):
-    ap = argparse.ArgumentParser(prog="atari", description="Code - a console-style game launcher")
+    ap = argparse.ArgumentParser(prog="atari", description="CodeAque - a console-style game launcher")
     ap.add_argument("--windowed", action="store_true", help="run in a normal window instead of full screen")
     ap.add_argument("--fullscreen", action="store_true", help="force full screen")
     ap.add_argument("--demo", action="store_true", help="show made-up demo games (used for screenshots)")
@@ -39,11 +39,11 @@ def main(argv=None) -> int:
     signal.signal(signal.SIGINT, signal.SIG_DFL)  # Ctrl+C in a terminal just closes the app
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
     app = QGuiApplication(sys.argv[:1])
-    app.setApplicationName("Code")
+    app.setApplicationName("CodeAque")
     app.setDesktopFileName("atari")                  # the desktop entry keeps its old file name so existing installs and autostart still match
     try:
         from PySide6.QtGui import QIcon
-        icon = Path(__file__).resolve().parent / "assets" / "code-logo.png"
+        icon = Path(__file__).resolve().parent / "assets" / "codeaque-icon.png"
         if icon.is_file():
             app.setWindowIcon(QIcon(str(icon)))
     except Exception:

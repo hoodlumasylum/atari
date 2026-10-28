@@ -1,6 +1,6 @@
 import QtQuick
 
-// One text / password box with a full on-screen keyboard, used for the administrator password (Quiet boot, Code-only mode, installs)
+// One text / password box with a full on-screen keyboard, used for the administrator password (Quiet boot, CodeAque-only mode, installs)
 // and for typing a new file name. Keyboard: just type, Enter = OK, Esc = cancel. Controller: D-pad + A, L1 = delete, R1 = abc/ABC/123,
 // B = cancel. Mouse / touch: click the keys. Talks to backend.input* (the text goes back with backend.submitInput, nowhere else).
 Item {

@@ -4,7 +4,7 @@ Pure Python (no Qt) so it can be tested with a fake local release server. Rules:
   * the release's own SHA256SUMS.txt must contain the tarball and match, otherwise nothing is installed;
   * only install.sh is run (it never touches ~/.config/atari or ~/.local/share/atari: settings, favourites, history);
   * the old program files are backed up first and put back if the install fails;
-  * everything (download, unpacking, the install log) lives in a temp / cache folder, not in your Code data.
+  * everything (download, unpacking, the install log) lives in a temp / cache folder, not in your CodeAque data.
 """
 from __future__ import annotations
 
@@ -85,7 +85,7 @@ def is_newer(latest: str, current: str = __version__) -> bool:
 
 # ------------------------------------------------------------------ where things live
 def app_dir() -> Path:
-    """The folder this running copy of Code lives in."""
+    """The folder this running copy of CodeAque lives in."""
     return Path(__file__).resolve().parent.parent
 
 
@@ -94,7 +94,7 @@ def can_self_update(root: Path | None = None) -> tuple[bool, str]:
     root = root or app_dir()
     if (root / ".venv").is_dir() and (root / "install.sh").is_file():
         return True, ""
-    return False, ("This copy of Code was not set up with install.sh, so it cannot update itself. "
+    return False, ("This copy of CodeAque was not set up with install.sh, so it cannot update itself. "
                    f"Download the new version from https://github.com/{REPO}/releases/latest")
 
 
@@ -137,7 +137,7 @@ def fetch_latest(api_url: str | None = None, timeout: float = 10.0) -> Release |
     version = str(data.get("tag_name") or "").lstrip("vV")
     assets = {str(a.get("name")): str(a.get("browser_download_url")) for a in data.get("assets") or []
               if isinstance(a, dict)}
-    # Releases keep the file name atari-<version>.tar.gz (copies of Code older than 0.4 look for exactly that name);
+    # Releases keep the file name atari-<version>.tar.gz (copies of CodeAque older than 0.4 look for exactly that name);
     # a future release named code-<version>.tar.gz is understood too.
     tar_name = next((n for n in (f"atari-{version}.tar.gz", f"code-{version}.tar.gz") if n in assets), f"atari-{version}.tar.gz")
     if not version or tar_name not in assets or "SHA256SUMS.txt" not in assets:
@@ -313,7 +313,7 @@ def expected_hash(sums_text: str, name: str) -> str:
 def verify(tar_path: Path, sums_text: str) -> None:
     want = expected_hash(sums_text, tar_path.name)
     if not want:
-        raise UpdateError("The release has no checksum for this file, so Code will not install it.")
+        raise UpdateError("The release has no checksum for this file, so CodeAque will not install it.")
     got = sha256_of(tar_path)
     if got != want:
         size = tar_path.stat().st_size
@@ -346,7 +346,7 @@ def safe_extract(tar_path: Path, dest: Path) -> Path:
     for cand in [dest] + sorted(p for p in dest.iterdir() if p.is_dir()):
         if (cand / "install.sh").is_file() and (cand / "atarilauncher" / "__init__.py").is_file():
             return cand
-    raise UpdateError("The update package does not look like Code (no install.sh inside).")
+    raise UpdateError("The update package does not look like CodeAque (no install.sh inside).")
 
 
 def version_in(folder: Path) -> str:
@@ -465,14 +465,14 @@ def perform(rel: Release, root: Path | None = None, progress: Callable[[str, str
         run_install(src, root, lambda step: say("installing", step + " ...", -1))
         new = version_in(root)
         if new and new != rel.version:
-            raise UpdateError(f"After installing, Code reports version {new}. Please try again.")
+            raise UpdateError(f"After installing, CodeAque reports version {new}. Please try again.")
         return rel.version
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
 
 def restart_command(root: Path | None = None, argv: list[str] | None = None) -> list[str]:
-    """A detached command that starts the freshly installed Code a moment after this one has quit."""
+    """A detached command that starts the freshly installed CodeAque a moment after this one has quit."""
     root = root or app_dir()
     args = [a for a in (argv or []) if a not in ("--selftest",)]
     return ["bash", "-c", 'sleep 1.5; exec "$0" "$@"', str(root / "run.sh"), *args]

@@ -1,4 +1,4 @@
-"""Code-only mode: the files it writes, the safety net, the way back, and the confirm / result screens.
+"""CodeAque-only mode: the files it writes, the safety net, the way back, and the confirm / result screens.
 Nothing here touches the real /etc: a Layout points the three files into a temporary folder, and "pkexec" is a stand-in
 that runs the generated script with the paths moved under that folder."""
 import os
@@ -19,7 +19,7 @@ from tests.test_ui_keys import Ui, app  # noqa: E402,F401
 
 @pytest.fixture
 def box(tmp_path):
-    """A fake machine root with LightDM, a Cinnamon session entry and Code's run.sh."""
+    """A fake machine root with LightDM, a Cinnamon session entry and CodeAque's run.sh."""
     root = tmp_path / "root"
     (root / "usr/share/xsessions").mkdir(parents=True)
     (root / "usr/share/xsessions/cinnamon.desktop").write_text("[Desktop Entry]\nName=Cinnamon\nExec=cinnamon-session-cinnamon\n")
@@ -101,7 +101,7 @@ def test_enable_writes_exactly_three_files_and_disable_removes_them(box):
     assert "autologin-user=hazel" in lm.read_text() and "autologin-session=atari" in lm.read_text()
     assert "autologin-user-timeout=0" in lm.read_text()
     x = xs.read_text()
-    assert "Exec=/usr/local/bin/atari-session" in x and "Type=XSession" in x and "Name=Code" in x
+    assert "Exec=/usr/local/bin/atari-session" in x and "Type=XSession" in x and "Name=CodeAque" in x
     s = sess.read_text()
     assert str(run_sh) in s and "exec cinnamon-session-cinnamon" in s                # the safety net uses Mint's own session
     assert "desktop-once" in s and "-lt 3" in s
@@ -136,7 +136,7 @@ SESSION_ENV = {"ATARI_RESTART_DELAY": "0"}
 
 
 def run_session(tmp_path, run_body, desktop_body="echo desktop >> %s/starts\n", home=None, timeout=60):
-    """Run the generated session script for real with a stand-in Code (run_body) and a stand-in Mint desktop."""
+    """Run the generated session script for real with a stand-in CodeAque (run_body) and a stand-in Mint desktop."""
     run = tmp_path / "run.sh"
     run.write_text("#!/bin/sh\n" + run_body.replace("@T@", str(tmp_path)))
     run.chmod(0o755)
@@ -158,11 +158,11 @@ def starts(tmp_path):
 
 def test_the_session_script_still_falls_back_to_the_desktop_but_only_for_a_real_crash_loop(box, tmp_path):
     run_session(tmp_path, "echo start >> @T@/starts\nexit 1\n")
-    assert starts(tmp_path) == ["start"] * kiosk.MAX_QUICK_CRASHES + ["desktop"]            # Code cannot start at all: desktop, never locked out
+    assert starts(tmp_path) == ["start"] * kiosk.MAX_QUICK_CRASHES + ["desktop"]            # CodeAque cannot start at all: desktop, never locked out
 
 
 def test_code_that_ends_for_any_reason_is_started_again_not_left_to_the_desktop(box, tmp_path):
-    """Code dies (killed by an app, crash, 'Restart Code') after running a while: the session starts it again - no logout, no desktop."""
+    """CodeAque dies (killed by an app, crash, 'Restart CodeAque') after running a while: the session starts it again - no logout, no desktop."""
     body = ("n=$(cat @T@/n 2>/dev/null || echo 0); n=$((n+1)); echo $n > @T@/n; echo start >> @T@/starts\n"
             "sleep 4\n"                                                         # a normal, longer run
             "case $n in 1) kill -9 $$;; 2) exit 0;; 3) exit 3;; *) exit 64;; esac\n")   # 1: killed  2: restart  3: crash  4: log out on purpose
@@ -172,7 +172,7 @@ def test_code_that_ends_for_any_reason_is_started_again_not_left_to_the_desktop(
 
 
 def test_a_clean_exit_after_a_quick_run_does_not_count_as_a_crash_loop(box, tmp_path):
-    """Pressing 'Restart Code' a few times in a row (exit 0) never triggers the desktop fallback; only crashes do."""
+    """Pressing 'Restart CodeAque' a few times in a row (exit 0) never triggers the desktop fallback; only crashes do."""
     body = ("n=$(cat @T@/n 2>/dev/null || echo 0); n=$((n+1)); echo $n > @T@/n; echo start >> @T@/starts\n"
             "sleep 3.2\n[ $n -lt 7 ] && exit 0\nexit 64\n")
     run_session(tmp_path, body, timeout=90)
@@ -200,13 +200,13 @@ def test_open_desktop_once_flag_makes_the_session_start_the_desktop_and_is_singl
     ok, text = kiosk.open_desktop_once(home, run=lambda cmd, **kw: calls.append(cmd), which=lambda n: "/usr/bin/" + n)
     assert ok and kiosk.desktop_once_flag(home).is_file() and calls == [["cinnamon-session-quit", "--logout", "--no-prompt"]]
     run_session(tmp_path, "echo atari >> @T@/starts\nexit 64\n", home=home)             # next login: desktop, once
-    run_session(tmp_path, "echo atari >> @T@/starts\nexit 64\n", home=home)             # login after that: Code again
+    run_session(tmp_path, "echo atari >> @T@/starts\nexit 64\n", home=home)             # login after that: CodeAque again
     assert starts(tmp_path) == ["desktop", "atari"]
     assert not kiosk.desktop_once_flag(home).exists()
 
 
 def test_the_flag_left_while_code_runs_sends_the_next_restart_to_the_desktop(box, tmp_path):
-    """'Open the Mint desktop once' leaves the flag then logs out; if only Code ends, the session honours the flag instead of looping."""
+    """'Open the Mint desktop once' leaves the flag then logs out; if only CodeAque ends, the session honours the flag instead of looping."""
     home = tmp_path / "home"
     home.mkdir()
     run_session(tmp_path, "echo atari >> @T@/starts\nmkdir -p $HOME/.config/atari && echo 1 > $HOME/.config/atari/desktop-once\nsleep 3.2\nexit 0\n", home=home)
@@ -227,7 +227,7 @@ def test_settings_row_confirm_screen_and_result(app, tmp_path, monkeypatch, box)
         b = ui.backend
         b._kiosk_layout = layout
         row = [r for r in b.setupRows() if r.get("kind") == "kioskpage"][0]
-        assert row["value"] == "OFF" and "Code-only mode" in row["title"]
+        assert row["value"] == "OFF" and "CodeAque-only mode" in row["title"]
         monkeypatch.setattr(kiosk, "preflight", lambda lay=layout, **kw: checks(box))
         rows = b.pageRows("kiosk")
         text = " ".join(r.get("title", "") for r in rows)
@@ -241,7 +241,7 @@ def test_settings_row_confirm_screen_and_result(app, tmp_path, monkeypatch, box)
         assert b.pageActivate("kiosk", "kioskon") == "refresh"             # runs in the background, never blocks the screen
         assert wait_for(app, lambda: kiosk.enabled(layout), 10), b.toast
         assert wait_for(app, lambda: not b._kiosk_busy, 5)
-        assert "Code-only mode is ON" in b.toast
+        assert "CodeAque-only mode is ON" in b.toast
         rows = b.pageRows("kiosk")
         assert [r.get("id") for r in rows if r["kind"] != "info"] == ["kioskupdate", "kioskoff", "kioskonce", "back"]
         assert rows[0]["kind"] == "info" and rows[0]["title"].startswith("Result:")
@@ -250,7 +250,7 @@ def test_settings_row_confirm_screen_and_result(app, tmp_path, monkeypatch, box)
         assert b.pageActivate("kiosk", "kioskoff") == "refresh"            # the way back from Settings
         assert wait_for(app, lambda: not kiosk.enabled(layout), 10)
         assert wait_for(app, lambda: not b._kiosk_busy, 5)
-        assert "Code-only mode is OFF" in b.toast
+        assert "CodeAque-only mode is OFF" in b.toast
         assert not any(f.exists() for f in layout.files)
     finally:
         ui.close()
@@ -271,7 +271,7 @@ def test_blocked_machines_get_only_a_back_button(app, tmp_path, monkeypatch, box
         ui.close()
 
 
-# ------------------------------------------------------------------ an install made by an older Code
+# ------------------------------------------------------------------ an install made by an older CodeAque
 OLD_SCRIPT = """#!/bin/sh
 RUN=/x/run.sh
 n=0
@@ -290,7 +290,7 @@ def test_a_session_script_from_before_0_4_1_is_noticed_and_replaced_by_one_press
     for f in layout.files:
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text("x")
-    layout.p(layout.session_script).write_text(OLD_SCRIPT)          # what Code 0.3.x / 0.4.0 wrote (root's file: an update cannot touch it)
+    layout.p(layout.session_script).write_text(OLD_SCRIPT)          # what CodeAque 0.3.x / 0.4.0 wrote (root's file: an update cannot touch it)
     assert kiosk.enabled(layout) and kiosk.session_outdated(layout)
     ok, text = kiosk.enable(layout, fake_pkexec(layout), user="hazel", checks=checks(box), run_sh=run_sh)
     assert ok and not kiosk.session_outdated(layout)
@@ -331,12 +331,12 @@ def test_the_update_button_is_in_settings_whenever_code_only_mode_is_installed(a
             f.write_text(text)
         assert kiosk.enabled(layout) and kiosk.session_outdated(layout)                    # a 0.3.x script (no marker) counts as old
         rows = [r for r in b.setupRows() if r.get("kind") == "kioskupdate"]
-        assert len(rows) == 1 and rows[0]["title"] == "Update Code-only mode" and rows[0]["value"] == "UPDATE NEEDED"
+        assert len(rows) == 1 and rows[0]["title"] == "Update CodeAque-only mode" and rows[0]["value"] == "UPDATE NEEDED"
         layout.p(layout.session_script).write_text(kiosk.render_session_script(run_sh, "cinnamon-session"))
         rows = [r for r in b.setupRows() if r.get("kind") == "kioskupdate"]
         assert len(rows) == 1 and rows[0]["value"] == "Up to date"                         # still there when current
         page = b.pageRows("kiosk")
-        assert [r["title"] for r in page if r.get("id") == "kioskupdate"] == ["Update Code-only mode"]
+        assert [r["title"] for r in page if r.get("id") == "kioskupdate"] == ["Update CodeAque-only mode"]
         qml = (Path(kiosk.__file__).parent / "qml" / "Main.qml").read_text()
         assert 'r.kind === "kioskupdate"' in qml and "updateKioskSession" in qml
     finally:
@@ -354,7 +354,7 @@ def test_the_settings_row_runs_the_update(app, tmp_path, monkeypatch, box):
             f.parent.mkdir(parents=True, exist_ok=True)
             f.write_text("old")
         ran = []
-        monkeypatch.setattr(kiosk, "enable", lambda lay: (ran.append(1) or (True, "Code-only mode is ON (updated).")))
+        monkeypatch.setattr(kiosk, "enable", lambda lay: (ran.append(1) or (True, "CodeAque-only mode is ON (updated).")))
         b.updateKioskSession()
         assert wait_for(app, lambda: ran and not b._kiosk_busy, 10)
     finally:
@@ -386,10 +386,10 @@ def run_session2(tmp_path, code_body, env_extra=None, timeout=30):
 
 
 def test_session_log_records_start_exit_and_the_reason_for_the_desktop(tmp_path):
-    p, log, _ = run_session2(tmp_path, "exit 3\n")                          # Code dies at once, every time
+    p, log, _ = run_session2(tmp_path, "exit 3\n")                          # CodeAque dies at once, every time
     assert "DESKTOP-STARTED" in p.stdout
-    assert log.count("starting Code") == kiosk.MAX_QUICK_CRASHES and "Code ended: exit code 3" in log
-    assert "STARTING THE MINT DESKTOP: Code stopped %d times in a row" % kiosk.MAX_QUICK_CRASHES in log and "last exit code 3" in log
+    assert log.count("starting CodeAque") == kiosk.MAX_QUICK_CRASHES and "CodeAque ended: exit code 3" in log
+    assert "STARTING THE MINT DESKTOP: CodeAque stopped %d times in a row" % kiosk.MAX_QUICK_CRASHES in log and "last exit code 3" in log
 
 
 def test_session_log_names_a_leftover_desktop_once_note(tmp_path):
@@ -398,7 +398,7 @@ def test_session_log_names_a_leftover_desktop_once_note(tmp_path):
     (home / ".config/atari/desktop-once").write_text("1")
     p, log, _ = run_session2(tmp_path, "exit 64\n")
     assert "DESKTOP-STARTED" in p.stdout and "'Open the Mint desktop once' note was found" in log
-    assert not (home / ".config/atari/desktop-once").exists()               # used up: the next start is Code again
+    assert not (home / ".config/atari/desktop-once").exists()               # used up: the next start is CodeAque again
 
 
 def test_a_logout_exit_code_and_a_non_executable_run_script_are_handled(tmp_path):
@@ -433,7 +433,7 @@ def test_diagnose_finds_a_wrong_autologin_session_and_leftover_notes(box, tmp_pa
     layout.p(layout.session_script).write_text("#!/bin/sh\nRUN=/nope/run.sh\n")
     facts = " ".join(kiosk.diagnose(layout, home))
     assert "WRONG   auto-login session = cinnamon" in facts and "WILL OPEN THE DESKTOP ONCE" in facts
-    assert "MISSING Code's start script: /nope/run.sh" in facts and "OLD" in facts
+    assert "MISSING CodeAque's start script: /nope/run.sh" in facts and "OLD" in facts
 
 
 def test_the_restore_command_is_one_line_that_rewrites_the_three_files_and_clears_the_note():
@@ -465,7 +465,7 @@ def test_the_code_only_page_shows_problems_and_the_restore_command(app, tmp_path
         ui.close()
 
 
-# ------------------------------------------------------------------ 0.4.2: Code started from the desktop still takes the screen back
+# ------------------------------------------------------------------ 0.4.2: CodeAque started from the desktop still takes the screen back
 def test_shell_mode_is_the_session_or_an_installed_code_only_mode(box, monkeypatch):
     layout, run_sh, _ = box
     assert not kiosk.shell_mode(layout, env={})
@@ -511,7 +511,7 @@ def test_restoring_after_an_app_goes_fullscreen_when_code_only_mode_is_installed
         calls.clear()
         b._minimized_for_game = True
         b._restore_window()
-        assert calls == ["full"]                                                    # Code-only mode installed: whole screen again
+        assert calls == ["full"]                                                    # CodeAque-only mode installed: whole screen again
         calls.clear()
         b._minimized_for_game = False
         b._restore_window()

@@ -1,9 +1,9 @@
-"""Asking for the administrator password INSIDE Code (no pkexec / polkit window needed).
+"""Asking for the administrator password INSIDE CodeAque (no pkexec / polkit window needed).
 
-Why: in Code-only mode there is no desktop, so the polkit password agent that pkexec relies on is not running (or its window opens
-behind Code's full screen window) and a Settings button that needs a password seems to do nothing. Instead:
-  * every privileged action goes through ``stream_run(["pkexec", ...])`` (the old spelling kept everywhere); when Code has an in-app
-    password dialog (``set_provider``), that call is turned into ``sudo -S -k -p '' -- ...`` and the password typed in Code's own dialog
+Why: in CodeAque-only mode there is no desktop, so the polkit password agent that pkexec relies on is not running (or its window opens
+behind CodeAque's full screen window) and a Settings button that needs a password seems to do nothing. Instead:
+  * every privileged action goes through ``stream_run(["pkexec", ...])`` (the old spelling kept everywhere); when CodeAque has an in-app
+    password dialog (``set_provider``), that call is turned into ``sudo -S -k -p '' -- ...`` and the password typed in CodeAque's own dialog
     is fed to sudo on its standard input;
   * the password is checked first (``sudo -S -k -p '' true``), a wrong one asks again (up to 5 times), a cancelled dialog is exit code 126;
   * it is never put on a command line, in the environment, in a file or in the log. It is held in memory for 90 seconds only, so one
@@ -90,7 +90,7 @@ def get_password(prompt: str, runner: Callable | None = None) -> tuple[str | Non
             _cache = (pw, time.monotonic() + CACHE_SECONDS)
             return pw, 0
         if why == "REFUSED":
-            last_error = "This account is not allowed to use administrator rights (sudo), so Code cannot make this change. Ask the owner of the computer."
+            last_error = "This account is not allowed to use administrator rights (sudo), so CodeAque cannot make this change. Ask the owner of the computer."
             return None, REFUSED
         error = why
         if not pw:

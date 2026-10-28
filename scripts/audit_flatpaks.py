@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check every Flatpak id Code uses against Flathub: does it exist, is it end-of-life, is its runtime end-of-life?
+"""Check every Flatpak id CodeAque uses against Flathub: does it exist, is it end-of-life, is its runtime end-of-life?
 Usage:  python3 scripts/audit_flatpaks.py          (needs internet; read-only; exit code 1 when something is wrong)"""
 import json
 import sys

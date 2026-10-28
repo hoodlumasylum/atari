@@ -1,4 +1,4 @@
-"""Code-only mode: Code must outlive every app it starts, take the screen back when one closes, and never quit by accident."""
+"""CodeAque-only mode: CodeAque must outlive every app it starts, take the screen back when one closes, and never quit by accident."""
 import os
 import stat
 import time
@@ -47,13 +47,13 @@ def play_and_wait(app, b, seconds=15):
 
 @pytest.mark.parametrize("what", ["kill -9 0", "kill -TERM 0", "kill -HUP 0", "kill -9 $PPID"][:3])
 def test_an_app_that_kills_its_whole_process_group_cannot_take_code_down(tmp_path, monkeypatch, what):
-    """The emulator is started in its own session, so signalling 'its group' only reaches itself. If it shared Code's group, this
-    test process (standing in for Code) would be killed and the Code-only session would have ended."""
+    """The emulator is started in its own session, so signalling 'its group' only reaches itself. If it shared CodeAque's group, this
+    test process (standing in for CodeAque) would be killed and the CodeAque-only session would have ended."""
     app, b = make_backend(tmp_path, monkeypatch, f"sleep 0.4\n{what}\n")
     pgid_before = os.getpgrp()
     play_and_wait(app, b)
     assert not b.running and os.getpgrp() == pgid_before                          # we are still here, in our own group
-    assert b.toast                                                                # Code shows what happened (back in the library)
+    assert b.toast                                                                # CodeAque shows what happened (back in the library)
 
 
 def test_every_launch_path_starts_the_app_in_its_own_session(monkeypatch, tmp_path):
@@ -107,14 +107,14 @@ def test_in_code_only_mode_quit_is_a_restart_and_the_window_retakes_the_whole_sc
         def isActive(self): return True
     b._window = Win()
     b._minimized_for_game = True
-    b.cfg.fullscreen = False                                   # even a windowed Code goes full screen again in Code-only mode
+    b.cfg.fullscreen = False                                   # even a windowed CodeAque goes full screen again in CodeAque-only mode
     b._restore_window()
     assert calls[:3] == ["full", "raise", "activate"]
     calls.clear()
     b._restore_window()                                        # not minimised: still re-asserts full screen
     assert calls[:3] == ["full", "raise", "activate"]
-    rows = {r["id"]: r["title"] for r in b.pageRows("power")}                  # the Power page: Restart Code, and no Quit in Code-only mode
-    assert rows["power_restartcode"] == "Restart Code" and "power_quitcode" not in rows
+    rows = {r["id"]: r["title"] for r in b.pageRows("power")}                  # the Power page: Restart CodeAque, and no Quit in CodeAque-only mode
+    assert rows["power_restartcode"] == "Restart CodeAque" and "power_quitcode" not in rows
 
 
 def test_outside_code_only_mode_nothing_changes(tmp_path, monkeypatch):

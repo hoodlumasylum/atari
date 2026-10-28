@@ -25,7 +25,7 @@ def cache_image_path(rom: str, cache_dir: Path | None = None) -> Path:
 
 
 NEEDS_TOOL = ("This Xbox game is an unpacked folder (it has a default.xbe), but xemu can only start a disc image. "
-              "Code can turn the folder into one with the small free tool 'extract-xiso', which is not installed. "
+              "CodeAque can turn the folder into one with the small free tool 'extract-xiso', which is not installed. "
               "Easiest: use the game as a single .iso file instead (put the .iso in your Xbox folder).")
 
 

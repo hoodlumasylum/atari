@@ -178,7 +178,7 @@ def check_new_name(path: Path, new: str) -> str:
 def rename(path: Path, new: str, home: Path | None = None) -> tuple[bool, str]:
     try:
         if not inside_roots(path, home) or is_root(path, home):
-            return False, "Code only renames things inside Downloads, Games and Videos."
+            return False, "CodeAque only renames things inside Downloads, Games and Videos."
         why = check_new_name(path, new)
         if why:
             return False, why
@@ -193,7 +193,7 @@ def delete(path: Path, home: Path | None = None) -> tuple[bool, str]:
     """Delete a file or a folder with everything in it. Never a place itself, never anything outside the places, never through a symlink."""
     try:
         if not inside_roots(path, home) or is_root(path, home):
-            return False, "Code only deletes things inside Downloads, Games and Videos (never those folders themselves)."
+            return False, "CodeAque only deletes things inside Downloads, Games and Videos (never those folders themselves)."
         if path.is_symlink():
             path.unlink()                                       # only the link, never what it points to
             return True, f"Removed the link {path.name}."
@@ -228,7 +228,7 @@ def open_file(path: Path, which: Callable | None = None, popen: Callable | None 
     popen = popen or subprocess.Popen
     cmd = opener(path, which)
     if not inside_roots(path, home):
-        return False, "Code only opens things inside Downloads, Games and Videos."
+        return False, "CodeAque only opens things inside Downloads, Games and Videos."
     if not cmd:
         return False, "No program is set up to open this kind of file (xdg-open is missing)."
     try:
@@ -255,7 +255,7 @@ def tool_for(kind: str, which: Callable | None = None) -> tuple[str, str]:
 
 
 def missing_tool(kind: str, which: Callable | None = None) -> str:
-    """The id of the app Code can install for this kind ('7zip' / 'unrar'), '' when nothing is missing."""
+    """The id of the app CodeAque can install for this kind ('7zip' / 'unrar'), '' when nothing is missing."""
     if tool_for(kind, which)[0]:
         return ""
     return "unrar" if kind == "rar" else "7zip"
@@ -558,15 +558,15 @@ def extract(archive: Path, password: str = "", progress: Callable[[Progress], No
             which: Callable | None = None, run: Callable | None = None, home: Path | None = None, popen: Callable | None = None,
             into: Path | None = None) -> Extraction:
     """Unpack an archive into a new folder beside it. Never raises. On a password problem, needs_password is set; the half-made folder is
-    removed (also after Cancel). `into` unpacks into that (new) folder instead, from anywhere (used for BIOS packs: Code unpacks them into its
+    removed (also after Cancel). `into` unpacks into that (new) folder instead, from anywhere (used for BIOS packs: CodeAque unpacks them into its
     own work folder, copies the files it needs and deletes the folder). progress(Progress) is called as it goes (from the calling thread: run this in a worker)."""
     which = which or shutil.which
     run = run or subprocess.run
     kind = archive_kind(archive)
     if not kind:
-        return Extraction(False, "That is not an archive Code can unpack (zip, tar, 7z, rar).")
+        return Extraction(False, "That is not an archive CodeAque can unpack (zip, tar, 7z, rar).")
     if into is None and not inside_roots(archive, home):
-        return Extraction(False, "Code only unpacks things inside Downloads, Games and Videos.")
+        return Extraction(False, "CodeAque only unpacks things inside Downloads, Games and Videos.")
     if not archive.is_file():
         return Extraction(False, "That file is gone.")
     if archive.name.lower().endswith(downloads.PARTIAL):
@@ -574,7 +574,7 @@ def extract(archive: Path, password: str = "", progress: Callable[[Progress], No
     exe, how = tool_for(kind, which)
     if not exe:
         name = "7-Zip" if kind != "rar" else "unrar (or 7-Zip)"
-        return Extraction(False, f"Code needs {name} to open .{kind} files. Press the Install button below.", needs_tool=missing_tool(kind, which))
+        return Extraction(False, f"CodeAque needs {name} to open .{kind} files. Press the Install button below.", needs_tool=missing_tool(kind, which))
     dest = unique_folder(archive) if into is None else into
     made = False
 
@@ -602,7 +602,7 @@ def extract(archive: Path, password: str = "", progress: Callable[[Progress], No
                 raise
             seven, _ = tool_for("7z", which)
             if not seven:
-                raise FileError("This zip needs 7-Zip (it is encrypted in a way Code's own unzip cannot read). Install 7-Zip below.")
+                raise FileError("This zip needs 7-Zip (it is encrypted in a way CodeAque's own unzip cannot read). Install 7-Zip below.")
             _extract_external("7z", seven, "7z", archive, dest, password, run, report, cancel, popen)
         report(dataclasses.replace(lastpr[0], percent=100.0, done=lastpr[0].total or lastpr[0].done, files_done=lastpr[0].files_total or lastpr[0].files_done))
         return Extraction(True, f"Unpacked into the folder \"{dest.name}\" ({_count(dest)} items).", dest)

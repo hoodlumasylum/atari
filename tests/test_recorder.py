@@ -79,7 +79,7 @@ def test_names_folder_and_listing(tmp_path):
     assert recorder.out_dir(cfg, tmp_path) == tmp_path / "Videos" / "Atari Recordings"
     cfg.rec_dir = str(tmp_path / "mine")
     assert recorder.out_dir(cfg, tmp_path) == tmp_path / "mine"
-    assert recorder.new_filename(0).startswith("Code-1970-") or recorder.new_filename(0).startswith("Code-1969-")
+    assert recorder.new_filename(0).startswith("CodeAque-1970-") or recorder.new_filename(0).startswith("CodeAque-1969-")
     d = tmp_path / "mine"
     d.mkdir()
     (d / "a.mp4").write_bytes(b"1" * 10)

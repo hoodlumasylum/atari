@@ -1,5 +1,5 @@
-"""The rename from "Atari" to "Code" must not break an existing 0.3.x install: same command, same folders, same desktop /
-autostart / Code-only files, and the in-app updater keeps working. (Paths and the repo address are deliberately unchanged.)"""
+"""The rename from "Atari" to "CodeAque" must not break an existing 0.3.x install: same command, same folders, same desktop /
+autostart / CodeAque-only files, and the in-app updater keeps working. (Paths and the repo address are deliberately unchanged.)"""
 import os
 import re
 import stat
@@ -29,15 +29,15 @@ def test_the_product_is_called_code_everywhere_a_person_reads_it():
 
 
 def test_window_name_desktop_entry_and_wordmark():
-    assert "Name=Code" in (ROOT / "packaging/atari.desktop.in").read_text()
+    assert "Name=CodeAque" in (ROOT / "packaging/atari.desktop.in").read_text()
     main = (ROOT / "atarilauncher/__main__.py").read_text()
-    assert 'setApplicationName("Code")' in main and 'setDesktopFileName("atari")' in main      # file name kept: autostart still matches
-    assert (ROOT / "atarilauncher/assets/code-logo.png").stat().st_size > 10_000
-    assert "code-logo.png" in (ROOT / "atarilauncher/qml/Wordmark.qml").read_text()
+    assert 'setApplicationName("CodeAque")' in main and 'setDesktopFileName("atari")' in main      # file name kept: autostart still matches
+    assert (ROOT / "atarilauncher/assets/codeaque-logo.png").stat().st_size > 10_000
+    assert "codeaque-logo.png" in (ROOT / "atarilauncher/qml/Wordmark.qml").read_text()
 
 
 def test_an_old_032_home_still_loads_unchanged(tmp_path, monkeypatch):
-    """~/.config/atari, ~/.local/share/atari and ~/Games/Atari are still where Code looks."""
+    """~/.config/atari, ~/.local/share/atari and ~/Games/Atari are still where CodeAque looks."""
     home = tmp_path
     monkeypatch.setenv("HOME", str(home))
     for k in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "ATARI_CONFIG_DIR", "ATARI_DATA_DIR"):
@@ -69,7 +69,7 @@ def test_an_existing_code_only_install_is_still_recognised_and_removable(tmp_pat
     assert kiosk.enabled(lay)                                                  # the old files are exactly what 0.4 looks for
     assert kiosk.SESSION_NAME == "atari" and lay.session_script.endswith("atari-session")
     new_xs = kiosk.render_xsession("/usr/local/bin/atari-session")
-    assert "Name=Code" in new_xs
+    assert "Name=CodeAque" in new_xs
 
 
 def test_the_updater_still_finds_atari_named_assets_and_the_old_repo(monkeypatch):
@@ -124,8 +124,8 @@ def test_upgrade_keeps_the_atari_command_adds_code_and_renames_the_menu_entry(tm
     assert (home / ".local/bin/code").resolve() == (app / "run.sh").resolve()
     assert (home / ".local/bin/code-launcher").is_symlink()
     entry = (home / ".local/share/applications/atari.desktop").read_text()
-    assert "Name=Code" in entry and f"Exec={app}/run.sh" in entry and "Icon=atari-launcher" in entry
-    assert "Name=Code" in (home / ".config/autostart/atari.desktop").read_text()        # an existing autostart is refreshed, not removed
+    assert "Name=CodeAque" in entry and f"Exec={app}/run.sh" in entry and "Icon=atari-launcher" in entry
+    assert "Name=CodeAque" in (home / ".config/autostart/atari.desktop").read_text()        # an existing autostart is refreshed, not removed
     assert (home / ".local/share/icons/hicolor/256x256/apps/atari-launcher.png").is_file()
     assert (home / ".local/share/icons/hicolor/scalable/apps/atari-launcher.svg").is_file()
 
@@ -165,19 +165,20 @@ def test_uninstall_removes_only_its_own_code_link(tmp_path):
     assert other.read_text() == "vscode"
 
 
-def test_branding_files_exist_for_stickers():
-    b = ROOT / "docs/branding"
-    svg = (b / "code-sticker.svg").read_text()
-    assert 'fill="#000000"' in svg and "gradient" not in svg.lower() and "stroke" not in svg.lower() and "<image" not in svg
+def test_branding_files_exist():
     from PySide6.QtGui import QImage
-    im = QImage(str(b / "code-sticker.png"))
-    assert im.hasAlphaChannel() and im.width() >= 3000
-    colours = set()
-    for x in range(0, im.width(), 7):
-        for y in range(0, im.height(), 7):
-            c = im.pixelColor(x, y)
-            if c.alpha() > 250:
-                colours.add((c.red(), c.green(), c.blue()))
-    assert colours == {(0, 0, 0)}                                              # one colour, black
-    assert im.pixelColor(2, 2).alpha() == 0                                    # transparent background
-    assert (b / "code-logo.png").is_file() and (b / "README.md").is_file()
+    b = ROOT / "docs/branding"
+    for n in ("codeaque-logo-source.png", "codeaque-logo.png", "codeaque-banner.png", "codeaque-cutline.png", "README.md"):
+        assert (b / n).is_file(), n
+    assert not (b / "code-sticker.svg").exists() and not (b / "code-logo.png").exists()          # the old logo is gone
+    logo = QImage(str(b / "codeaque-logo.png"))
+    assert logo.hasAlphaChannel() and logo.width() >= 1000 and logo.pixelColor(2, 2).alpha() == 0     # transparent background
+    cut = QImage(str(b / "codeaque-cutline.png"))
+    assert cut.width() >= 1500 and cut.pixelColor(2, 2).alpha() == 0
+    text = (b / "README.md").read_text()
+    assert "1254" in text and "print" in text.lower() and "AI" in text                         # honest about size and rights
+    for n in ("codeaque-logo.png", "codeaque-icon.png"):
+        im = QImage(str(ROOT / "atarilauncher/assets" / n))
+        assert im.hasAlphaChannel() and im.pixelColor(1, 1).alpha() == 0 and im.width() >= 500
+    for n in (512, 256, 128, 64):
+        assert QImage(str(ROOT / f"packaging/icons/code-{n}.png")).width() == n

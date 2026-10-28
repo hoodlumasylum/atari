@@ -1,13 +1,13 @@
 """Go Live: stream your gameplay with OBS Studio (free, open source), plus the web dashboards of Twitch, YouTube Live and TikTok LIVE.
 
-What Code does: installs OBS (one button), writes ONE ready-made OBS scene collection called "Code Go Live" (a full-screen capture
+What CodeAque does: installs OBS (one button), writes ONE ready-made OBS scene collection called "Code Go Live" (a full-screen capture
 + your desktop sound + microphone) if you do not have one yet, and starts OBS with it. You paste your own stream key into OBS
-(Settings > Stream). Code never sees, stores or sends a stream key and does not touch your accounts.
+(Settings > Stream). CodeAque never sees, stores or sends a stream key and does not touch your accounts.
 
 Honest limits: OBS' "Game Capture" source is Windows-only. On Linux the scene captures the whole screen (X11: "Screen Capture (XSHM)",
 Wayland: "Screen Capture (PipeWire)" - a system window asks you to pick the screen the first time). TikTok's "LIVE Studio" app is
 Windows / macOS only; on Linux you stream to TikTok through OBS with the server URL + stream key that TikTok shows on its web LIVE
-page - and TikTok only gives those keys to accounts that qualify (its rules change; Code cannot check them for you).
+page - and TikTok only gives those keys to accounts that qualify (its rules change; CodeAque cannot check them for you).
 The scene file was written to OBS' documented format but has not been tried with every OBS version.
 """
 from __future__ import annotations
@@ -106,5 +106,5 @@ def start_obs(cfg, home: Path | None = None, which: Callable = shutil.which, pop
         return False, f"Could not start OBS: {exc.strerror or exc}"
     msg = "Opening OBS with the \"Code Go Live\" scene (your whole screen)."
     if f is None:
-        msg = "Opening OBS (Code could not write its scene file, so OBS starts the normal way)."
+        msg = "Opening OBS (CodeAque could not write its scene file, so OBS starts the normal way)."
     return True, msg + " Paste your stream key in Settings > Stream, then press Start Streaming. " + SECRET_TEXT

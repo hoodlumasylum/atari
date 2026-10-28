@@ -47,7 +47,7 @@ fi''',
         f = bin_ / name
         f.write_text(f'#!/bin/sh\necho "{name} $*" >> "{log}"\n[ "$FAIL" = "{name}" ] && exit 1\n{body}\nexit 0\n')
         f.chmod(0o755)
-    logo = tmp_path / "code-logo.png"
+    logo = tmp_path / "codeaque-logo.png"
     logo.write_bytes(b"\x89PNG fake")
     lay = quietboot.Layout(root=root)
     lay.state = state
@@ -148,7 +148,7 @@ def test_turning_it_off_removes_everything_and_gives_mint_its_splash_back(machin
 
 
 @pytest.mark.parametrize("failing,step", [("update-grub", "rebuilding the boot menu"), ("update-initramfs", "rebuilding the boot image"),
-                                           ("plymouth-set-default-theme", "choosing the Code boot-splash theme")])
+                                           ("plymouth-set-default-theme", "choosing the CodeAque boot-splash theme")])
 def test_a_failed_step_puts_everything_back_and_names_the_step(machine, failing, step):
     lay, bin_, log, logo = machine
     ok, text = quietboot.enable(lay, lambda c, o, x: run_script(c[3], bin_, fail=failing), logo=logo, which=which_all)
@@ -175,7 +175,7 @@ def test_a_boot_image_without_the_theme_is_caught(machine):
     ls.write_text("#!/bin/sh\necho usr/share/plymouth/themes/mint-logo/mint-logo.plymouth\n")
     ls.chmod(0o755)
     ok, text = quietboot.enable(lay, lambda c, o, x: run_script(c[3], bin_), logo=logo, which=which_all)
-    assert not ok and "boot image contains the Code theme" in text and not quietboot.enabled(lay)
+    assert not ok and "boot image contains the CodeAque theme" in text and not quietboot.enabled(lay)
     ls.write_text("#!/bin/sh\necho usr/share/plymouth/themes/code/code.plymouth\n")
     assert quietboot.enable(lay, lambda c, o, x: run_script(c[3], bin_), logo=logo, which=which_all)[0]
 
@@ -281,7 +281,7 @@ def test_recovery_text_names_the_exact_undo_commands():
 
 
 def test_the_bundled_logo_exists_and_is_code_branding():
-    assert quietboot.logo_path().is_file() and quietboot.logo_path().name == "code-logo.png"
+    assert quietboot.logo_path().is_file() and quietboot.logo_path().name == "codeaque-logo.png"
 
 
 def test_settings_row_and_screen_always_show_a_visible_result(app, tmp_path, monkeypatch, machine):

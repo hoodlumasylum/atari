@@ -80,7 +80,7 @@ def test_wikipedia_picture_is_used_with_a_proper_user_agent(fake, tmp_path):
     rep = dl(fake, tmp_path, wikipedia=True).run(covers.jobs_for_games([g], tmp_path / "c"))
     assert rep.got == 1
     assert (tmp_path / "c" / "dreamcast" / "Shenmue (USA) (Disc 1).png").read_bytes() == JPG
-    assert fake.ua_seen and all("Code" in u and "/" in u for u in fake.ua_seen)
+    assert fake.ua_seen and all("Code-Launcher" in u and "/" in u for u in fake.ua_seen)
 
 
 def test_wikipedia_is_off_unless_switched_on_and_wrong_pages_are_ignored(fake, tmp_path):

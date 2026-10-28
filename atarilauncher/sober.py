@@ -1,11 +1,11 @@
 """Roblox on Linux goes through Sober (Flatpak org.vinegarhq.Sober). Its only supported install route is Flathub:
     flatpak install flathub org.vinegarhq.Sober        (verified at sober.vinegarhq.org and flathub.org, 2026)
 There is NO official .flatpak bundle or .flatpakref to download - a file saved from some web page and opened by hand in
-Linux Mint's installer gives "Invalid Bundle". Code installs it from Flathub itself (per user, --noninteractive).
+Linux Mint's installer gives "Invalid Bundle". CodeAque installs it from Flathub itself (per user, --noninteractive).
 
 Sober's stated needs: x86-64 CPU with SSE4.1 (SSE4.2 recommended), Linux kernel 5.11+, OpenGL ES 3.0; Vulkan 1.1 is
 recommended (Sober falls back to OpenGL without it). The Flatpak brings its own Mesa, so host Vulkan drivers are not
-strictly required - but if the computer has none at all, Code offers the mesa-vulkan-drivers package (pkexec) as a
+strictly required - but if the computer has none at all, CodeAque offers the mesa-vulkan-drivers package (pkexec) as a
 best-effort extra, because it makes Roblox much smoother on Intel graphics (e.g. the Dell Latitude 5420's Iris Xe).
 Everything here reads from injectable inputs so tests do not need the real machine."""
 from __future__ import annotations
@@ -25,7 +25,7 @@ FIRST_RUN_NOTE = ("First start: Sober opens a window that offers to download Rob
                   "screen helps on the sign-in page). Later starts open Roblox straight away.")
 INVALID_BUNDLE_TEXT = ("Linux Mint says \"Invalid Bundle\" when you open a downloaded .flatpak or .flatpakref file by hand: Sober has no "
                        "official file to download - it only comes from Flathub. Do not open downloaded files; press Install on the Roblox "
-                       "tile in Code instead (Code installs it from Flathub for you).")
+                       "tile in CodeAque instead (CodeAque installs it from Flathub for you).")
 
 
 @dataclass
@@ -78,7 +78,7 @@ def preflight(machine: str | None = None, release: str | None = None, cpuinfo: s
         out.append(Check("vulkan", True, False, "Graphics (Vulkan): OK."))
     else:
         out.append(Check("vulkan", False, False, "No Vulkan graphics driver found on this computer. Roblox can still start (Sober falls back to OpenGL) "
-                                                  "but is smoother with the mesa-vulkan-drivers package, which Code can install."))
+                                                  "but is smoother with the mesa-vulkan-drivers package, which CodeAque can install."))
     return out
 
 
@@ -96,7 +96,7 @@ def needs_vulkan_driver(checks: list[Check]) -> bool:
 # What this screen is (researched Oct 2026: Sober's own Troubleshooting page and the vinegarhq/sober issues
 # #2375, #2376, #2384 of July 2026): Sober normally downloads the Roblox Android app itself - through its update service
 # (sober.vinegarhq.org) which talks to Google Play. When that download fails twice, Sober falls back to asking for the
-# APK by hand. That is NOT something Code or the user did wrong, and it is not "Roblox dropped x86_64". Causes seen:
+# APK by hand. That is NOT something CodeAque or the user did wrong, and it is not "Roblox dropped x86_64". Causes seen:
 #   * Sober's update service was broken for a day or two (28-31 July 2026; Cloudflare error 1101) - it was repaired on
 #     the server side, with no new Sober version needed, and Sober then downloaded the app by itself again;
 #   * the network / ISP / DNS blocks Google Play's API or Sober's server (Sober's docs: use another DNS such as
@@ -104,7 +104,7 @@ def needs_vulkan_driver(checks: list[Check]) -> bool:
 #   * a very old Linux (one Ubuntu 22.04 user only got it working after moving to 24.04).
 # What Sober's docs recommend: check the internet, change DNS / VPN, `flatpak update`, try again later. The manual route
 # needs the exact Roblox version as a base APK plus the x86_64 split from "a trusted source" - Roblox publishes no Linux
-# APK and Code never downloads or bundles one. So when the cause is Sober's server or the network, Code cannot
+# APK and CodeAque never downloads or bundles one. So when the cause is Sober's server or the network, CodeAque cannot
 # fix it for you; it updates Sober, checks the connection, retries once and then says exactly that.
 MANIFEST_URL = "https://sober.vinegarhq.org/app"
 PLAY_URL = "https://play.googleapis.com/"
@@ -117,11 +117,11 @@ BUNDLE_HELP = ("Roblox asks for an \"application bundle (APK)\": that is Sober's
                "by itself. Nothing is broken on your side and your account is fine. Usually it is a temporary problem with "
                "Sober's download service or with the internet connection / DNS (Sober's server was down for a day in "
                "July 2026 and came back by itself). What to do: 1) close that window, check the internet, wait a few minutes "
-               "and press Roblox again - Code already updates Sober and retries once for you; 2) if it keeps happening, an "
+               "and press Roblox again - CodeAque already updates Sober and retries once for you; 2) if it keeps happening, an "
                "adult can set the computer's DNS to 1.1.1.1 (Cloudflare) in Network settings, or use a VPN, because some "
                "internet providers block the Google service Sober uses; 3) Options > Fix my game > Roblox has an \"Update "
-               "Sober and test the connection\" button. Code cannot download Roblox's app for you: Roblox does not offer a "
-               "Linux file and Code never fetches one from unofficial sites. Picking a file by hand in that window only "
+               "Sober and test the connection\" button. CodeAque cannot download Roblox's app for you: Roblox does not offer a "
+               "Linux file and CodeAque never fetches one from unofficial sites. Picking a file by hand in that window only "
                "works with the exact Roblox version it names plus the x86_64 part, from a source you trust - not recommended "
                "for kids.")
 
@@ -222,7 +222,7 @@ def update_sober(run: Callable | None = None, timeout: float = 900) -> tuple[boo
 
 def recovery_note(retried: bool, checks: list[Check]) -> str:
     return ("Roblox could not download itself through Sober (it asked for an \"APK bundle\"). "
-            + ("Code updated Sober and tried again, but it still failed. " if retried else "")
+            + ("CodeAque updated Sober and tried again, but it still failed. " if retried else "")
             + explain(checks) + " The next screen has a Run fix button and the log paths.")
 
 
@@ -232,7 +232,7 @@ OVERRIDE_ARGS = ["flatpak", "override", "--user", "--filesystem=xdg-run/app/com.
                  "--filesystem=xdg-run/discord-ipc-0", "--device=all", FLATPAK_ID]
 OVERRIDE_COMMAND = " ".join(OVERRIDE_ARGS)
 OVERRIDE_PLAIN = ("Sober asks for two extra permissions: to use all the computer's devices (controllers, graphics) and to reach Discord's "
-                  "chat link if Discord is running. Code gives them with this one command, for your user only and for Sober only "
+                  "chat link if Discord is running. CodeAque gives them with this one command, for your user only and for Sober only "
                   "(nothing else changes, no password): " + OVERRIDE_COMMAND)
 PERMISSION_MARKERS = ("permission update required", "flatpak override", "--device=all", "xdg-run/discord-ipc")
 
@@ -287,7 +287,7 @@ def apply_override(run: Callable | None = None) -> tuple[bool, str]:
 #  * July 2026 (issue #2376): Sober's own update service (sober.vinegarhq.org/update) answered HTTP 500 "error code: 1101" for about two
 #    days; it recovered with NO new Sober version. Reinstalling Sober did nothing in that case. Only waiting helped.
 #  * "Select Application Bundle" does nothing without a working D-Bus session and the desktop portals (issue #1818) - which a
-#    Code-only session may lack. A manual bundle must be the exact version named, base APK + x86_64 split, from a source you trust.
+#    CodeAque-only session may lack. A manual bundle must be the exact version named, base APK + x86_64 split, from a source you trust.
 #  * The wanted version is in ~/.var/app/org.vinegarhq.Sober/data/sober/state ; logs in .../sober/sober_logs/.
 STATE_FILE = "~/.var/app/org.vinegarhq.Sober/data/sober/state"
 LATEST_LOG = "~/.var/app/org.vinegarhq.Sober/data/sober/sober_logs/latest.log"
@@ -377,7 +377,7 @@ def run_fix(run: Callable | None = None, probe: Callable[[str], int] | None = No
     if not has_flathub:
         rc2, out2 = sh(["flatpak", "remote-add", "--user", "--if-not-exists", "flathub", FLATHUB_URL])
         steps.append(Step("flathub", "The Flathub store is set up", rc2 == 0,
-                          "It was missing, so Code added it for you (only for your user)." if rc2 == 0 else
+                          "It was missing, so CodeAque added it for you (only for your user)." if rc2 == 0 else
                           "It was missing and could not be added: " + out2[-160:]))
     else:
         steps.append(Step("flathub", "The Flathub store is set up", True, "Yes."))
@@ -403,7 +403,7 @@ def run_fix(run: Callable | None = None, probe: Callable[[str], int] | None = No
         else:
             ok_o, tail_o = apply_override(run)
             steps.append(Step("permissions", "Sober has the permissions it asks for", ok_o,
-                              "Code gave them with:  " + OVERRIDE_COMMAND if ok_o else "That command failed: " + tail_o[-160:], changed=ok_o))
+                              "CodeAque gave them with:  " + OVERRIDE_COMMAND if ok_o else "That command failed: " + tail_o[-160:], changed=ok_o))
 
     # 3 DNS + internet
     resolve = resolve or resolves
@@ -429,7 +429,7 @@ def run_fix(run: Callable | None = None, probe: Callable[[str], int] | None = No
     # 5 file picker (only matters for the manual route)
     p_ok = (portal or portal_running)()
     steps.append(Step("portal", "The file picker works (needed only to choose a file by hand)", p_ok,
-                      "Yes." if p_ok else "No desktop portal is running (common in Code-only mode), so \"Select Application Bundle\" "
+                      "Yes." if p_ok else "No desktop portal is running (common in CodeAque-only mode), so \"Select Application Bundle\" "
                       "may do nothing. You should not need it: let Sober download Roblox itself."))
 
     # verdict: the first real problem, else the honest "it is Sober's side"
@@ -441,8 +441,8 @@ def run_fix(run: Callable | None = None, probe: Callable[[str], int] | None = No
         v = requested_version(home)
         verdict = ("Everything on this computer looks right" + (f" (Sober wants Roblox {v})" if v else "") + ". Press Roblox again. If it still "
                    "asks for a bundle, the cause is Sober's own download service (in July 2026 it failed for two days and then fixed "
-                   "itself) - nothing Code can repair. Try again in a few hours, and ask for help on Sober's support page (vinegarhq.org) "
+                   "itself) - nothing CodeAque can repair. Try again in a few hours, and ask for help on Sober's support page (vinegarhq.org) "
                    "with the log named below.")
     if any(st.changed for st in steps):
-        verdict = ("Code gave Sober the permission it asked for (" + OVERRIDE_COMMAND + ") and will start Roblox again now. " + verdict)
+        verdict = ("CodeAque gave Sober the permission it asked for (" + OVERRIDE_COMMAND + ") and will start Roblox again now. " + verdict)
     return steps, verdict

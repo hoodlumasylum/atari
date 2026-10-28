@@ -1,4 +1,4 @@
-"""The start-up intro: your own video (played by an external player, skippable, never longer than the clip), Code's own
+"""The start-up intro: your own video (played by an external player, skippable, never longer than the clip), CodeAque's own
 animation, the Settings rows + file picker, and real playback on a headless X server with a generated test clip."""
 import os
 import shutil
@@ -74,7 +74,7 @@ def test_install_copies_replaces_and_refuses_the_wrong_things(tmp_path):
 def test_plan_follows_the_two_switches_and_the_env(tmp_path):
     cfg = config.default_config()
     nop = lambda n: None
-    assert intro.plan(cfg, tmp_path, {}, which=nop).mode == "default"          # nothing chosen, no player: Code's own animation
+    assert intro.plan(cfg, tmp_path, {}, which=nop).mode == "default"          # nothing chosen, no player: CodeAque's own animation
     b = intro.plan(cfg, tmp_path, {}, which=lambda n: "/usr/bin/" + n)
     assert b.mode == "builtin" and b.file == intro.bundled_file()              # nothing chosen, a player exists: the shipped video
     (tmp_path / "intro.mp4").write_bytes(b"v")
@@ -116,7 +116,7 @@ def test_the_intro_screen_and_window_are_full_screen_with_no_pointer_even_in_win
     from pathlib import Path
     qml = Path(intro.__file__).parent / "qml"
     main = (qml / "Main.qml").read_text()
-    assert 'mode === "intro" && Qt.platform.pluginName !== "offscreen")) ? Window.FullScreen' in main                     # full screen during the intro, desktop or Code-only mode
+    assert 'mode === "intro" && Qt.platform.pluginName !== "offscreen")) ? Window.FullScreen' in main                     # full screen during the intro, desktop or CodeAque-only mode
     assert "Qt.BlankCursor" in (qml / "Intro.qml").read_text()
 
 
@@ -309,7 +309,7 @@ def test_atari_own_intro_shows_the_wordmark_plays_its_sound_and_ends(app, tmp_pa
         img = ui.win.grabWindow()
         gold = sum(1 for x in range(0, img.width(), 8) for y in range(0, img.height(), 8)
                    if (lambda c: c.red() > 150 and c.green() > 100 and c.blue() < 90)(img.pixelColor(x, y)))
-        assert gold > 20                                                     # the gold Code logo is really drawn
+        assert gold > 20                                                     # the gold CodeAque logo is really drawn
         assert any(t == "Press any key to skip" for t, _ in texts(ui))
         assert wait_for(app, lambda: ui.mode == "library", 8), ui.mode      # it ends by itself after its length
         assert not ui.backend.introActive and not ui.warnings, ui.warnings
@@ -588,7 +588,7 @@ def test_no_third_party_logo_or_video_is_shipped():
     root = Path(__file__).resolve().parent.parent
     shipped = [p.relative_to(root).as_posix() for p in (root / "atarilauncher").rglob("*")
                if p.suffix.lower() in (".mp4", ".webm", ".mkv", ".mov", ".avi")]
-    assert shipped == ["atarilauncher/assets/intro/code-intro.mp4"]        # exactly one clip: the project owner's own Code intro
+    assert shipped == ["atarilauncher/assets/intro/code-intro.mp4"]        # exactly one clip: the project owner's own CodeAque intro
     assert (root / "atarilauncher" / "assets" / "sfx" / "intro.wav").is_file()
 
 

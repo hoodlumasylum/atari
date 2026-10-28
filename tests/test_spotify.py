@@ -1,4 +1,4 @@
-"""Spotify tiles (desktop app + web player) that keep playing behind Code, and the top bar's playerctl / MPRIS music buttons."""
+"""Spotify tiles (desktop app + web player) that keep playing behind CodeAque, and the top bar's playerctl / MPRIS music buttons."""
 import subprocess
 import time
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthesises Code's UI sounds from scratch (sine waves, noise and envelopes - no samples, nothing from anyone else).
+"""Synthesises CodeAque's UI sounds from scratch (sine waves, noise and envelopes - no samples, nothing from anyone else).
 
     python3 scripts/make_sounds.py            # writes atarilauncher/assets/sfx/*.wav
 

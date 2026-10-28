@@ -1,7 +1,7 @@
 """Music in the background: what is playing and play / pause / next / previous, for the small control in the top bar.
 
 Spotify (the desktop app, Flatpak com.spotify.Client, or its web player in a browser) and most other players publish
-themselves on the desktop's MPRIS interface. `playerctl` (the standard small tool, apt package "playerctl") talks to it; Code only
+themselves on the desktop's MPRIS interface. `playerctl` (the standard small tool, apt package "playerctl") talks to it; CodeAque only
 runs it with a short timeout and never needs a login, key or network. With no playerctl, or no player, the control stays hidden.
 Spotify is asked first, then any other player. Nothing here knows Spotify's logo or artwork: the tiles' icons are fetched at runtime.
 """
