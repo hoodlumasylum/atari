@@ -31,6 +31,19 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
+## What's new in 0.4.6
+
+- **Quiet boot: the boot menu no longer pops up (audit of Mint / Ubuntu GRUB behaviour).** Causes found by reading Ubuntu's and Mint's GRUB scripts (not observed on the Dell - see "Not tested"):
+  1. *Ubuntu's `30_os-prober` forces the menu* (`timeout_style=menu`, 10 s) whenever os-prober finds another system, and Mint turns os-prober back on in `50_linuxmint.cfg` (`GRUB_DISABLE_OS_PROBER=false`). Windows deleted, but a leftover "Windows Boot Manager" on the EFI partition or an NTFS recovery partition (Dell SupportAssist / WinRE) is enough.
+  2. *`00_header` shows the menu after any boot that did not finish* ("recordfail": `set timeout=${GRUB_RECORDFAIL_TIMEOUT:-30}` and `timeout_style=menu`), e.g. after a power-button shutdown - and always on UEFI when GRUB cannot write its `grubenv`.
+  3. *Code 0.4.5 left the menu visible* when another system looked present (logo and text only), and its page then still said "no boot menu". Now the page says so and offers **Hide the boot menu too**, and the "another system" note names the Windows-type partitions (with a Dell recovery hint).
+  Fix: Quiet boot now also writes `/boot/grub/custom.cfg` (a marked block: `timeout_style=hidden`, `timeout=2`). `41_custom` reads it at the very end of `grub.cfg`, so it beats both rules above (Esc / Shift in the 2 s window still shows the menu; Turn off removes only Code's block and keeps anything else in that file). It also sets `GRUB_RECORDFAIL_TIMEOUT=2`, clears a stale `recordfail`, and checks that `update-grub` really rewrote `/boot/grub/grub.cfg` (a new step fails and rolls back if it did not). After turning it on, Code reads `grub.cfg`, `custom.cfg` and the rest back and shows the real result in the page ("menu hidden, 2 s window; custom.cfg last word: yes; quiet splash: yes", or what is NOT applied); the read-back also lists what could still show the menu.
+- **Copy boot report.** A button on the Quiet boot page and in Settings saves `~/Downloads/code-boot-report.txt`: Code version, OS / kernel / UEFI / Secure Boot, `/etc/default/grub` and every `grub.d/*.cfg` (uncommented lines), `custom.cfg`, the boot-state keys of `grubenv`, the timeout / menu / quiet lines of `grub.cfg`, `efibootmgr -v`, `lsblk`, Plymouth, the read-back, and the boot lines of Code's session log. No passwords (lines that look like secrets are left out).
+- **The Dell logo is firmware.** The logo at power-on is drawn by the computer's UEFI / BIOS before Linux or GRUB runs, so Code cannot remove it. Settings and the Quiet boot page now say so, with the hint to look in the BIOS (F2) for Fast Boot (POST Behavior > Fastboot) and any "logo" / "Full Screen Logo" option; some models have no switch.
+- **Unpacking shows a percentage bar.** Extract here runs in the background (the screen stays responsive) and shows a bar with the percentage, the file being unpacked, "x MB of y MB - file 3 of 12", and a **Cancel** button (Esc / B too; Cancel removes the half-made folder). zip and tar are byte-based (written in 1 MB pieces, so even one huge file moves and Cancel reacts at once); 7z and rar read the tool's own percentage and its listed total size (or count the bytes written so far); with no total known the bar slides to and fro. The end shows a success or error message.
+- **Fixed: games you put into `~/Games/Atari/xbox` (e.g. Shenmue 2) were not shown.** Cause (reproduced with a test): Code only scanned folders saved in Settings, and `~/Games/Atari/<system>` was only remembered after Code itself had copied a game there - a file dropped in by hand was invisible (this affected every console, not just Xbox; Xbox itself, xemu and its `.iso` / `.xiso` / unpacked `default.xbe` folder support were already there). Now `~/Games/Atari/<system>` (and `~/Games/Code/<system>`) is always scanned: the folder name may be the system id, its name or an alias, in any letter case (`xbox`, `Xbox`, `xbox-classic`, `Xbox Classic`, `originalxbox`, `xiso`, `ps2`, `PlayStation 2` ...), press Rescan. A folder Code does not recognise (e.g. `Xbox Games`) or a game file lying loose in `~/Games/Atari` is **flagged**: a toast on start and Rescan, the empty-library screen and Settings say which folder and which system it looks like (guessed from the name or from inside the disc image), and a **Fix** button renames the folder (or moves the file) for you - never overwriting. Xbox guide: the Emulators page now lists the files you must supply from your own Xbox (`mcpx_1.0.bin` boot ROM, BIOS `Complex_4627v1.03.bin`, `xbox_hdd.qcow2` hard-disk image, optional `eeprom.bin`) with `[found]` / `[needed]`, and where the games go. Nothing is bundled or downloaded.
+- **BIOS packs: zip / 7z / rar / tar in Add BIOS files.** Add BIOS files has a new **Choose a zipped BIOS pack...** (a file chooser that also reads USB sticks), and the file viewer (**My files**) has **Use as BIOS pack** on every archive. Code unpacks it in the background into its own work folder with the same percentage bar, file name and Cancel as the file viewer (a protected pack asks for the password), finds the files each emulator needs (also Xbox: boot ROM, BIOS under its usual names, any `.qcow2` hard-disk image becomes `xbox_hdd.qcow2`, `eeprom.bin`), shows what was found and **what is still missing** per console, copies the ticked files to the right folders (xemu: its data folder and a `xemu.toml` when all three required files are there), deletes the unpacked copy and ends with "Still missing: ..." or "Nothing else is missing". Your pack is never changed; no BIOS is bundled or downloaded. A multi-GB Xbox disk image is copied as one file, so its copy step shows file count, not bytes.
+
 ## What's new in 0.4.5
 
 - **Quiet boot / password bug fixed: Code now asks for the administrator password on its own screen.** The old button relied on pkexec (a polkit password window), which cannot appear in Code-only mode (no desktop, no authentication agent) or sits behind Code. Every privileged action (Quiet boot on/off, Update Code-only mode, installing the window manager, installing apps, power fallback) now opens Code's own password box (on-screen keyboard works with a controller; the password is shown as dots) and runs the command with `sudo -S`. The password is only sent to sudo's standard input - never put on a command line, in the environment, in config or in session.log - and is kept in memory for at most 90 s so a multi-step action asks once. A wrong password asks again with the reason (5 tries); Esc / Cancel is a clean "password window was closed - nothing changed"; a user not allowed to use sudo gets a plain message. Where no in-app dialog exists (tests, command line) nothing changes (pkexec).
@@ -80,7 +93,7 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 - **If the in-app updater cannot be trusted on your connection, one command does the same by hand** (resumes if it drops, checks the SHA256 against the release's own list, keeps your settings and games):
 
   ```bash
-  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.4.5.tar.gz https://github.com/hoodlumasylum/atari/releases/download/v0.4.5/atari-0.4.5.tar.gz && curl -fsSL https://github.com/hoodlumasylum/atari/releases/download/v0.4.5/SHA256SUMS.txt | grep ' atari-0.4.5.tar.gz$' | sha256sum -c - && tar xzf atari-0.4.5.tar.gz && cd atari-0.4.5 && ./install.sh --yes
+  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.4.6.tar.gz https://github.com/hoodlumasylum/atari/releases/download/v0.4.6/atari-0.4.6.tar.gz && curl -fsSL https://github.com/hoodlumasylum/atari/releases/download/v0.4.6/SHA256SUMS.txt | grep ' atari-0.4.6.tar.gz$' | sha256sum -c - && tar xzf atari-0.4.6.tar.gz && cd atari-0.4.6 && ./install.sh --yes
   ```
 
 ## What's new in 0.4.1
@@ -302,13 +315,13 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.4.5.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
+1. Download **`atari-0.4.6.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
 2. Open a **Terminal** and type:
 
    ```bash
    cd ~/Downloads
-   tar xzf atari-0.4.5.tar.gz
-   cd atari-0.4.5
+   tar xzf atari-0.4.6.tar.gz
+   cd atari-0.4.6
    ./install.sh
    ```
 

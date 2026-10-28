@@ -12,6 +12,7 @@ Item {
     readonly property string st: backend.importState
     signal closed()
     signal browseRequested()
+    signal packRequested()
 
     readonly property bool bios: backend.importKind === "bios"
     function open(kind) {
@@ -38,7 +39,7 @@ Item {
             else if (k === Qt.Key_Down) driveList.move(1)
             else if (k === Qt.Key_F || k === Qt.Key_F5) refreshDrives()
             else if (isEnter(k) || k === Qt.Key_Space) activateRow(driveList.currentIndex)
-        } else if (st === "scanning" || st === "copying") {
+        } else if (st === "scanning" || st === "copying" || st === "unpacking") {
             if (k === Qt.Key_Escape || isEnter(k)) {
                 var copying = st === "copying"
                 backend.cancelImport()
@@ -94,6 +95,7 @@ Item {
         if (r.kind === "drive") backend.startImportScan(r.path)
         else if (r.kind === "refresh") refreshDrives()
         else if (r.kind === "browse") browseRequested()
+        else if (r.kind === "pack") packRequested()
         else closed()
     }
 
@@ -136,6 +138,7 @@ Item {
                 font.pixelSize: 20 * imp.u
                 text: imp.st === "drives" ? (imp.bios ? "Copy BIOS / firmware from your own consoles (on a USB stick or folder) to the emulators. Your stick is only read."
                                                    : "Copy games from a USB stick into your library. Your stick is only read, never changed.")
+                    : imp.st === "unpacking" ? "Unpacking the BIOS pack - it is deleted again when the files are copied."
                     : imp.st === "scanning" ? (imp.bios ? "Looking for BIOS files..." : "Looking for games...")
                     : imp.st === "list" ? (imp.bios ? "Tick the files to copy. Each goes to the right folder for its emulator."
                                                     : "Tick the games to copy. They go to ~/Games/Atari/<console> (or your folder for that console).")
@@ -374,7 +377,7 @@ Item {
     Item {
         anchors.fill: parent
         anchors.topMargin: 190 * imp.u
-        visible: imp.st === "copying"
+        visible: imp.st === "copying" || imp.st === "unpacking"
         Column {
             anchors.horizontalCenter: parent.horizontalCenter
             spacing: 22 * imp.u

@@ -6,13 +6,14 @@ import shutil
 import subprocess
 import sys
 import threading
+import dataclasses
 import time
 from pathlib import Path
 
 from PySide6.QtCore import Property, QObject, QProcess, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QKeyEvent
 
-from . import donate, power, rootauth, files, steamfix, downloads, golive, icons, inputfix, intro, kiosk, quietboot, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
+from . import donate, gamesroot, power, rootauth, files, steamfix, downloads, golive, icons, inputfix, intro, kiosk, quietboot, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
 from . import __version__
 from .config import Config, load_config, save_config
 from .import_model import ImportModel
@@ -55,6 +56,7 @@ class Backend(QObject):
     importScanned = Signal(object)    # ScanResult (from worker thread)
     importProgressed = Signal(float, str)
     importFinished = Signal(object)   # CopyResult (from worker thread)
+    importUnpacked = Signal(object)   # a BIOS pack that could not be opened (files.Extraction, from the worker thread)
     sessionEnded = Signal(str, str, float, str)  # gid, title, seconds, error (from worker thread)
     gamepadNote = Signal(str)
     coversChanged = Signal()
@@ -64,6 +66,7 @@ class Backend(QObject):
     introChanged = Signal()
     introEnded = Signal(str)               # why the intro ended (from the player thread)
     powerFailed = Signal(str)               # the system refused the restart / shut down
+    bootReportDone = Signal(bool, str)      # (saved, text) from the boot-report thread
     quietbootDone = Signal(bool, str)       # (worked, text) from the quiet-boot worker thread
     filesEvent = Signal(str, bool, str)     # (kind, ok, text) from the file viewer's worker: progress | done
     inputRequested = Signal()               # a worker thread queued a text / password request -> GUI thread shows it
@@ -112,7 +115,10 @@ class Backend(QObject):
         self._imp_file = ""
         self._imp_source = ""
         self._imp_cancel = threading.Event()
+        self._imp_tmp: Path | None = None  # where a BIOS pack was unpacked (deleted when the import is over)
+        self._imp_pack = ""                # the BIOS pack's file name, when the files come from one
         self._imp_kind = "games"          # "games" | "bios" - the same USB picker serves both
+        self._imp_done_items: list = []
         self._imp_left: list = []          # files whose console is still unknown ("Which system is this?")
         self._imp_groups: list = []
         self._imp_group: list = []
@@ -136,6 +142,7 @@ class Backend(QObject):
         self._kiosk_msg = ""
         self._kiosk_layout = kiosk.DEFAULT
         self.quietbootDone.connect(self._quietboot_finished, Qt.QueuedConnection)
+        self.bootReportDone.connect(self._boot_report_finished, Qt.QueuedConnection)
         self.powerFailed.connect(self._on_power_failed, Qt.QueuedConnection)
         self._fm_dir: Path | None = None        # file viewer: the folder being shown (None = the list of places)
         self._fm_items: list = []
@@ -143,6 +150,7 @@ class Backend(QObject):
         self._fm_msg = ""
         self._fm_ok = True
         self._fm_busy = ""                      # what the worker is doing ("" = nothing)
+        self._fm_prog = None                    # files.Progress of the unpack in the background (None = nothing yet)
         self._fm_progress = ""
         self._fm_tool = ""                      # app id Code can install so the pick can be unpacked
         self._fm_cancel = threading.Event()
@@ -161,8 +169,11 @@ class Backend(QObject):
         self._qb_busy = False
         self._qb_msg = ""
         self._qb_ok = True
+        self._qb_report_msg = ""
+        self._qb_report_busy = False
         self._qb_layout = quietboot.DEFAULT
         self.importProgressed.connect(self._on_import_progress, Qt.QueuedConnection)
+        self.importUnpacked.connect(self._on_import_unpacked, Qt.QueuedConnection)
         self.importFinished.connect(self._on_import_finished, Qt.QueuedConnection)
         self._lib = LibraryResult()
         self._all = []
@@ -250,6 +261,10 @@ class Backend(QObject):
             QTimer.singleShot(2500, self._wifi_poll)         # the WiFi name next to the clock
         if not self._demo:
             kiosk.log_event("started - " + kiosk.running_description()[1] + f" (pid {os.getpid()}, DESKTOP_SESSION={os.environ.get('DESKTOP_SESSION', '')})")
+        if not self._demo and self._lib.unknown and not self._first_run:
+            QTimer.singleShot(4500, lambda: self.show_toast(
+                gamesroot.hint_text(self.cfg, self._lib.unknown[0])
+                + ("  (more in Settings)" if len(self._lib.unknown) > 1 else "  (see Settings)"), 14000))
         if not self._demo and kiosk.session_outdated(self._kiosk_layout):
             QTimer.singleShot(7000, lambda: self.show_toast("Code-only mode needs a one-time update so Code never drops to the desktop: "
                                                             "Settings > \"Update Code-only mode\".", 15000))
@@ -1302,8 +1317,15 @@ class Backend(QObject):
         for f in facts:
             rows.append(self._info({"ok": "OK   ", "bad": "NOT APPLIED   ", "info": "Note   "}[f.state] + f.text))
         if quietboot.enabled(lay):
-            rows += [self._info("Quiet boot is ON: no boot menu, no Mint logo, the Code logo on black, hardly any text."),
-                     self._info(quietboot.HOW_TO_SHOW_MENU),
+            hidden = quietboot.marker_hide(lay)
+            if hidden is False:
+                rows += [self._info("Quiet boot is ON for the logo and the start-up text only. The boot menu was NOT hidden, because another system looked present "
+                                    "(on a Dell this is often a leftover recovery partition, not Windows)."),
+                         {"kind": "done", "id": "qbforce", "title": "Hide the boot menu too",
+                          "detail": "Only if you do not use Windows / another system on this computer any more. Shift / Esc still shows the menu."}]
+            else:
+                rows.append(self._info("Quiet boot is ON: no boot menu, no Mint logo, the Code logo on black, hardly any text."))
+            rows += [self._info(quietboot.HOW_TO_SHOW_MENU),
                      {"kind": "done", "id": "qboff", "title": "Turn quiet boot off (Mint's boot screens come back)",
                       "detail": "Asks for your password on this screen. Removes exactly the files quiet boot added."},
                      self._info(quietboot.RECOVERY)]
@@ -1314,19 +1336,29 @@ class Backend(QObject):
                                 "Code logo on black, and the start-up text is switched off. Works best together with Code-only mode."),
                      self._info("What changes (password once): a GRUB setting file, a boot-splash theme called \"code\", and a rebuild of the boot image "
                                 "(update-grub, update-initramfs). Turning it off removes exactly those. " + quietboot.HOW_TO_SHOW_MENU),
-                     self._info("Safe by design: the boot menu is NOT hidden when another system is really on the disk, GRUB still shows by itself "
-                                "after a failed start, recovery mode is untouched, and if anything fails Code puts everything back and says which step failed.")]
+                     self._info("Safe by design: the boot menu is NOT hidden when another system is really on the disk, Esc / Shift within 2 s at start-up still shows the menu "
+                                "(it no longer pops up by itself after a power cut), recovery mode is untouched, and if anything fails Code puts everything back and says which step failed.")]
             for c in checks:
                 if not c.ok or "leftover" in c.text:
                     rows.append(self._info(("CANNOT CONTINUE: " if c.fatal else "Note: ") + c.text))
             if why:
+                rows += self._qb_report_rows()
                 rows.append({"kind": "item", "id": "back", "title": "Back"})
                 return rows
             rows.append({"kind": "done", "id": "qbon", "title": "Yes, turn quiet boot ON", "detail": "Code asks for your password on this screen. You can undo it any time."})
             if any(not c.ok and "Another system" in c.text for c in checks):
                 rows.append({"kind": "item", "id": "qbforce", "title": "Turn it ON and hide the boot menu anyway",
                              "detail": "Only if no other system is on this disk (the entry above is a leftover). Shift / Esc still shows the menu."})
+        rows += self._qb_report_rows()
         rows.append({"kind": "item", "id": "back", "title": "Back" if quietboot.enabled(lay) else "No, leave the boot screens as they are"})
+        return rows
+
+    def _qb_report_rows(self) -> list:
+        rows = [{"kind": "item", "id": "qbreport", "title": "Copy boot report (saves a text file you can send)",
+                 "detail": "Saves ~/Downloads/code-boot-report.txt: the boot menu settings, GRUB overrides and the firmware boot list. No passwords."}]
+        if self._qb_report_msg:
+            rows.append(self._info("Boot report:  " + self._qb_report_msg))
+        rows.append(self._info(quietboot.BIOS_LOGO_NOTE))
         return rows
 
     def _qb_facts(self) -> list:
@@ -1338,7 +1370,39 @@ class Backend(QObject):
             self._qb_facts_cache = cached
         return cached[1]
 
+    def _start_boot_report(self) -> None:
+        if self._qb_report_busy:
+            return
+        self._qb_report_busy = True
+        self._qb_report_msg = "Collecting ..."
+        lay = self._qb_layout
+
+        def work():
+            try:
+                text = quietboot.boot_report(lay, version=__version__)
+                ok, msg, _f = quietboot.save_report(text)
+            except Exception as exc:  # pragma: no cover - safety net
+                ok, msg = False, f"Could not make the boot report: {exc}"
+            kiosk.log_event(f"boot report: {'saved' if ok else 'FAILED'} - {msg}")
+            self.bootReportDone.emit(ok, msg)
+        threading.Thread(target=work, daemon=True, name="atari-bootreport").start()
+
+    @Slot(bool, str)
+    def _boot_report_finished(self, ok: bool, text: str) -> None:
+        self._qb_report_busy = False
+        self._qb_report_msg = text
+        self.show_toast(text, 14000)
+        self.pageChanged.emit()
+
+    @Slot()
+    def saveBootReport(self) -> None:
+        """Settings row / Quiet boot page: write ~/Downloads/code-boot-report.txt."""
+        self._start_boot_report()
+
     def _quietboot_activate(self, rid: str) -> str:
+        if rid == "qbreport":
+            self._start_boot_report()
+            return "refresh"
         if rid in ("qbon", "qbforce", "qboff"):
             if self._qb_busy:
                 return ""
@@ -1574,7 +1638,9 @@ class Backend(QObject):
         self.libraryChanged.emit()
         if not initial and toast:
             n = self._real_count()
-            self.show_toast(f"Library updated: {n} game" + ("" if n == 1 else "s"))
+            more = ("  - Code found games in a folder it does not know: see Settings."
+                    if self._lib.unknown and not self._demo else "")
+            self.show_toast(f"Library updated: {n} game" + ("" if n == 1 else "s") + more)
         self._schedule_covers()
 
     def _rebuild_filters(self) -> None:
@@ -1636,8 +1702,12 @@ class Backend(QObject):
         if self._real_count() == 0 and self._filter in ("all", "favorites", "recent"):
             if self._demo:
                 return "Demo mode"
-            return ("No games yet!\n\nChoose \"Add Games\" to copy games from a USB stick, or open Settings "
+            hint = ("".join(gamesroot.hint_text(self.cfg, u) + "\n\n" for u in self._lib.unknown[:3])
+                    if self._lib.unknown else "")
+            return ("No games yet!\n\n" + hint + "Choose \"Add Games\" to copy games from a USB stick, or open Settings "
                     "to add your Steam library and ROM folders.\n\n"
+                    "Games you put in ~/Games/Atari/<system> (for example ~/Games/Atari/xbox) are found automatically "
+                    "when you press Rescan.\n\n"
                     "Not sure where to start? Press the Options button (F10 / Start) and choose "
                     "\"Help & getting started\".\n\n" + NTFS_NOTE)
         if self._filter == "favorites":
@@ -1654,6 +1724,9 @@ class Backend(QObject):
         if sc is not None:
             _ready, label, hint = emulators.status_line(self.cfg, sc)
             folder = sc.roms[0] if sc.roms else "~/Games/Atari/" + sc.id
+            for u in self._lib.unknown:
+                if u.guess == sc.id:
+                    folder += "\n\n" + gamesroot.hint_text(self.cfg, u) + "\n"
             return (f"No {sc.name} games yet.\n\nUse \"Add Games\" to import some, or put them in {folder}.\n\n"
                     f"Emulator: {label}" + ("" if _ready else "\n" + hint))
         return "No games here."
@@ -1885,11 +1958,21 @@ class Backend(QObject):
     def filesReset(self) -> None:
         self._fm_dir, self._fm_pick, self._fm_msg = None, None, ""
 
+    def _fm_busy_rows(self) -> list:
+        """While an unpack runs in the background: what it is doing, a percentage bar with the current file, and a Cancel button."""
+        pr = self._fm_prog
+        frac = pr.fraction if pr is not None else None
+        rows = [self._info(self._fm_busy)]
+        rows.append({"kind": "progress", "title": (pr.name if pr is not None and pr.name else "Getting ready ..."),
+                     "fraction": -1.0 if frac is None else float(frac), "value": (pr.percent_text if pr is not None else "") or "",
+                     "detail": (pr.detail if pr is not None else "")})
+        rows.append({"kind": "item", "id": "fmcancel", "title": "Cancel  (Esc / B)", "detail": "Stops unpacking and removes the half-made folder."})
+        return rows
+
     def _files_rows(self) -> list:
         rows: list = []
         if self._fm_busy:
-            return [self._info(self._fm_busy + (("  " + self._fm_progress) if self._fm_progress else "")),
-                    {"kind": "item", "id": "fmcancel", "title": "Cancel"}]
+            return self._fm_busy_rows()
         if self._fm_msg:
             rows.append(self._info(("DONE:  " if self._fm_ok else "NOTE:  ") + self._fm_msg))
         home = self._fm_home()
@@ -1969,8 +2052,7 @@ class Backend(QObject):
         if self._fm_msg:
             rows.append(self._info(("DONE:  " if self._fm_ok else "NOTE:  ") + self._fm_msg))
         if self._fm_busy:
-            return rows + [self._info(self._fm_busy + (("  " + self._fm_progress) if self._fm_progress else "")),
-                           {"kind": "item", "id": "fmcancel", "title": "Cancel"}]
+            return rows + self._fm_busy_rows()
         isdir = p.is_dir()
         kind = "folder" if isdir else (files.archive_kind(p) or "file")
         size = files.folder_size(p) if isdir else p.stat().st_size
@@ -1992,6 +2074,10 @@ class Backend(QObject):
             rows.append({"kind": "item", "id": "fmopen", "title": "Open this folder", "detail": "Look inside."})
         else:
             rows.append({"kind": "item", "id": "fmopen", "title": "Open", "detail": "With the program set up for this kind of file (videos play full screen)."})
+        if kind in ("zip", "tar", "7z", "rar"):
+            rows.append({"kind": "item", "id": "fmbios", "title": "Use as BIOS pack",
+                         "detail": "Unpacks it here with a progress bar, finds the BIOS / firmware files (including Xbox: BIOS, boot ROM, hard-disk image) "
+                                   "and copies them to the right emulator folders. Only for files from your own consoles."})
         rows.append({"kind": "item", "id": "fmadd", "title": "Add to my games", "detail": "Pick the system; the file moves into that games folder."})
         rows.append({"kind": "item", "id": "fmrename", "title": "Rename", "detail": "Type a new name on this screen."})
         rows.append({"kind": "item", "id": "fmdelete", "title": "Delete", "detail": "Asks you to confirm first."})
@@ -2058,28 +2144,38 @@ class Backend(QObject):
         if rid == "fmextract":
             self._fm_extract(p)
             return "refresh"
+        if rid == "fmbios":
+            return "import:biospick"
         return ""
 
     def _fm_extract(self, p: Path) -> None:
         self._fm_cancel = threading.Event()
         self._fm_busy = f"Unpacking {p.name} ..."
         self._fm_progress = ""
+        self._fm_prog = None
         cancel = self._fm_cancel
         home = self._fm_home()
+        last = [0.0]
 
-        def progress(i, n):
-            self.filesEvent.emit("progress", True, f"{i} of {n} files" if n else "(this can take a while)")
+        def progress(pr):
+            now = time.monotonic()
+            done = pr.fraction is not None and pr.fraction >= 1.0
+            if now - last[0] < 0.15 and not done:             # the screen is redrawn at most ~7 times a second
+                return
+            last[0] = now
+            self._fm_prog = dataclasses.replace(pr)             # a snapshot: the worker keeps changing its own
+            self.filesEvent.emit("progress", True, "")
 
         def work():
             password, err = "", ""
             for _attempt in range(4):
                 res = files.extract(p, password, progress, cancel, home=home)
                 if res.needs_password:
-                    password = self.ask_text_blocking("ARCHIVE PASSWORD", f"{p.name} is protected. Type its password:", True, "", err or "") or ""
+                    err = "That password did not work. Try again." if password else ""       # a password was tried and failed
+                    password = self.ask_text_blocking("ARCHIVE PASSWORD", f"{p.name} is protected. Type its password:", True, "", err) or ""
                     if not password:
                         self.filesEvent.emit("done", False, "No password was entered, so nothing was unpacked.")
                         return
-                    err = "That password did not work. Try again." if _attempt else ""
                     continue
                 self._fm_tool = res.needs_tool
                 self.filesEvent.emit("done", res.ok, res.text)
@@ -2090,10 +2186,11 @@ class Backend(QObject):
     @Slot(str, bool, str)
     def _files_event(self, kind: str, ok: bool, text: str) -> None:
         if kind == "progress":
-            self._fm_progress = text
+            pass                                            # the worker already stored self._fm_prog; just redraw
         else:
             self._fm_busy = ""
             self._fm_progress = ""
+            self._fm_prog = None
             self._fm_set_msg(ok, text)
             self.show_toast(("Done: " if ok else "") + text, 9000)
             if ok:
@@ -2291,6 +2388,9 @@ class Backend(QObject):
             rows.append({"kind": "emu", "id": sc.id, "title": sc.name, "value": value,
                          "detail": games + (label if ready else (label + ": " + hint))
                                    + (f"   [{hint}]" if ready and hint else "") + bios_line})
+            if sc.id == "xbox" and bstate != "ok":
+                for line in bios.xbox_guide():
+                    rows.append({"kind": "info", "title": line, "value": "", "detail": ""})
         for app in apps.APP_DEFS:
             ready, text = apps.app_status(self.cfg, app)
             rows.append({"kind": "app", "title": app.title + "  (PC Apps)", "value": "Ready" if ready else "Not installed",
@@ -2365,6 +2465,7 @@ class Backend(QObject):
 
     @Slot(str)
     def openImportKind(self, kind: str) -> None:
+        self._cleanup_unpacked()
         self._imp_kind = "bios" if kind == "bios" else "games"
         self._imp_state = "drives"
         self._imp_msg = ""
@@ -2386,6 +2487,11 @@ class Backend(QObject):
         rows.append({"kind": "refresh", "title": "Refresh", "detail": "Look for USB sticks again", "value": ""})
         rows.append({"kind": "browse", "title": "Browse folder...", "detail": "Pick any folder instead "
                      "(for example a card reader or a folder on another drive)", "value": ""})
+        if self._imp_kind == "bios":
+            rows.append({"kind": "pack", "title": "Choose a zipped BIOS pack...",
+                         "detail": "A .zip, .7z, .rar or .tar file you made from your own consoles (also from a USB stick). Code unpacks it "
+                                   "here with a progress bar, copies the files each emulator needs and deletes the unpacked copy. "
+                                   "You can also open the file in My files and choose \"Use as BIOS pack\".", "value": ""})
         rows.append({"kind": "close", "title": "Back", "detail": "", "value": ""})
         return rows
 
@@ -2393,6 +2499,10 @@ class Backend(QObject):
     def startImportScan(self, path: str) -> None:
         if not path:
             return
+        if self._imp_kind == "bios" and Path(path).is_file():
+            self._start_bios_pack(Path(path))
+            return
+        self._imp_pack = ""
         self._imp_source = path
         self._imp_state = "scanning"
         self._imp_msg = ("Looking for BIOS files on " if self._imp_kind == "bios" else "Looking for games on ") + path + " ..."
@@ -2414,9 +2524,105 @@ class Backend(QObject):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    # ----- BIOS packs (zip / 7z / rar / tar) -------------------------------------
+    def _unpack_dir(self) -> Path:
+        return paths.data_dir() / "bios-unpack"
+
+    def _cleanup_unpacked(self) -> None:
+        """Delete the unpacked copy of a BIOS pack (the files that mattered were copied to the emulators already)."""
+        tmp, self._imp_tmp = self._imp_tmp, None
+        if tmp is not None:
+            shutil.rmtree(tmp, ignore_errors=True)
+        try:
+            self._unpack_dir().rmdir()                            # Code's own work folder, removed when empty
+        except OSError:
+            pass
+
+    @Slot(str)
+    def importBiosFromPick(self, path: str = "") -> None:
+        """"Use as BIOS pack" in the My files viewer: opens the Add BIOS screen and unpacks that file."""
+        p = Path(path) if path else self._fm_pick
+        if p is None:
+            return
+        self._imp_kind = "bios"
+        self.startImportScan(str(p))
+
+    def _start_bios_pack(self, archive: Path) -> None:
+        self._cleanup_unpacked()
+        kind = files.archive_kind(archive)
+        self._imp_source = str(archive)
+        self._imp_pack = archive.name
+        if not kind:
+            self._imp_state = "drives"
+            self._imp_msg = (f"\"{archive.name}\" is not a folder or a BIOS pack Code can open (zip, tar, 7z, rar). "
+                             "Pick the folder it is in instead, or unpack it first in My files.")
+            self.importChanged.emit()
+            return
+        shutil.rmtree(self._unpack_dir(), ignore_errors=True)       # leftovers of an earlier run (Code's own folder)
+        dest = self._unpack_dir() / f"pack-{time.monotonic_ns()}"
+        self._imp_tmp = dest
+        self._imp_state = "unpacking"
+        self._imp_progress = 0.0
+        self._imp_file = ""
+        self._imp_msg = f"Unpacking {archive.name} ..."
+        self._imp_cancel = threading.Event()
+        self.importChanged.emit()
+        self.importProgressChanged.emit()
+        cancel = self._imp_cancel
+        last = [0.0]
+
+        def progress(pr):
+            now = time.monotonic()
+            f = pr.fraction
+            if now - last[0] < 0.12 and not (f is not None and f >= 1.0):
+                return
+            last[0] = now
+            self.importProgressed.emit(0.0 if f is None else f, (pr.name or archive.name)
+                                       + (f"   ({pr.detail})" if pr.detail else ""))
+
+        def work():
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                password = ""
+                for _attempt in range(4):
+                    ex = files.extract(archive, password, progress, cancel, into=dest)
+                    if ex.needs_password:
+                        err = "That password did not work. Try again." if password else ""
+                        password = self.ask_text_blocking("PACK PASSWORD", f"{archive.name} is protected. Type its password:", True, "", err) or ""
+                        if not password:
+                            self.importUnpacked.emit(files.Extraction(False, "No password was entered, so the pack was not opened."))
+                            return
+                        continue
+                    break
+                else:
+                    self.importUnpacked.emit(files.Extraction(False, "The password did not work after several tries."))
+                    return
+                if cancel.is_set():
+                    shutil.rmtree(dest, ignore_errors=True)
+                    return
+                if not ex.ok:
+                    self.importUnpacked.emit(ex)
+                    return
+                res = bios.scan_for_bios(dest, cancel)
+            except Exception as exc:  # pragma: no cover - safety net
+                self.importUnpacked.emit(files.Extraction(False, f"Something went wrong opening the pack: {exc}"))
+                return
+            self.importScanned.emit(res)
+
+        threading.Thread(target=work, daemon=True, name="atari-biospack").start()
+
+    @Slot(object)
+    def _on_import_unpacked(self, ex) -> None:
+        if self._imp_state != "unpacking":
+            return
+        self._cleanup_unpacked()
+        self._imp_state = "drives"
+        self._imp_msg = ex.text + (" Open the Emulators page and install 7-Zip (or unrar) first." if ex.needs_tool else "")
+        self.importChanged.emit()
+
     @Slot(object)
     def _on_import_scanned(self, res) -> None:
-        if self._imp_state != "scanning":  # cancelled meanwhile
+        if self._imp_state not in ("scanning", "unpacking"):  # cancelled meanwhile
             return
         if res.cancelled:
             self._imp_state = "drives"
@@ -2427,9 +2633,17 @@ class Backend(QObject):
             self.import_model.set_items(res.items, names, kind="bios")
             self._imp_state = "list"
             n = len(res.items)
-            self._imp_msg = (f"Found {n} BIOS / firmware file{'s' if n != 1 else ''} on {self._imp_source}. "
+            where = f"in the pack {self._imp_pack}" if self._imp_pack else f"on {self._imp_source}"
+            self._imp_msg = (f"Found {n} BIOS / firmware file{'s' if n != 1 else ''} {where}. "
                              "Tick the ones to copy - they go to each emulator's own folder. "
-                             if n else f"No known BIOS files found on {self._imp_source}. ") + bios.LEGAL
+                             if n else f"No known BIOS files found {where}. ") + bios.LEGAL
+            if n:
+                try:
+                    self._imp_msg += "\n" + "\n".join(bios.pack_summary(res.items))
+                except Exception as exc:  # pragma: no cover - a summary must never hide the list
+                    print(f"[atari] BIOS summary failed: {exc}")
+            if self._imp_pack and not n:
+                self._cleanup_unpacked()
             self.importChanged.emit()
             return
         self.import_model.set_items(res.items, names)
@@ -2543,6 +2757,7 @@ class Backend(QObject):
         self.importProgressChanged.emit()
         cancel, cfg = self._imp_cancel, self.cfg
         last = [0.0]
+        self._imp_done_items = list(items)
         if self._imp_kind == "bios":
             def bios_progress(done, total, name):
                 self.importProgressed.emit(done / total if total else 1.0, name)
@@ -2617,6 +2832,7 @@ class Backend(QObject):
         self.rescan(toast=False)
 
     def _on_bios_finished(self, res) -> None:
+        self._cleanup_unpacked()
         if res.error:
             msg = res.error
         else:
@@ -2630,8 +2846,19 @@ class Backend(QObject):
                 msg = "Cancelled. " + msg
             for note in res.notes:
                 msg += "  " + note
-            if res.copied:
+            if res.copied and not self._imp_pack:
                 msg += "  Your USB stick can be removed safely."
+            if self._imp_pack:
+                msg += f"  The unpacked copy of {self._imp_pack} was deleted."
+            try:
+                left = []
+                for sid in {it.system for it in self._imp_done_items}:
+                    miss = bios.missing_detail(sid)
+                    if miss:
+                        left.append(f"{self.cfg.systems[sid].name if sid in self.cfg.systems else sid} still needs " + ", ".join(miss))
+                msg += ("  Still missing: " + "; ".join(left) + ".") if left else "  Nothing else is missing for those consoles."
+            except Exception as exc:  # pragma: no cover
+                print(f"[atari] BIOS missing list failed: {exc}")
         self._imp_msg = msg
         self._imp_state = "done"
         self._imp_progress = 1.0
@@ -2643,7 +2870,8 @@ class Backend(QObject):
     def cancelImport(self) -> None:
         """Cancel a scan or copy in progress."""
         self._imp_cancel.set()
-        if self._imp_state == "scanning":
+        if self._imp_state in ("scanning", "unpacking"):
+            self._cleanup_unpacked()
             self._imp_state = "drives"
             self.importChanged.emit()
 
@@ -3216,6 +3444,9 @@ class Backend(QObject):
         rows.append({"kind": "quietbootpage", "title": "Quiet boot: hide the Mint logo and menus",
                      "value": "ON" if quietboot.enabled(self._qb_layout) else "OFF",
                      "detail": "Boot menu hidden, Code logo on black instead of the Mint logo, start-up text off. Reversible; the boot menu stays one key away."})
+        rows.append({"kind": "bootreport", "title": "Copy boot report (to send for help)", "value": "",
+                     "detail": "Saves ~/Downloads/code-boot-report.txt with the boot menu / GRUB / firmware boot list settings. No passwords."})
+        rows.append({"kind": "info", "title": "About the Dell logo at power-on", "value": "", "detail": quietboot.BIOS_LOGO_NOTE})
         if kiosk.enabled(self._kiosk_layout):
             old = kiosk.session_outdated(self._kiosk_layout)
             rows.append({"kind": "kioskupdate", "title": "Update Code-only mode", "value": "UPDATE NEEDED" if old else "Up to date",
@@ -3233,13 +3464,20 @@ class Backend(QObject):
         rows.append({"kind": "support", "title": donate.TITLE, "value": "", "detail": donate.DETAIL})
         rows.append({"kind": "emulators", "title": "Emulators", "value": "",
                         "detail": "See what is installed, install emulators, and which consoles still need BIOS files."})
+        for u in self._lib.unknown:
+            rows.append({"kind": "fixfolder", "id": u.path, "title": "Not recognised: " + u.name,
+                         "value": "Fix" if u.guess in self.cfg.systems else "",
+                         "detail": gamesroot.hint_text(self.cfg, u)
+                                   + ("  Press Enter to do it for you." if u.guess in self.cfg.systems else "")})
         for sc in self.cfg.systems.values():
             n = self._lib.rom_counts.get(sc.id, 0)
-            folder = ", ".join(sc.roms) if sc.roms else "Not set - press Enter to choose a folder"
-            if not sc.roms and not n and sc.id not in self._setup_shown():
+            auto = self._lib.auto_folders.get(sc.id, [])
+            have = [*sc.roms, *auto]
+            folder = ", ".join(have) if have else "Not set - press Enter to choose a folder"
+            if not have and not n and sc.id not in self._setup_shown():
                 continue
             rows.append({"kind": "system", "id": sc.id, "title": sc.name,
-                         "value": (f"{n} game" + ("" if n == 1 else "s")) if sc.roms else "",
+                         "value": (f"{n} game" + ("" if n == 1 else "s")) if have else "",
                          "detail": folder})
         rows.append(self._done_row())
         return rows
@@ -3256,6 +3494,13 @@ class Backend(QObject):
             return set(self.cfg.systems)
         return {"atari2600", "atari7800", "nes", "snes", "genesis", "gba", "n64", "ps1", "ps2", "ps3", "psp",
                 "dreamcast", "gamecube", "wii", "xbox", "nds"}
+
+    @Slot(str)
+    def fixGamesFolder(self, path: str) -> None:
+        """Rename an unrecognised ~/Games/Atari folder (or move a loose game file) to the system it looks like."""
+        ok, msg = gamesroot.fix(self.cfg, path)
+        self.rescan(toast=False)
+        self.show_toast(msg, 9000)
 
     @Slot(str, str)
     def setSystemFolder(self, system_id: str, folder: str) -> None:
@@ -3924,16 +4169,17 @@ class Backend(QObject):
     def listFiles(self, path: str, kind: str):
         """Like listDir, plus the files of one kind: 'exe' (programs and archives) or 'image'."""
         data = dict(self.listDir(path))
-        exts = {"exe": (".exe",) + windows.ARCHIVE_EXT, "image": windows.IMAGE_EXT, "video": intro.VIDEO_EXT}.get(kind, ())
-        files = []
+        exts = {"exe": (".exe",) + windows.ARCHIVE_EXT, "image": windows.IMAGE_EXT, "video": intro.VIDEO_EXT,
+                "archive": tuple(files.ARCHIVE_SUFFIXES)}.get(kind, ())
+        found = []
         if path and exts:
             try:
                 for child in sorted(Path(path).iterdir(), key=lambda c: c.name.lower()):
                     if (not child.name.startswith(".") and child.name.lower().endswith(exts) and child.is_file()):
-                        files.append({"name": child.name, "path": str(child)})
+                        found.append({"name": child.name, "path": str(child)})
             except OSError:
                 pass
-        data["files"] = files
+        data["files"] = found
         return data
 
     def _win_reset(self) -> None:

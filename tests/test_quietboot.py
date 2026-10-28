@@ -31,7 +31,11 @@ def machine(tmp_path):
     state.write_text("mint-logo")
     stubs = {
         "update-grub": f'''f="$ROOT/etc/default/grub.d/zz-code-quiet.cfg"
-if [ -f "$f" ] && [ -z "$GRUB_IGNORE" ]; then
+if [ -z "$GRUB_NO_WRITE" ]; then
+  echo "# regenerated" >> "$ROOT/boot/grub/grub.cfg"
+  [ -z "$GRUB_NO_41" ] && printf '### BEGIN /etc/grub.d/41_custom ###\\nif [ -f  ${{config_directory}}/custom.cfg ]; then\\n  source ${{config_directory}}/custom.cfg\\nfi\\n### END /etc/grub.d/41_custom ###\\n' >> "$ROOT/boot/grub/grub.cfg"
+fi
+if [ -f "$f" ] && [ -z "$GRUB_IGNORE" ] && [ -z "$GRUB_NO_WRITE" ]; then
   grep -q GRUB_TIMEOUT_STYLE=hidden "$f" && echo "set timeout_style=hidden" >> "$ROOT/boot/grub/grub.cfg"
   echo "linux /vmlinuz quiet splash" >> "$ROOT/boot/grub/grub.cfg"
 fi''',
@@ -122,7 +126,7 @@ def test_turning_it_on_writes_exactly_the_files_and_runs_the_rebuilds(machine):
     # nothing outside the three places was written
     written = sorted(str(p.relative_to(lay.root)) for p in lay.root.rglob("*") if p.is_file())
     assert [w for w in written if not w.startswith(("usr/share/plymouth/themes/code/", "etc/default/grub.d/", "etc/code-boot/"))] == [
-        "boot/grub/grub.cfg", "etc/alternatives/default.plymouth", "usr/lib/x86_64-linux-gnu/plymouth/script.so"]
+        "boot/grub/custom.cfg", "boot/grub/grub.cfg", "etc/alternatives/default.plymouth", "usr/lib/x86_64-linux-gnu/plymouth/script.so"]
 
 
 def test_the_plymouth_theme_points_at_the_real_install_path_not_the_test_folder(machine):
@@ -295,7 +299,7 @@ def test_settings_row_and_screen_always_show_a_visible_result(app, tmp_path, mon
         rows = b.pageRows("quietboot")
         text = " ".join(r.get("title", "") for r in rows)
         assert "Shift" in text and "puts everything back" in text and "which step failed" in text
-        assert [r.get("id") for r in rows if r["kind"] != "info"] == ["qbon", "back"]
+        assert [r.get("id") for r in rows if r["kind"] != "info"] == ["qbon", "qbreport", "back"]
         orig_en, orig_dis = quietboot.enable, quietboot.disable
         env = {}
         monkeypatch.setattr(quietboot, "enable", lambda l, **kw: orig_en(l, lambda c, o, x: run_script(c[3], bin_, **env), logo=logo, which=which_all, **kw))
@@ -314,7 +318,7 @@ def test_settings_row_and_screen_always_show_a_visible_result(app, tmp_path, mon
         assert wait_for(app, lambda: quietboot.enabled(lay) and not b._qb_busy, 15), b.toast
         rows = b.pageRows("quietboot")
         assert rows[0]["title"].startswith("DONE:") and b.toast.startswith("Done:")
-        assert [r.get("id") for r in rows if r["kind"] != "info"] == ["qboff", "back"]
+        assert [r.get("id") for r in rows if r["kind"] != "info"] == ["qboff", "qbreport", "back"]
         assert [r for r in b.setupRows() if r.get("kind") == "quietbootpage"][0]["value"] == "ON"
         assert b.pageActivate("quietboot", "qboff") == "refresh"
         assert wait_for(app, lambda: not quietboot.enabled(lay) and not b._qb_busy, 15)
@@ -337,7 +341,7 @@ def test_the_screen_offers_to_hide_anyway_when_another_system_is_listed(app, tmp
         monkeypatch.setattr(quietboot, "logo_path", lambda: logo)
         monkeypatch.setattr(quietboot, "preflight", lambda layout=lay, **kw: orig_pre(layout, which=which_all, logo=logo))
         rows = b.pageRows("quietboot")
-        assert [r.get("id") for r in rows if r["kind"] != "info"] == ["qbon", "qbforce", "back"]
+        assert [r.get("id") for r in rows if r["kind"] != "info"] == ["qbon", "qbforce", "qbreport", "back"]
         assert "Another system is on this disk" in " ".join(r.get("title", "") for r in rows)
         seen = []
         monkeypatch.setattr(quietboot, "enable", lambda l, **kw: (seen.append(kw) or (True, "ok")))

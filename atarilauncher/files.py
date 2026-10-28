@@ -8,6 +8,7 @@ archive that would leave that folder stops the whole unpack, and nothing here ev
 Pure Python with injectable tools, so it can be tested. No download sites, no games and no BIOS files are known to this module."""
 from __future__ import annotations
 
+import dataclasses
 import os
 import shutil
 import subprocess
@@ -280,7 +281,71 @@ def _zip_needs_password(zf: zipfile.ZipFile) -> bool:
     return any(i.flag_bits & 0x1 for i in zf.infolist())
 
 
-def _extract_zip(archive: Path, dest: Path, password: str, progress, cancel) -> None:
+CHUNK = 1 << 20
+
+
+@dataclass
+class Progress:
+    """Where an unpack is. Byte based when the total is known (zip, tar, and 7z / rar when the tool lists sizes), else the tool's own
+    percentage, else file counts, else unknown (fraction is None: the screen shows a moving bar)."""
+    done: int = 0                   # bytes unpacked so far
+    total: int = 0                  # bytes in all the files (0 = not known)
+    name: str = ""                  # the file being unpacked now
+    files_done: int = 0
+    files_total: int = 0            # 0 = not known
+    percent: float | None = None    # a tool's own overall percentage (0-100)
+
+    @property
+    def fraction(self) -> float | None:
+        if self.percent is not None:
+            return max(0.0, min(1.0, self.percent / 100.0))
+        if self.total > 0:
+            return max(0.0, min(1.0, self.done / self.total))
+        if self.files_total > 0:
+            return max(0.0, min(1.0, self.files_done / self.files_total))
+        return None
+
+    @property
+    def percent_text(self) -> str:
+        f = self.fraction
+        return "" if f is None else f"{int(f * 100)}%"
+
+    @property
+    def detail(self) -> str:
+        bits = []
+        if self.total > 0:
+            bits.append(f"{importer.human_size(min(self.done, self.total))} of {importer.human_size(self.total)}")
+        elif self.done > 0:
+            bits.append(f"{importer.human_size(self.done)} written so far")
+        if self.files_total > 0:
+            bits.append(f"file {min(self.files_done + 1, self.files_total)} of {self.files_total}")
+        return "  -  ".join(bits)
+
+
+def _cancelled(cancel) -> bool:
+    return cancel is not None and cancel.is_set()
+
+
+def _copy(src, target: Path, pr: Progress, report, cancel, exe: bool) -> None:
+    """Write one file in 1 MB pieces: progress moves inside a big file and Cancel is noticed within a fraction of a second."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with open(target, "wb") as out:
+        while True:
+            chunk = src.read(CHUNK)
+            if not chunk:
+                break
+            if _cancelled(cancel):
+                raise FileError("Cancelled.")
+            out.write(chunk)
+            pr.done += len(chunk)
+            report(pr)
+    try:
+        os.chmod(target, 0o755 if exe else 0o644)           # keeps a game's launcher executable
+    except OSError:
+        pass
+
+
+def _extract_zip(archive: Path, dest: Path, password: str, report, cancel) -> None:
     with zipfile.ZipFile(archive) as zf:
         infos = zf.infolist()
         for i in infos:
@@ -289,52 +354,193 @@ def _extract_zip(archive: Path, dest: Path, password: str, progress, cancel) -> 
         if _zip_needs_password(zf) and not password:
             raise NeedPassword()
         pw = password.encode() if password else None
-        for n, info in enumerate(infos):
-            if cancel is not None and cancel.is_set():
+        regular = [i for i in infos if not i.is_dir()]
+        pr = Progress(total=sum(i.file_size for i in regular), files_total=len(regular))
+        report(pr)
+        for info in infos:
+            if _cancelled(cancel):
                 raise FileError("Cancelled.")
+            target = dest / info.filename
+            if info.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            pr.name = info.filename
+            report(pr)
             try:
-                zf.extract(info, dest, pwd=pw)
+                with zf.open(info, pwd=pw) as src:
+                    _copy(src, target, pr, report, cancel, bool((info.external_attr >> 16) & 0o111))
             except RuntimeError as exc:
                 if "password" in str(exc).lower() or "encrypted" in str(exc).lower():
                     raise NeedPassword()
                 raise
             except NotImplementedError:
                 raise FileError("NEED7Z")                          # e.g. AES encryption or a compression Python lacks: 7-Zip can do it
-            if progress:
-                progress(n + 1, len(infos))
+            pr.files_done += 1
+            report(pr)
 
 
-def _extract_tar(archive: Path, dest: Path, progress, cancel) -> None:
+def _extract_tar(archive: Path, dest: Path, report, cancel) -> None:
     with tarfile.open(archive) as tf:
         members = tf.getmembers()
         for m in members:
             if not _inside(dest, m.name):
                 raise FileError("That archive contains an unsafe path, so nothing was unpacked.")
         keep = [m for m in members if m.isdir() or m.isreg()]      # no links, devices or fifos
-        for n, m in enumerate(keep):
-            if cancel is not None and cancel.is_set():
+        regular = [m for m in keep if m.isreg()]
+        pr = Progress(total=sum(m.size for m in regular), files_total=len(regular))
+        report(pr)
+        for m in keep:
+            if _cancelled(cancel):
                 raise FileError("Cancelled.")
-            try:
-                tf.extract(m, dest, filter="data")          # Python 3.12+: also refuses odd permissions / absolute names
-            except TypeError:
-                tf.extract(m, dest)
-            if progress:
-                progress(n + 1, len(keep))
+            target = dest / m.name
+            if m.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            src = tf.extractfile(m)
+            if src is None:
+                continue
+            pr.name = m.name
+            report(pr)
+            with src:
+                _copy(src, target, pr, report, cancel, bool(m.mode & 0o111))
+            pr.files_done += 1
+            report(pr)
 
 
-def _extract_external(kind: str, exe: str, how: str, archive: Path, dest: Path, password: str, run: Callable) -> None:
-    """7z / unrar / unar. A password goes on the command line (it is visible to this computer's other users for the seconds this runs)."""
+PASSWORD_WORDS = ("wrong password", "enter password", "password is incorrect", "encrypted", "incorrect password", "need password", "password required")
+
+
+def _tree_bytes(dest: Path) -> int:
+    total = 0
+    try:
+        for root, _d, names in os.walk(dest):
+            for n in names:
+                try:
+                    total += os.lstat(os.path.join(root, n)).st_size
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return total
+
+
+def archive_totals(kind: str, exe: str, how: str, archive: Path, password: str, run: Callable) -> tuple[int, int]:
+    """(bytes, files) inside a 7z / rar archive, from the tool's own listing; (0, 0) when it cannot be read (encrypted names, no listing)."""
+    import re
+    try:
+        if how == "7z":
+            r = run([exe, "l", "-slt", "-y"] + ([f"-p{password}"] if password else ["-p"]) + [str(archive)], stdin=subprocess.DEVNULL,
+                    capture_output=True, text=True, timeout=60)
+            if r.returncode != 0:
+                return 0, 0
+            body = r.stdout.split("----------", 1)[-1]
+            sizes = [int(x) for x in re.findall(r"^Size = (\d+)\s*$", body, re.M)]
+            return sum(sizes), len([1 for x in re.findall(r"^Folder = (.)\s*$", body, re.M) if x != "+"])
+        if how in ("unrar", "unrar-free"):
+            r = run([exe, "l", "-y"] + ([f"-p{password}"] if password else ["-p-"]) + [str(archive)], stdin=subprocess.DEVNULL,
+                    capture_output=True, text=True, timeout=60)
+            if r.returncode != 0:
+                return 0, 0
+            last = [l for l in r.stdout.splitlines() if l.strip()][-1:]
+            m = re.match(r"^\s*(\d+)\s+(\d+)\b", last[0]) if last else None
+            return (int(m.group(2)), int(m.group(1))) if m else (0, 0)
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        pass
+    return 0, 0
+
+
+def _tool_command(how: str, exe: str, archive: Path, dest: Path, password: str) -> list[str]:
     if how == "7z":
-        cmd = [exe, "x", "-y", "-bd", f"-o{dest}"] + ([f"-p{password}"] if password else ["-p"]) + [str(archive)]
-    elif how in ("unrar", "unrar-free"):
-        cmd = [exe, "x", "-y"] + ([f"-p{password}"] if password else ["-p-"]) + [str(archive), str(dest) + os.sep]
-    else:                                                                                   # unar
-        cmd = [exe, "-o", str(dest), "-q"] + (["-p", password] if password else []) + [str(archive)]
-    r = run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=7200)
-    if r.returncode == 0:
+        return [exe, "x", "-y", "-bso1", "-bsp1", "-bb1", f"-o{dest}"] + ([f"-p{password}"] if password else ["-p"]) + [str(archive)]
+    if how in ("unrar", "unrar-free"):
+        return [exe, "x", "-y"] + ([f"-p{password}"] if password else ["-p-"]) + [str(archive), str(dest) + os.sep]
+    return [exe, "-o", str(dest), "-q"] + (["-p", password] if password else []) + [str(archive)]            # unar
+
+
+def _read_tool_output(text: str, pr: Progress, overall: bool = True) -> bool:
+    """Pull a percentage and a file name out of what 7z / unrar print (they redraw one line with \\r or backspaces). True when pr changed."""
+    import re
+    changed = False
+    for part in re.split(r"[\r\n\x08]+", text):
+        part = part.strip()
+        if not part:
+            continue
+        m = re.match(r"^(\d{1,3})%(?:\s+\d+)?(?:\s+-\s+(.*))?$", part)                   # 7z: " 23% 4 - dir/file"
+        if m and not overall:                                   # unrar / unar print the percentage of the CURRENT file only: not the whole unpack
+            continue
+        if m:
+            pr.percent = float(m.group(1))
+            if m.group(2):
+                pr.name, changed = m.group(2), True
+            changed = True
+            continue
+        m = re.match(r"^(?:-|\+|Extracting)\s+(.*?)(?:\s+(\d{1,3})%)?$", part)               # 7z -bb1 "- name", unrar "Extracting  name  45%"
+        if m and m.group(1) and not m.group(1).startswith("from "):
+            if m.group(1) != pr.name:
+                pr.files_done += 1 if pr.name else 0
+            pr.name, changed = m.group(1), True
+    return changed
+
+
+def _extract_external(kind: str, exe: str, how: str, archive: Path, dest: Path, password: str, run: Callable, report, cancel,
+                      popen: Callable | None = None) -> None:
+    """7z / unrar / unar, started in the background with its output read as it arrives: percentage from the tool when it prints one,
+    else bytes written so far against the archive's listed size. Cancel stops the tool. A password goes on the command line (visible to
+    this computer's other users for the seconds this runs)."""
+    import select
+    import time
+    popen = popen or subprocess.Popen
+    total, nfiles = archive_totals(kind, exe, how, archive, password, run)
+    pr = Progress(total=total, files_total=nfiles)
+    report(pr)
+    cmd = _tool_command(how, exe, archive, dest, password)
+    try:
+        proc = popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0)
+    except OSError as exc:
+        raise FileError(f"Could not start the unpacking program: {exc.strerror or exc}")
+    tail = ""
+    saw_percent = False
+    started = last_poll = time.monotonic()
+    try:
+        fd = proc.stdout.fileno()
+        while True:
+            ready, _w, _x = select.select([fd], [], [], 0.25)
+            if ready:
+                data = os.read(fd, 4096)
+                if not data:
+                    break
+                text = data.decode("utf-8", "replace")
+                tail = (tail + text)[-4000:]
+                if _read_tool_output(text, pr, overall=(how == "7z")):
+                    saw_percent = saw_percent or pr.percent is not None
+                    report(pr)
+            elif proc.poll() is not None:
+                break
+            if _cancelled(cancel):
+                proc.terminate()
+                try:
+                    proc.wait(5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                raise FileError("Cancelled.")
+            now = time.monotonic()
+            if now - started > 7200:
+                proc.kill()
+                raise subprocess.TimeoutExpired(cmd, 7200)
+            if not saw_percent and now - last_poll >= 0.7:           # no percentage from the tool: count what it has written
+                last_poll = now
+                pr.done = _tree_bytes(dest)
+                report(pr)
+        rc = proc.wait()
+    finally:
+        try:
+            proc.stdout.close()
+        except OSError:
+            pass
+    if rc == 0:
         return
-    text = ((r.stdout or "") + (r.stderr or "")).lower()
-    if any(w in text for w in ("wrong password", "enter password", "password is incorrect", "encrypted", "incorrect password", "need password", "password required")):
+    low = tail.lower()
+    if any(w in low for w in PASSWORD_WORDS):
         raise NeedPassword()
     raise FileError("The archive could not be unpacked (it may be damaged, or the download is not finished).")
 
@@ -348,15 +554,18 @@ class Extraction:
     needs_tool: str = ""          # app id to install ("7zip" / "unrar")
 
 
-def extract(archive: Path, password: str = "", progress: Callable[[int, int], None] | None = None, cancel: threading.Event | None = None,
-            which: Callable | None = None, run: Callable | None = None, home: Path | None = None) -> Extraction:
-    """Unpack an archive into a new folder beside it. Never raises. On a password problem, needs_password is set; the half-made folder is removed."""
+def extract(archive: Path, password: str = "", progress: Callable[[Progress], None] | None = None, cancel: threading.Event | None = None,
+            which: Callable | None = None, run: Callable | None = None, home: Path | None = None, popen: Callable | None = None,
+            into: Path | None = None) -> Extraction:
+    """Unpack an archive into a new folder beside it. Never raises. On a password problem, needs_password is set; the half-made folder is
+    removed (also after Cancel). `into` unpacks into that (new) folder instead, from anywhere (used for BIOS packs: Code unpacks them into its
+    own work folder, copies the files it needs and deletes the folder). progress(Progress) is called as it goes (from the calling thread: run this in a worker)."""
     which = which or shutil.which
     run = run or subprocess.run
     kind = archive_kind(archive)
     if not kind:
         return Extraction(False, "That is not an archive Code can unpack (zip, tar, 7z, rar).")
-    if not inside_roots(archive, home):
+    if into is None and not inside_roots(archive, home):
         return Extraction(False, "Code only unpacks things inside Downloads, Games and Videos.")
     if not archive.is_file():
         return Extraction(False, "That file is gone.")
@@ -366,29 +575,36 @@ def extract(archive: Path, password: str = "", progress: Callable[[int, int], No
     if not exe:
         name = "7-Zip" if kind != "rar" else "unrar (or 7-Zip)"
         return Extraction(False, f"Code needs {name} to open .{kind} files. Press the Install button below.", needs_tool=missing_tool(kind, which))
-    dest = unique_folder(archive)
+    dest = unique_folder(archive) if into is None else into
     made = False
+
+    lastpr = [Progress()]
+
+    def report(pr: Progress) -> None:
+        lastpr[0] = pr
+        if progress:
+            try:
+                progress(pr)
+            except Exception:  # a broken screen callback must never stop the unpack
+                pass
     try:
         dest.mkdir(parents=True)
         made = True
         try:
             if kind == "zip":
-                _extract_zip(archive, dest, password, progress, cancel)
+                _extract_zip(archive, dest, password, report, cancel)
             elif kind == "tar":
-                _extract_tar(archive, dest, progress, cancel)
+                _extract_tar(archive, dest, report, cancel)
             else:
-                if progress:
-                    progress(0, 0)
-                _extract_external(kind, exe, how, archive, dest, password, run)
+                _extract_external(kind, exe, how, archive, dest, password, run, report, cancel, popen)
         except FileError as exc:
             if str(exc) != "NEED7Z":
                 raise
             seven, _ = tool_for("7z", which)
             if not seven:
                 raise FileError("This zip needs 7-Zip (it is encrypted in a way Code's own unzip cannot read). Install 7-Zip below.")
-            _extract_external("7z", seven, "7z", archive, dest, password, run)
-        if progress:
-            progress(1, 1)
+            _extract_external("7z", seven, "7z", archive, dest, password, run, report, cancel, popen)
+        report(dataclasses.replace(lastpr[0], percent=100.0, done=lastpr[0].total or lastpr[0].done, files_done=lastpr[0].files_total or lastpr[0].files_done))
         return Extraction(True, f"Unpacked into the folder \"{dest.name}\" ({_count(dest)} items).", dest)
     except NeedPassword:
         _cleanup(dest, made)

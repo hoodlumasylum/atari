@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import appinstall, apps, icons, covers as covers_mod, emulators, freegames, paths, roms, steam, webapps, windows
+from . import appinstall, apps, icons, covers as covers_mod, emulators, freegames, gamesroot, paths, roms, steam, webapps, windows
 from .config import Config
 
 STEAM = "steam"
@@ -39,6 +39,8 @@ class LibraryResult:
     steam_scan: steam.SteamScan = field(default_factory=steam.SteamScan)
     rom_counts: dict[str, int] = field(default_factory=dict)
     steam_note: str = ""  # friendly status for the setup screen / empty state
+    auto_folders: dict = field(default_factory=dict)  # system id -> ~/Games/Atari/<system> folders found by themselves
+    unknown: list = field(default_factory=list)       # gamesroot.Unknown: folders / files no system claims
 
 
 def _dir_index(folder: Path) -> dict[str, str]:
@@ -145,12 +147,24 @@ def build_library(cfg: Config, home: Path | None = None, covers_root: Path | Non
     res.steam_note = steam_status_text(res.steam_scan, cfg.steam_enabled)
 
     cover_cache: dict = {}
+    try:
+        res.unknown = gamesroot.unknown_items(cfg, home)
+    except Exception as exc:
+        print(f"[atari] games folder check failed: {exc}")
     for sc in cfg.systems.values():
-        if not sc.roms:
+        auto = []
+        try:
+            auto = [f for f in gamesroot.auto_folders(cfg, sc.id, home)
+                    if os.path.realpath(f) not in {os.path.realpath(os.path.expanduser(x)) for x in sc.roms}]
+        except Exception as exc:
+            print(f"[atari] games folder check failed for {sc.id}: {exc}")
+        if auto:
+            res.auto_folders[sc.id] = auto
+        if not sc.roms and not auto:
             continue
         miss = rom_missing(cfg, sc, home)
         try:
-            found = roms.scan_system(sc.roms, sc.extensions, sc.id)
+            found = roms.scan_system([*sc.roms, *auto], sc.extensions, sc.id)
         except Exception as exc:
             print(f"[atari] ROM scan failed for {sc.id}: {exc}")
             found = []

@@ -220,7 +220,7 @@ Window {
         pageList.model = backend.pageRows(pageName)
         if (keep) pageList.currentIndex = Math.min(idx, pageList.count - 1)
         var r = pageList.model[pageList.currentIndex]
-        if (!r || r.kind === "info") pageList.firstSelectable()
+        if (!r || r.kind === "info" || r.kind === "progress") pageList.firstSelectable()
     }
     function leavePage() {
         if (pageName === "winwork") backend.pageActivate("winwork", "cancel")
@@ -240,6 +240,7 @@ Window {
         else if (a === "osk:winname") openOsk("winname")
         else if (a === "import:games") openImport("page", "games")
         else if (a === "import:bios") openImport("page", "bios")
+        else if (a === "import:biospick") { openImport("page", "bios"); backend.importBiosFromPick("") }
         else if (a === "controls") openControls("page")
         else if (a.indexOf("page:") === 0) openPage(a.substring(5))
         else openPage(a)
@@ -539,6 +540,8 @@ Window {
         else if (r.kind === "steampage") openPage("steam")
         else if (r.kind === "kioskpage") openPage("kiosk")
         else if (r.kind === "quietbootpage") openPage("quietboot")
+        else if (r.kind === "bootreport") backend.saveBootReport()
+        else if (r.kind === "fixfolder") { if (r.value) { backend.fixGamesFolder(r.id); refreshSetup(true) } }
         else if (r.kind === "kioskupdate") { backend.updateKioskSession(); refreshSetup(true) }
         else if (r.kind === "wifipage") openWifi("setup")
         else if (r.kind === "introvideo") { backend.toggleIntro(); refreshSetup(true) }
@@ -588,7 +591,7 @@ Window {
     }
 
     function browseCancel() {
-        if (browseTarget.kind === "import") mode = "import"
+        if (browseTarget.kind === "import" || browseTarget.kind === "biospack") mode = "import"
         else if (browseTarget.kind === "importfolder" || (browseTarget.kind === "winfile" && browseTarget.wizard)) openPage("addgames")
         else if (browseTarget.kind === "winfile") { mode = "library"; buildLists() }
         else if (browseTarget.kind === "wincover") openPage("winform")
@@ -614,6 +617,7 @@ Window {
         else if (r.kind === "file" && enter) {
             if (browseTarget.kind === "winfile") handleAction(backend.winPicked(r.path))
             else if (browseTarget.kind === "gamecover") handleAction(backend.coverFromFile(browseTarget.gid, r.path))
+            else if (browseTarget.kind === "biospack") { backend.startImportScan(r.path); mode = "import" }
             else if (browseTarget.kind === "introfile") { backend.introPicked(r.path); refreshSetup(true); mode = "setup" }
             else handleAction(backend.winPickedCover(r.path))
         }
@@ -1382,6 +1386,7 @@ Window {
             visible: win.mode === "import"
             onClosed: win.closeImport()
             onBrowseRequested: win.openBrowser({ kind: "import" }, backend.importBrowseStart())
+            onPackRequested: win.openBrowser({ kind: "biospack", files: "archive" }, backend.importBrowseStart())
         }
 
         // ------------------------------------------------- overlay: help / fix my game / add Windows game

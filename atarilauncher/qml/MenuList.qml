@@ -22,13 +22,13 @@ Item {
             j += step
             if (j < 0 || j >= n) { j = i; break }
             var row = lv.model[j]
-            if (row && row.kind !== "info") break
+            if (row && row.kind !== "info" && row.kind !== "progress") break
         }
         lv.currentIndex = j
     }
     function firstSelectable() {
         for (var i = 0; i < lv.count; i++) {
-            if (lv.model[i] && lv.model[i].kind !== "info") { lv.currentIndex = i; return }
+            if (lv.model[i] && lv.model[i].kind !== "info" && lv.model[i].kind !== "progress") { lv.currentIndex = i; return }
         }
     }
     ListView {
@@ -43,20 +43,87 @@ Item {
             id: row
             required property var modelData
             required property int index
-            readonly property bool isInfo: modelData.kind === "info"
+            readonly property bool isBar: modelData.kind === "progress"      // a percentage bar (unpacking): not selectable
+            readonly property bool isInfo: modelData.kind === "info" || isBar
             readonly property bool sel: ListView.isCurrentItem && !isInfo
             readonly property bool two: !!modelData.detail
             readonly property bool primary: modelData.kind === "done"   // the big red DONE / CONTINUE rows
             width: lv.width
-            height: isInfo ? Math.max(34 * ml.u, infoText.implicitHeight + 12 * ml.u)
+            height: isBar ? 112 * ml.u : isInfo ? Math.max(34 * ml.u, infoText.implicitHeight + 12 * ml.u)
                            : (modelData.image ? 112 * ml.u : (two ? 56 * ml.u + detailText.implicitHeight : 62 * ml.u))
             radius: 10 * ml.u
-            color: primary ? (sel ? "#d8222c" : "#a8121b") : (sel ? ml.selColor : (isInfo ? "transparent" : "#121420"))
-            border.width: sel ? 3 * ml.u : (isInfo ? 0 : 1.5 * ml.u)
+            color: isBar ? "#121420" : primary ? (sel ? "#d8222c" : "#a8121b") : (sel ? ml.selColor : (isInfo ? "transparent" : "#121420"))
+            border.width: sel ? 3 * ml.u : (isInfo && !isBar ? 0 : 1.5 * ml.u)
             border.color: sel ? (primary ? "white" : ml.accent) : (primary ? "#ff5a62" : "#262a3c")
+            Item {                      // the percentage bar: file name, bar, "63%", bytes and file counts
+                id: bar
+                visible: row.isBar
+                anchors.fill: parent
+                anchors.margins: 14 * ml.u
+                readonly property real frac: row.isBar ? modelData.fraction : -1
+                Text {
+                    objectName: "barName"
+                    anchors.left: parent.left
+                    anchors.right: barPct.left
+                    anchors.rightMargin: 12 * ml.u
+                    anchors.top: parent.top
+                    elide: Text.ElideMiddle
+                    text: row.isBar ? modelData.title : ""
+                    color: "#e6e8f2"
+                    font.pixelSize: 21 * ml.u
+                    font.bold: true
+                }
+                Text {
+                    id: barPct
+                    objectName: "barPercent"
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    text: row.isBar && modelData.value ? modelData.value : ""
+                    color: Theme.green
+                    font.pixelSize: 24 * ml.u
+                    font.bold: true
+                }
+                Rectangle {
+                    id: track
+                    objectName: "barTrack"
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.verticalCenterOffset: 4 * ml.u
+                    height: 22 * ml.u
+                    radius: height / 2
+                    color: "#262a3c"
+                    clip: true
+                    Rectangle {
+                        objectName: "barFill"
+                        height: parent.height
+                        radius: height / 2
+                        color: Theme.green
+                        width: bar.frac >= 0 ? parent.width * Math.min(1, bar.frac) : parent.width * 0.25
+                        x: 0
+                        Behavior on width { enabled: bar.frac >= 0; NumberAnimation { duration: 120 } }
+                        SequentialAnimation on x {          // no total known: a block sliding to and fro
+                            running: bar.visible && bar.frac < 0
+                            loops: Animation.Infinite
+                            NumberAnimation { from: 0; to: track.width * 0.75; duration: 900; easing.type: Easing.InOutQuad }
+                            NumberAnimation { from: track.width * 0.75; to: 0; duration: 900; easing.type: Easing.InOutQuad }
+                        }
+                    }
+                }
+                Text {
+                    objectName: "barDetail"
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    elide: Text.ElideRight
+                    text: row.isBar && modelData.detail ? modelData.detail : ""
+                    color: Theme.dim
+                    font.pixelSize: 17 * ml.u
+                }
+            }
             Text {
                 id: infoText
-                visible: row.isInfo
+                visible: row.isInfo && !row.isBar
                 anchors.left: parent.left
                 anchors.leftMargin: 14 * ml.u
                 anchors.right: parent.right

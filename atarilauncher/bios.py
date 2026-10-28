@@ -87,7 +87,8 @@ KNOWN: list[Known] = (
         _k("panafz1.bin", "3do", "3DO BIOS (Panasonic FZ-1)", ("f47264dd47fe30f73ab3c010015c155b",)),
         # Xbox (xemu): files are matched by name only (many valid dumps exist)
         _k("mcpx_1.0.bin", "xbox", "Xbox boot ROM (MCPX)", (), ("xemu",)),
-        _k("Complex_4627v1.03.bin", "xbox", "Xbox BIOS", (), ("xemu",), alts=("complex_4627.bin",)),
+        _k("Complex_4627v1.03.bin", "xbox", "Xbox BIOS (flash)", (), ("xemu",),
+           alts=("complex_4627.bin", "xbox_bios.bin", "xboxbios.bin")),
         _k("xbox_hdd.qcow2", "xbox", "Xbox hard-disk image", (), ("xemu",)),
         _k("eeprom.bin", "xbox", "Xbox EEPROM", (), ("xemu",), optional=True),
         # Switch keys
@@ -240,6 +241,8 @@ def identify(path: Path, size: int | None = None) -> BiosItem | None:
         return BiosItem(path, name, "ps3", "PlayStation 3 firmware", "note", size, note=(
             "PS3 firmware cannot be copied automatically. In RPCS3 choose File > Install Firmware and pick this file."))
     kn = KNOWN_BY_NAME.get(low)
+    if kn is None and low.endswith(".qcow2"):  # any xemu hard-disk image: xemu is told to use it as xbox_hdd.qcow2
+        kn = KNOWN_BY_NAME.get("xbox_hdd.qcow2")
     if kn is not None:
         if size == 0:
             return None
@@ -275,7 +278,7 @@ def scan_for_bios(root: str | Path, cancel: threading.Event | None = None) -> Bi
                 res.truncated = True
                 break
             low = fn.lower()
-            if not (low in KNOWN_BY_NAME or low == PS3_FILE or low.endswith(".bin")):
+            if not (low in KNOWN_BY_NAME or low == PS3_FILE or low.endswith((".bin", ".qcow2"))):
                 continue
             item = identify(Path(dirpath) / fn)
             if item is None:
@@ -294,6 +297,39 @@ def scan_for_bios(root: str | Path, cancel: threading.Event | None = None) -> Bi
     order = {sid: i for i, sid in enumerate(emulators_order())}
     res.items = sorted(best.values(), key=lambda it: (order.get(it.system, 999), it.name.lower()))
     return res
+
+
+def missing_detail(system_id: str, extra=(), home: Path | None = None, which=shutil.which) -> list[str]:
+    """Names still missing for one console, counting `extra` (canonical names found in a pack but not copied yet). [] = nothing missing."""
+    need = NEEDS.get(system_id)
+    if need is None or need["mode"] == "note":
+        return []
+    extra = set(extra)
+    have = _have(system_id, need["names"], home, which) | extra
+    if need["mode"] == "ps2":
+        return [] if "ps2-bios" in have else ["a PS2 BIOS (scph*.bin)"]
+    if need["mode"] == "any":
+        if have & set(need["names"]):
+            return []
+        names = need["names"]
+        return ["one of: " + ", ".join(names[:4]) + (", ..." if len(names) > 4 else "")]
+    return [n for n in need["names"] if n not in have]
+
+
+def pack_summary(items: list, home: Path | None = None, which=shutil.which) -> list[str]:
+    """Plain lines for the checklist after a BIOS pack was opened: what was found, and what each console in it still lacks."""
+    lines: list[str] = []
+    systems: dict[str, set] = {}
+    for it in items:
+        if it.status == "note" or not it.targets:
+            continue
+        systems.setdefault(it.system, set()).add(
+            "ps2-bios" if it.system == "ps2" else (it.known.name if it.known else it.name))
+    names = {s.id: s.name for s in emulators.SYSTEMS}
+    for sid, have in systems.items():
+        miss = missing_detail(sid, have, home, which)
+        lines.append(f"{names.get(sid, sid)}: " + ("found everything it needs." if not miss else "still missing " + ", ".join(miss) + "."))
+    return lines
 
 
 def emulators_order() -> list[str]:
@@ -384,6 +420,28 @@ XBOX_NOTE = ("xemu: if it does not find the files by itself, open  Machine > Sys
              "and hard-disk files (they were copied to its data folder).")
 SWITCH_NOTE = ("Switch: the firmware is installed inside the emulator (Tools > Install Firmware); the keys were "
                "copied for you.")
+
+
+XBOX_FILES = (
+    ("mcpx_1.0.bin", "boot ROM (MCPX), 512 bytes - from your own Xbox", True),
+    ("Complex_4627v1.03.bin", "BIOS, 256 KB (any other genuine Xbox BIOS dump also works if you rename it) - from your own Xbox", True),
+    ("xbox_hdd.qcow2", "hard-disk image: an empty formatted Xbox disk (xemu's own setup page explains how to make one)", True),
+    ("eeprom.bin", "EEPROM - optional, xemu makes one by itself", False),
+)
+
+
+def xbox_guide(home: Path | None = None, which=shutil.which) -> list[str]:
+    """Plain lines telling what the user must supply for original-Xbox games, with what is already found."""
+    names = [n for n, _t, _r in XBOX_FILES]
+    have = _have("xbox", names, home, which)
+    lines = ["Xbox Classic: Code never includes the Xbox BIOS, boot ROM, hard-disk image or games - you supply them "
+             "from your own console:"]
+    for n, text, required in XBOX_FILES:
+        ok = n in have or (n == "Complex_4627v1.03.bin" and "complex_4627.bin" in have)
+        lines.append(("[found] " if ok else ("[needed] " if required else "[optional] ")) + f"{n}: {text}")
+    lines.append("Use \"Add BIOS files\" to copy them to xemu (USB stick or folder). Games: put the .iso (or .xiso) "
+                 "- or an unpacked game folder with default.xbe - into  ~/Games/Atari/xbox  and press Rescan.")
+    return lines
 
 
 def _maybe_write_xemu_config(home: Path | None, which) -> None:

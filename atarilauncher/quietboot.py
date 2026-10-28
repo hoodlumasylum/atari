@@ -11,8 +11,8 @@ What turning it ON does (one password window, `pkexec`; nothing else is touched)
 Turning it OFF removes exactly those files, takes the Code theme out of update-alternatives (Mint's own splash comes back), and runs
 update-grub / update-initramfs again.
 
-Recovery is never removed: the boot menu is one key away (Shift / Esc within 2 s), GRUB still shows by itself after a failed boot
-(recordfail), "Advanced options" / recovery mode are untouched, and from a text console (Ctrl+Alt+F2) RECOVERY below undoes it all.
+Recovery is never removed: the boot menu is one key away (Shift / Esc within the 2 s window; since 0.4.6 it no longer pops up by itself
+after a hard power-off either, because /boot/grub/custom.cfg has the last word), "Advanced options" / recovery mode are untouched, and from a text console (Ctrl+Alt+F2) RECOVERY below undoes it all.
 Not done on purpose: LightDM's own (Mint) login screen is not restyled - with Code-only mode's auto-login it is skipped anyway.
 Paths are relative to a root so tests can run the scripts in a temporary folder."""
 from __future__ import annotations
@@ -27,9 +27,14 @@ from . import kiosk
 from . import rootauth
 
 RECOVERY = ("To undo quiet boot by hand (Ctrl+Alt+F2, log in): sudo rm -f /etc/default/grub.d/zz-code-quiet.cfg /etc/default/grub.d/90-code-quiet.cfg; "
+            "sudo sed -i '/^# BEGIN code-quiet-boot/,/^# END code-quiet-boot/d' /boot/grub/custom.cfg; "
             "sudo plymouth-set-default-theme \"$(sed -n 's/^previous_theme=//p' /etc/code-boot/quiet-boot)\"; "
             "sudo update-alternatives --remove default.plymouth /usr/share/plymouth/themes/code/code.plymouth; "
             "sudo update-grub && sudo update-initramfs -u && sudo rm -rf /etc/code-boot /usr/share/plymouth/themes/code")
+BIOS_LOGO_NOTE = ("The Dell / manufacturer logo shown right at power-on is drawn by the computer's own firmware (UEFI / BIOS) before Linux or GRUB starts, "
+                  "so Code cannot remove it. In the BIOS setup (tap F2 at power-on; F12 is the one-time boot menu) look for Fast Boot (e.g. Settings > POST "
+                  "Behavior > Fastboot: Minimal / Auto) and for any 'logo' / 'Full Screen Logo' / 'Quiet' option under Boot, Display or POST Behavior. "
+                  "Some models have no switch at all, and Code cannot change firmware settings from Linux.")
 HOW_TO_SHOW_MENU = "To see the boot menu: hold Shift (older BIOS) or tap Esc (UEFI) right when the computer starts."
 CMDLINE = "quiet splash loglevel=3 rd.systemd.show_status=false systemd.show_status=false rd.udev.log_level=3 vt.global_cursor_default=0"
 OTHER_OS = re.compile(r"menuentry\s+['\"]([^'\"]*(Windows|Microsoft|macOS|Mac OS|Darwin|FreeBSD|OpenBSD)[^'\"]*)['\"]", re.I)
@@ -45,6 +50,8 @@ class Layout:
     marker_dir: str = "etc/code-boot"
     marker: str = "etc/code-boot/quiet-boot"
     grub_menu: str = "boot/grub/grub.cfg"
+    grub_custom: str = "boot/grub/custom.cfg"      # sourced by 41_custom as the LAST thing grub.cfg does: beats os-prober's and the failed-boot menu
+    grubenv: str = "boot/grub/grubenv"
 
     def p(self, rel: str) -> Path:
         return self.root / rel
@@ -59,6 +66,32 @@ DEFAULT = Layout()
 
 def enabled(layout: Layout = DEFAULT) -> bool:
     return layout.p(layout.marker).is_file()
+
+
+def marker_hide(layout: Layout = DEFAULT) -> bool | None:
+    """Whether quiet boot was turned on WITH the boot menu hidden (True), logo and text only (False), or is off / unreadable (None)."""
+    try:
+        for ln in layout.p(layout.marker).read_text(errors="replace").splitlines():
+            if ln.startswith("hide_menu="):
+                return ln.split("=", 1)[1].strip() == "yes"
+    except OSError:
+        pass
+    return None
+
+
+def windows_partitions() -> list[str]:
+    """Human text for every Windows-type partition still on the disks (a Dell recovery / WinRE partition counts), e.g. 'nvme0n1p4 (ntfs, 1G, WINRE_DRV)'."""
+    import subprocess
+    try:
+        p = subprocess.run(["lsblk", "-rno", "NAME,FSTYPE,SIZE,LABEL"], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    out = []
+    for ln in p.stdout.splitlines():
+        parts = ln.split(None, 3)
+        if len(parts) >= 2 and parts[1].lower() in ("ntfs", "bitlocker", "ntfs3"):
+            out.append(f"{parts[0]} ({parts[1]}, {parts[2] if len(parts) > 2 else '?'}" + (f", {parts[3].strip()}" if len(parts) > 3 and parts[3].strip() else "") + ")")
+    return out
 
 
 def disk_filesystems() -> list[str] | None:
@@ -125,8 +158,11 @@ def preflight(layout: Layout = DEFAULT, which: Callable = None, logo: Path | Non
     if stale:
         out.append(Check(True, False, "GRUB still lists " + ", ".join(stale) + ", but no Windows disk (NTFS) is left: it is a leftover and does "
                                       "not stop the boot menu from being hidden."))
+    wp = windows_partitions() if others else []
+    extra = (" Windows-type partitions still on the disks: " + ", ".join(wp) + ". A Dell keeps recovery partitions (SupportAssist / WinRE) even after "
+             "Windows is deleted - if you do not use Windows any more, choose 'hide the boot menu anyway'.") if wp else ""
     add(not others, False, "Only this operating system is on the disk: the boot menu is hidden (Shift / Esc shows it).",
-        "Another system is on this disk (" + ", ".join(others) + "): the boot menu stays visible so you can still choose it.")
+        "Another system is on this disk (" + ", ".join(others) + "): the boot menu stays visible so you can still choose it." + extra)
     return out
 
 
@@ -141,11 +177,23 @@ def blocked(checks: list[Check]) -> str:
 def render_grub(hide_menu: bool, disable_os_prober: bool = False) -> str:
     lines = ["# Written by Code > Settings > Quiet boot. Remove with Settings > Quiet boot > Turn off."]
     if hide_menu:
-        lines += ["GRUB_TIMEOUT_STYLE=hidden", "GRUB_TIMEOUT=2", "GRUB_HIDDEN_TIMEOUT_QUIET=true"]    # Shift / Esc inside these 2 seconds shows the menu
+        lines += ["GRUB_TIMEOUT_STYLE=hidden", "GRUB_TIMEOUT=2", "GRUB_HIDDEN_TIMEOUT_QUIET=true",     # Shift / Esc inside these 2 seconds shows the menu
+                  "GRUB_RECORDFAIL_TIMEOUT=2"]          # Ubuntu / Mint's 00_header otherwise shows the menu for 30 s after a boot that did not finish (hard power-off)
     if disable_os_prober:       # only a leftover "Windows Boot Manager" (no Windows disk) is on the machine: stop GRUB listing it again
         lines += ["GRUB_DISABLE_OS_PROBER=true"]
     lines += [f'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT {CMDLINE}"', ""]
     return "\n".join(lines)
+
+
+CUSTOM_BEGIN = "# BEGIN code-quiet-boot (written by Code > Settings > Quiet boot; Turn off removes this block)"
+CUSTOM_END = "# END code-quiet-boot"
+
+
+def render_custom() -> str:
+    """The last word on the menu. /etc/grub.d/41_custom sources /boot/grub/custom.cfg at the very end of grub.cfg, after Ubuntu / Mint's own
+    rules that force the menu (30_os-prober's 'another OS found: timeout_style=menu, timeout=10', and 00_header's 'last boot did not finish:
+    menu for 30 s / for ever' - also always on UEFI when GRUB cannot write its grubenv). Hidden + 2 s: Esc / Shift still shows the menu."""
+    return "\n".join([CUSTOM_BEGIN, "set timeout_style=hidden", "set timeout=2", CUSTOM_END, ""])
 
 
 def render_plymouth(theme_dir: str) -> str:
@@ -186,8 +234,15 @@ STEPS = {          # exit code of the pkexec script -> what was being done (the 
     81: "writing the GRUB setting file", 82: "writing the Code boot-splash theme", 83: "rebuilding the boot menu (update-grub)",
     84: "checking that GRUB took the setting (another file overrides it)", 85: "choosing the Code boot-splash theme",
     86: "rebuilding the boot image (update-initramfs)", 87: "checking that the boot image contains the Code theme", 88: "writing the note that quiet boot is on",
-    89: "restoring Mint's boot-splash theme",
+    89: "restoring Mint's boot-splash theme", 90: "checking that update-grub really rewrote /boot/grub/grub.cfg",
+    91: "writing the last-word menu setting (custom.cfg)",
 }
+
+
+def drop_custom(cc: str) -> str:
+    """Shell that removes Code's block from custom.cfg (and the file itself when nothing else is in it). Never fails."""
+    return (f"if [ -f {_q(cc)} ]; then sed -i '/^# BEGIN code-quiet-boot/,/^# END code-quiet-boot/d' {_q(cc)} || true; "
+            f"[ -s {_q(cc)} ] || rm -f {_q(cc)}; fi")
 
 
 def enable_script(layout: Layout = DEFAULT, logo: Path | None = None, hide_menu: bool = True, theme_visible_path: str | None = None,
@@ -195,10 +250,11 @@ def enable_script(layout: Layout = DEFAULT, logo: Path | None = None, hide_menu:
     """What pkexec runs as root. Any failure puts every file back and ends the script with the exit code of the step that failed (STEPS)."""
     g, lg, t, md, m, gm, pc = (str(layout.p(x)) for x in (layout.grub_cfg, layout.legacy_grub_cfg, layout.theme_dir, layout.marker_dir,
                                                          layout.marker, layout.grub_menu, layout.plymouth_conf))
+    cc, genv = str(layout.p(layout.grub_custom)), str(layout.p(layout.grubenv))
     shown = theme_visible_path or "/" + layout.theme_dir          # the path Plymouth reads at boot (never the test folder)
     pfile = f"{t}/code.plymouth"
     initrd = str(layout.p("boot/initrd.img-")) + "$(uname -r)"
-    undo = (f"rm -f {_q(g)}; if [ -n \"$PREV\" ] && [ \"$PREV\" != code ] && command -v plymouth-set-default-theme >/dev/null 2>&1; "
+    undo = (f"rm -f {_q(g)}; {drop_custom(cc)}; if [ -n \"$PREV\" ] && [ \"$PREV\" != code ] && command -v plymouth-set-default-theme >/dev/null 2>&1; "
             f"then plymouth-set-default-theme \"$PREV\" >/dev/null 2>&1 || true; fi; "
             f"update-alternatives --remove default.plymouth {_q(pfile)} >/dev/null 2>&1 || true; "
             f"rm -rf {_q(t)} {_q(md)}; update-grub >/dev/null 2>&1 || true")
@@ -214,6 +270,8 @@ def enable_script(layout: Layout = DEFAULT, logo: Path | None = None, hide_menu:
     ]
     if grub:
         lines.append(_write(g, render_grub(hide_menu, disable_os_prober)))
+        if hide_menu:
+            lines += ["STEP=91", drop_custom(cc), f"mkdir -p {_q(Path(cc).parent)}", f"printf %s {_q(render_custom())} >> {_q(cc)}", f"chmod 644 {_q(cc)}", "STEP=81"]
     lines += [
         "STEP=82",
         f"mkdir -p {_q(t)}\ncp {_q(logo)} {_q(t + '/code-logo.png')}\nchmod 644 {_q(t + '/code-logo.png')}",
@@ -221,7 +279,12 @@ def enable_script(layout: Layout = DEFAULT, logo: Path | None = None, hide_menu:
         _write(pfile, render_plymouth(shown)),
     ]
     if grub:
-        lines += ["STEP=83", "update-grub >/dev/null 2>&1", "STEP=84", f"grep -q splash {_q(gm)}"]
+        lines += [f"BEFORE=\"$(stat -c %y {_q(gm)} 2>/dev/null || echo none)\"",
+                  # a failed boot left 'recordfail=1' in grubenv: clear it now so the menu does not show once more for that
+                  f"if [ -f {_q(genv)} ] && command -v grub-editenv >/dev/null 2>&1; then grub-editenv {_q(genv)} unset recordfail >/dev/null 2>&1 || true; fi",
+                  "STEP=83", "update-grub >/dev/null 2>&1",
+                  "STEP=90", f"AFTER=\"$(stat -c %y {_q(gm)} 2>/dev/null || echo none)\"", "[ \"$AFTER\" != none -a \"$AFTER\" != \"$BEFORE\" ]",
+                  "STEP=84", f"grep -q splash {_q(gm)}"]
         if hide_menu:
             lines.append(f"grep -q 'timeout_style=hidden' {_q(gm)}")
     lines += [
@@ -255,6 +318,7 @@ def disable_script(layout: Layout = DEFAULT) -> str:
         "trap 'rc=$?; if [ $rc -ne 0 ]; then exit $STEP; fi' EXIT",
         f"PREV=\"$(sed -n 's/^previous_theme=//p' {_q(m)} 2>/dev/null | head -n 1)\"",
         f"rm -f {_q(g)} {_q(lg)}",
+        drop_custom(str(layout.p(layout.grub_custom))),
         "if [ -n \"$PREV\" ] && [ \"$PREV\" != code ] && command -v plymouth-set-default-theme >/dev/null 2>&1; then "
         "plymouth-set-default-theme \"$PREV\" >/dev/null 2>&1 || true; fi",
         f"update-alternatives --remove default.plymouth {_q(pfile)} >/dev/null 2>&1 || true",
@@ -341,13 +405,35 @@ def enable(layout: Layout = DEFAULT, run: Callable | None = None, out: Callable[
             text = "The password step finished but the files are not there - nothing changed. Run the diagnostic command on the Quiet boot page."
             _log("on", False, text, lines)
             return False, text
-        text = on_text(hide)
+        text = on_text(hide) + readback_text(layout, hide, fstypes)
         _log("on", True, text, [])
         return True, text
     except Exception as exc:  # never take Code down
         text = f"Could not turn quiet boot on: {exc}"
         _log("on", False, text, lines)
         return False, text
+
+
+def readback_text(layout: Layout, hide: bool, fstypes: Callable | None = None) -> str:
+    """After update-grub: read /boot/grub/grub.cfg (and the rest) back and say what is REALLY in it - never what we hoped for."""
+    try:
+        facts = status(layout, fstypes)
+        cfg = layout.p(layout.grub_menu).read_text(errors="replace")
+    except Exception:
+        return ""
+    bits = []
+    if hide:
+        tm = re.search(r"set timeout=(\d+)", cfg)
+        hid = "timeout_style=hidden" in cfg
+        block, sourced = _custom_state(layout)
+        bits.append(("grub.cfg: menu hidden" + (f", {tm.group(1)} s window" if tm else "")) if hid else "grub.cfg: the menu is NOT hidden")
+        bits.append("custom.cfg last word: " + ("yes" if block and sourced else "NO (grub.cfg does not read it)"))
+    bits.append("quiet splash: " + ("yes" if re.search(r"\bquiet\b.*\bsplash\b|\bsplash\b.*\bquiet\b", cfg) else "NO"))
+    bad = [f.text for f in facts if f.state == "bad"]
+    text = " Read back from the files just now - " + "; ".join(bits) + "."
+    if bad:
+        text += " Still NOT applied: " + " | ".join(bad[:4]) + "."
+    return text
 
 
 def disable(layout: Layout = DEFAULT, run: Callable | None = None, out: Callable[[str], None] = lambda s: None) -> tuple[bool, str]:
@@ -422,6 +508,35 @@ def _newest_initrd(layout: Layout) -> Path | None:
         return None
 
 
+def menu_forcers(cfg: str) -> list[str]:
+    """Things in a generated grub.cfg that can SHOW the menu although timeout_style=hidden was asked for (Ubuntu / Mint patches)."""
+    found: list[str] = []
+    m = re.search(r"### BEGIN /etc/grub\.d/30_os-prober ###(.*?)### END /etc/grub\.d/30_os-prober ###", cfg, re.S)
+    if m and re.search(r"^\s*set timeout_style=menu", m.group(1), re.M):
+        found.append("30_os-prober found another system and forces the menu (timeout_style=menu, 10 s)")
+    rf = re.search(r'recordfail\}"\s*=\s*1\s*\]\s*;\s*then(.{0,300})', cfg, re.S)
+    if rf:
+        t = re.search(r"set timeout=(-?\d+)", rf.group(1))
+        if t and t.group(1) != "0":
+            found.append(f"after a boot that did not finish (recordfail) 00_header shows the menu for {'ever' if t.group(1) == '-1' else t.group(1) + ' s'}")
+    if "recordfail support is disabled" in cfg and re.search(r"grub_platform\s*=\s*efi", cfg):
+        found.append("GRUB cannot write its grubenv on this disk (recordfail is off), so on UEFI it always shows the menu")
+    return found
+
+
+def _custom_state(layout: Layout) -> tuple[bool, bool]:
+    """(Code's block is in custom.cfg, grub.cfg sources custom.cfg)."""
+    try:
+        block = CUSTOM_BEGIN.split(" (")[0] in layout.p(layout.grub_custom).read_text(errors="replace")
+    except OSError:
+        block = False
+    try:
+        sourced = "custom.cfg" in layout.p(layout.grub_menu).read_text(errors="replace")
+    except OSError:
+        sourced = False
+    return block, sourced
+
+
 def status(layout: Layout = DEFAULT, fstypes: Callable | None = None, cmdline: str | None = None, lsinitramfs: Callable | None = None) -> list[Fact]:
     """What is REALLY applied, read back from the files GRUB and Plymouth use (not what Code hopes it did). Never raises."""
     import shutil
@@ -445,6 +560,29 @@ def status(layout: Layout = DEFAULT, fstypes: Callable | None = None, cmdline: s
             add("ok" if splash else "bad", "The kernel line in grub.cfg has quiet + splash." if splash else "The kernel line in grub.cfg lacks quiet / splash.")
         except OSError:
             add("info", "GRUB's grub.cfg could not be read here (a different boot loader, or no permission).")
+        try:
+            cfg_text = layout.p(layout.grub_menu).read_text(errors="replace")
+        except OSError:
+            cfg_text = ""
+        if cfg_text:
+            forcers = menu_forcers(cfg_text)
+            block, sourced = _custom_state(layout)
+            hide_marker = marker_hide(layout)
+            if block and sourced:
+                add("ok", "Last-word setting: /boot/grub/custom.cfg (read at the very end of grub.cfg) sets the menu hidden, so it wins over os-prober and the failed-boot menu.")
+            elif on and hide_marker:
+                add("bad", "Code's custom.cfg block is " + ("missing" if not block else "there, but grub.cfg does not read custom.cfg (no 41_custom)") + ": Mint / Ubuntu rules below can still show the menu.")
+            for fcr in forcers:
+                add("info" if (block and sourced) else "bad", ("Overridden by custom.cfg: " if (block and sourced) else "Can show the menu: ") + fcr + ".")
+            try:
+                env = layout.p(layout.grubenv).read_text(errors="replace")
+                if re.search(r"^recordfail=1\s*$", env, re.M):
+                    add("info" if (block and sourced) else "bad", "GRUB's grubenv says the last start did not finish (recordfail=1): that shows the menu once"
+                        + (" (custom.cfg hides it anyway)." if (block and sourced) else "; it is cleared after a normal start."))
+            except OSError:
+                pass
+            if on and hide_marker is False:
+                add("info", "Quiet boot was turned on WITHOUT hiding the menu (another system looked present). Use 'Hide the boot menu too' on this page if you do not use it.")
         for o in grub_overrides(layout):
             if o.wins:
                 add("bad", f"{o.file} sets {o.key}={o.value} AFTER Code's file, so it can override quiet boot.")
@@ -503,6 +641,115 @@ def status_summary(facts: list[Fact]) -> str:
     return f"All {len(good)} checks pass." if good else "Nothing is applied."
 
 
+# ------------------------------------------------------------------ the boot report (a short text file the user can send)
+REPORT_NAME = "code-boot-report.txt"
+_SECRET = re.compile(r"password|passwd|pbkdf2|secret|token|\bkey\b", re.I)
+
+
+def _clean(text: str, keep: Callable[[str], bool] | None = None, limit: int = 80, comments: bool = False) -> list[str]:
+    """Lines of a config file without comments / blanks / anything that smells like a secret; optionally only lines `keep` accepts."""
+    out = []
+    for ln in text.splitlines():
+        t = ln.strip()
+        if not t or (t.startswith("#") and not comments):
+            continue
+        if _SECRET.search(t):
+            out.append("(line left out: looks like a secret)")
+            continue
+        if keep is None or keep(t):
+            out.append(t)
+        if len(out) >= limit:
+            out.append("... (cut)")
+            break
+    return out
+
+
+def boot_report(layout: Layout = DEFAULT, run: Callable | None = None, version: str = "", now: str = "") -> str:
+    """A short plain-text report for support: what GRUB / Plymouth / the firmware boot list say. No passwords, no personal files.
+    `run(cmd) -> str` returns the output of a command ('' when it is missing / fails) so tests need no real tools. Never raises."""
+    import subprocess
+    import time
+
+    def default_run(cmd: list[str]) -> str:
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        return (p.stdout or "") if p.returncode == 0 else ((p.stdout or "") + (p.stderr or ""))
+    run = run or default_run
+    out: list[str] = []
+
+    def section(title: str, lines: list[str] | str):
+        out.append("")
+        out.append(f"== {title} ==")
+        if isinstance(lines, str):
+            lines = lines.splitlines()
+        out.extend(lines if lines else ["(nothing / not available)"])
+
+    def read(rel: str) -> str:
+        try:
+            return layout.p(rel).read_text(errors="replace")
+        except OSError:
+            return ""
+    try:
+        out.append("Code boot report")
+        out.append(f"Code {version or '?'}   made {now or time.strftime('%Y-%m-%d %H:%M')} (this computer's clock)")
+        out.append("No passwords are in this file. It lists boot settings only.")
+        osr = {k: v.strip('"') for k, _, v in (ln.partition("=") for ln in read("etc/os-release").splitlines()) if k in ("PRETTY_NAME", "VERSION_CODENAME", "UBUNTU_CODENAME")}
+        section("System", [f"{k}={v}" for k, v in osr.items()] + ["kernel: " + (run(["uname", "-r"]).strip() or "?"),
+                                                                   "firmware: " + ("UEFI" if layout.p("sys/firmware/efi").exists() else "legacy BIOS (or not readable)"),
+                                                                   "this start-up kernel line: " + (read("proc/cmdline").strip() or "?")])
+        sb = run(["mokutil", "--sb-state"]).strip()
+        if sb:
+            out.append("secure boot: " + sb.splitlines()[0])
+        on, hide = enabled(layout), marker_hide(layout)
+        section("Quiet boot (Code)", [f"marker: {'ON' if on else 'OFF'}" + (f", menu hidden requested: {'yes' if hide else 'no'}" if hide is not None else ""),
+                                       "Code's GRUB file: " + ("present" if layout.p(layout.grub_cfg).exists() else "missing")] +
+                ["  " + t for t in _clean(read(layout.grub_cfg))])
+        section("/etc/default/grub (uncommented lines)", _clean(read("etc/default/grub")))
+        d = layout.p("etc/default/grub.d")
+        try:
+            names = sorted(f for f in d.glob("*.cfg"))
+        except OSError:
+            names = []
+        for f in names:
+            section(f"/etc/default/grub.d/{f.name}", _clean(f.read_text(errors="replace") if f.is_file() else ""))
+        section("/boot/grub/custom.cfg", _clean(read(layout.grub_custom), comments=True))
+        env = [ln for ln in read(layout.grubenv).splitlines() if ln.split("=", 1)[0] in ("recordfail", "saved_entry", "next_entry", "boot_indeterminate")]
+        section("/boot/grub/grubenv (only the boot-state keys)", env)
+        cfg = read(layout.grub_menu)
+        keep = re.compile(r"timeout|recordfail|timeout_style|BEGIN /etc/grub\.d|custom\.cfg|osprober|\bquiet\b|splash|menuentry |grub_platform", re.I)
+        section("/boot/grub/grub.cfg (timeout / menu / quiet lines only)", [ln.rstrip()[:200] for ln in cfg.splitlines() if keep.search(ln)][:150] if cfg else "(could not be read)")
+        forcers = menu_forcers(cfg) if cfg else []
+        section("What could show the menu", forcers or ["nothing found in grub.cfg"])
+        section("efibootmgr -v (firmware boot entries)", run(["efibootmgr", "-v"]).strip().splitlines()[:40])
+        section("lsblk (disks and partitions)", run(["lsblk", "-o", "NAME,SIZE,FSTYPE,LABEL,MOUNTPOINT"]).strip().splitlines()[:40])
+        section("Plymouth", _clean(read(layout.plymouth_conf)) + ["plymouth-set-default-theme: " + (run(["plymouth-set-default-theme"]).strip() or "?")])
+        try:
+            facts = status(layout)
+            section("Read back by Code just now", [f"{ {'ok': 'OK', 'bad': 'NOT APPLIED', 'info': 'note'}[f.state] }: {f.text}" for f in facts])
+        except Exception as exc:  # pragma: no cover
+            section("Read back by Code just now", [f"(could not: {exc})"])
+        tail = [t for t in kiosk.log_tail(60) if re.search(r"quiet boot|steam launch|code-only|kiosk", t, re.I)][-25:]
+        section("Code's session log (boot-related lines)", [t[:240] for t in tail if not _SECRET.search(t)])
+        section("About the Dell logo", [BIOS_LOGO_NOTE])
+    except Exception as exc:  # pragma: no cover - never take Code down
+        out.append(f"(report stopped early: {exc})")
+    return "\n".join(out) + "\n"
+
+
+def save_report(text: str, downloads: Path | None = None) -> tuple[bool, str, Path | None]:
+    """Write the report to ~/Downloads/code-boot-report.txt. (ok, plain sentence, path)."""
+    d = downloads or (Path.home() / "Downloads")
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        f = d / REPORT_NAME
+        f.write_text(text, encoding="utf-8")
+        return True, f"Saved {f}. Send that file to whoever is helping you (it has no passwords).", f
+    except OSError as exc:
+        return False, f"Could not save the boot report: {exc}", None
+
+
 def diagnose(layout: Layout = DEFAULT, fstypes: Callable | None = None) -> list[str]:
     """Facts about what is on disk, whether GRUB / Plymouth took the setting, and why Mint's screens might still show. Never raises."""
     import shutil
@@ -520,6 +767,10 @@ def diagnose(layout: Layout = DEFAULT, fstypes: Callable | None = None) -> list[
         cfg = layout.p(layout.grub_menu).read_text(errors="replace")
         line("timeout_style=hidden" in cfg, "the generated boot menu (grub.cfg) says timeout_style=hidden - if not, GRUB still shows its menu")
         line(bool(re.search(r"\bsplash\b", cfg)), "the generated boot menu has 'splash' on the kernel line")
+        block, sourced = _custom_state(layout)
+        line(block and sourced, "/boot/grub/custom.cfg has Code's hidden-menu block AND grub.cfg reads custom.cfg (the last word over os-prober / failed-boot menus)")
+        for fcr in menu_forcers(cfg):
+            out.append("NOTE   can show the menu: " + fcr)
     except OSError:
         out.append("NOTE   /boot/grub/grub.cfg was not found or is not readable")
     others, stale = boot_menu_systems(layout, fstypes)
@@ -546,7 +797,7 @@ def diagnose(layout: Layout = DEFAULT, fstypes: Callable | None = None) -> list[
 
 # One line for a Terminal: shows exactly what Quiet boot did and what GRUB / Plymouth made of it (works on 0.4.2 and newer).
 DIAGNOSTIC_COMMAND = ("ls -l /etc/code-boot /etc/default/grub.d /usr/share/plymouth/themes/code; cat /etc/default/grub.d/*code* 2>/dev/null; "
-                      "grep -c 'timeout_style=hidden' /boot/grub/grub.cfg; grep -n \"menuentry 'Windows\" /boot/grub/grub.cfg; "
+                      "cat /boot/grub/custom.cfg; grep -c 'timeout_style=hidden' /boot/grub/grub.cfg; grep -n \"menuentry 'Windows\" /boot/grub/grub.cfg; "
                       "plymouth-set-default-theme; cat /etc/plymouth/plymouthd.conf 2>/dev/null; update-alternatives --display default.plymouth | head -6; "
                       "lsblk -o NAME,FSTYPE,LABEL; tail -20 ~/.local/share/atari/session.log")
 
