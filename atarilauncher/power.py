@@ -10,6 +10,8 @@ import shutil
 import subprocess
 from typing import Callable
 
+from . import rootauth
+
 ACTIONS = {
     "reboot": ("restart the computer", "Restarting the computer ..."),
     "poweroff": ("shut the computer down", "Shutting down ..."),
@@ -43,8 +45,15 @@ def run(action: str, runner: Callable | None = None, which: Callable | None = No
         return False, f"This computer has no systemctl / loginctl, so Code cannot {what or action}. Use the power button."
     last = ""
     for cmd in chain:
+        kw = {"stdin": subprocess.DEVNULL}
+        if cmd[0] == "pkexec":                    # the second try needs the administrator password: asked inside Code (no polkit window)
+            cmd, secret, early = rootauth.prepare(cmd, which)
+            if early is not None:
+                return False, f"The password window was closed, so Code did not {what}." if early == rootauth.CANCELLED else (rootauth.last_error or f"Code may not {what}.")
+            if secret is not None:
+                kw = {"input": secret.decode()}
         try:
-            p = runner(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout)
+            p = runner(cmd, capture_output=True, text=True, timeout=timeout, **kw)
         except subprocess.TimeoutExpired:
             return True, doing                       # a slow shutdown is still a shutdown in progress
         except (OSError, subprocess.SubprocessError) as exc:
@@ -53,6 +62,6 @@ def run(action: str, runner: Callable | None = None, which: Callable | None = No
         if p.returncode == 0:
             return True, doing
         last = ((p.stderr or p.stdout or "").strip().splitlines() or [f"exit code {p.returncode}"])[0]
-        if p.returncode in (126, 127) and cmd[0] == "pkexec":      # the password window was closed: do not try anything else
+        if p.returncode in (126, 127) and cmd[0] in ("pkexec", "sudo"):      # the password window was closed: do not try anything else
             return False, f"The password window was closed, so Code did not {what}."
     return False, f"Could not {what} ({last}). Use the power button, or in a Terminal:  systemctl {action}"

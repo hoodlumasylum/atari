@@ -178,13 +178,13 @@ def _log(msg: str) -> None:
 
 
 def run_game(cfg: Config, game: Game, on_started: Callable[[], None],
-             poll: float = 2.0, steam_start_timeout: float = 240.0) -> tuple[float, str]:
+             poll: float = 2.0, steam_start_timeout: float = 240.0, status=None, cancel=None) -> tuple[float, str]:
     """Launch and block until the game ends. Returns (seconds_played, error_message).
 
     Meant to run in a background thread. Raises LaunchError if it can't even start.
     """
     if game.platform == "steam":
-        return _run_steam(cfg, game, on_started, poll, steam_start_timeout)
+        return _run_steam(cfg, game, on_started, poll, steam_start_timeout, status=status, cancel=cancel)
     if game.platform == windows.PLATFORM:
         return _run_windows(cfg, game, on_started)
     if game.gid.startswith("free:"):
@@ -635,31 +635,122 @@ def _run_windows(cfg: Config, game: Game, on_started):
     return elapsed, ""
 
 
-def _run_steam(cfg: Config, game: Game, on_started, poll: float, start_timeout: float, grace: float = 6.0):
-    cmd = build_steam_command(cfg, game.steam_appid)
-    _check_executable(cmd, "Steam")
-    _log("launch: " + shlex.join(cmd))
+def _slog(msg: str) -> None:
+    """The launcher log and (so the user can read it) the session log."""
+    _log("steam launch: " + msg)
     try:
-        subprocess.Popen(cmd, env=clean_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         stdin=subprocess.DEVNULL, start_new_session=True)
-    except OSError as exc:
-        raise LaunchError(f"Could not start Steam: {exc}")
+        from . import kiosk
+        kiosk.log_event("steam launch: " + msg)
+    except Exception:
+        pass
+
+
+def _run_steam(cfg: Config, game: Game, on_started, poll: float, start_timeout: float, grace: float = 6.0, status=None, cancel=None,
+               steam_running=None, ui_ready=None, settle: float = 3.0, reveal_after: float = 20.0, resend_after: float = 45.0,
+               hint_after: float = 60.0):
+    """A Steam game from Code. Never fire-and-forget: (1) start Steam first when it is not running (Big Picture) and WAIT until its
+    window process exists, (2) only then hand it steam://rungameid/<id>, (3) show live status, resend the request once, offer a hint
+    after hint_after seconds, (4) detect the game's process, (5) let the user cancel (Esc / B on the screen, or Esc twice once Code
+    has stepped aside to show Steam's own windows). status(phase, text): starting | launching | waiting | reveal | playing."""
+    from . import steam as steam_mod
+    steam_running = steam_running or steam_mod.steam_running
+    ui_ready = ui_ready or steam_mod.steam_ui_ready
+    say = status or (lambda phase, text: None)
+    cancelled = lambda: cancel is not None and cancel.is_set()      # noqa: E731
+    step = max(0.05, min(poll, 1.0))
+    base = steam_base_command(cfg)
+    _check_executable(base, "Steam")
+    appid, title = game.steam_appid, game.title
     on_started()
-    deadline = time.time() + start_timeout
+
+    def spawn(cmd: list[str], what: str) -> None:
+        _slog(f"{what}: " + shlex.join(cmd))
+        try:
+            subprocess.Popen(cmd, env=clean_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             stdin=subprocess.DEVNULL, start_new_session=True)
+        except OSError as exc:
+            raise LaunchError(f"Could not start Steam: {exc}")
+
+    def stopped(note: str):
+        _slog("cancelled - back in Code (" + note + ")")
+        return 0.0, INFO + "Cancelled - back in Code. Steam keeps running; open the Steam tile to see it."
+
+    # 1. Steam first
+    t0 = time.time()
+    if steam_running():
+        _slog(f"Steam is already running (window process {'up' if ui_ready() else 'not up yet'})")
+    else:
+        spawn(base + (["-gamepadui"] if big_picture_wanted(cfg) else []), "Steam is not running - starting it")
+        seen = False
+        while True:
+            if cancelled():
+                return stopped("while Steam was starting")
+            running = steam_running()
+            seen = seen or running
+            waited = time.time() - t0
+            if running and ui_ready():
+                _slog(f"Steam is up after {int(waited)} s")
+                break
+            if not running and not seen and waited > 45:
+                return 0.0, "Steam did not start. Open the Steam tile once to see what it says (sign in / update), then try again."
+            if waited > start_timeout:
+                _slog(f"Steam window never appeared after {int(waited)} s - asking anyway")
+                break
+            say("starting", f"Starting Steam... {int(waited)} s" + ("  (a first start or an update can take a few minutes)" if waited > 30 else ""))
+            time.sleep(step)
+        if settle > 0:
+            time.sleep(settle)                    # the window exists a moment before Steam listens for steam:// requests
+    # 2. ask for the game
+    say("launching", f"Asking Steam to start {title}...")
+    watch = None
+    if exitwatch.enabled(cfg):
+        watch = exitwatch.Watch(_SteamProc(steam_running), "", term=_close_bigpicture(base), grace=0.0, guard=steam_mod.steam_game_running)
+        watch.start()
+    spawn(base + [f"steam://rungameid/{appid}"], "asking Steam for the game")
+    t1 = time.time()
+    resent = revealed = False
     first_seen = 0.0
-    while time.time() < deadline:
-        if find_steam_pids(game.steam_appid):
-            first_seen = time.time()
-            break
-        time.sleep(poll)
-    if not first_seen:
-        return 0.0, "Steam did not seem to start the game (play time not recorded)."
+    try:
+        # 3. wait for the game's process
+        while time.time() - t1 < start_timeout:
+            if find_steam_pids(appid):
+                first_seen = time.time()
+                break
+            if cancelled() or (watch is not None and watch.triggered):
+                return stopped("while waiting for the game")
+            w = time.time() - t1
+            if not steam_running() and w > 10:
+                _slog("Steam closed before the game started")
+                return 0.0, "Steam closed before the game started. Open the Steam tile, check it signs in, then try again."
+            if w >= resend_after and not resent:
+                resent = True
+                spawn(base + [f"steam://rungameid/{appid}"], "no game yet - asking Steam again")
+            if w >= reveal_after and not revealed:
+                revealed = True
+                _slog("no game process yet - stepping aside so Steam's own windows (sign in, update, Proton download) can be seen")
+                say("reveal", f"Waiting for {title}... Steam may be showing a window.")
+            text = f"Waiting for {title} to start... {int(w)} s"
+            if w >= hint_after:
+                text += ("\nStill nothing after a minute. Steam may be asking something (sign in, an update, a Proton download, the game "
+                         "installing). Press Esc (or B) to go back to Code, or Esc twice if Code has stepped aside.")
+            say("waiting", text)
+            time.sleep(step)
+        if not first_seen:
+            _slog(f"the game never started after {int(time.time() - t1)} s")
+            return 0.0, ("Steam did not seem to start the game (play time not recorded). Open the Steam tile to see Steam's own message "
+                         "(sign in, update, or the game still installing).")
+        _slog(f"game process found after {int(first_seen - t1)} s")
+    finally:
+        if watch is not None:
+            watch.stop()
+    say("playing", f"Playing {title}")
     gone_since = 0.0
     while True:
-        time.sleep(poll)
-        if find_steam_pids(game.steam_appid):
+        time.sleep(step)
+        if find_steam_pids(appid):
             gone_since = 0.0
         else:
             gone_since = gone_since or time.time()
             if time.time() - gone_since >= grace:  # grace period: launchers/relaunches
+                _slog(f"the game ended after {int(gone_since - first_seen)} s")
                 return gone_since - first_seen, ""

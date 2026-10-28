@@ -26,7 +26,7 @@ from . import covers, paths
 FLATHUB_ICONS = "https://dl.flathub.org/repo/appstream/x86_64/icons/128x128"
 MISS_DAYS = 3
 # Websites for apps that have no Flatpak icon on Flathub (the icon is the site's own favicon, downloaded on the user's PC)
-APP_SITES = {"wine": "https://www.winehq.org", "ffmpeg": "https://ffmpeg.org", "7zip": "https://www.7-zip.org",
+APP_SITES = {"wine": "https://www.winehq.org", "ffmpeg": "https://ffmpeg.org", "7zip": "https://www.7-zip.org", "unrar": "https://www.rarlab.com",
              "umu": "https://github.com/Open-Wine-Components/umu-launcher", "steam": "https://store.steampowered.com",
              "roblox": "https://www.roblox.com", "chrome": "https://www.google.com/chrome", "kodi": "https://kodi.tv"}
 STEAM_FILES = ("library_600x900.jpg", "header.jpg", "capsule_616x353.jpg")

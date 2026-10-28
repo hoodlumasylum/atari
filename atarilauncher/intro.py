@@ -133,24 +133,27 @@ INPUT_CONF = "\n".join(f"{k} quit" for k in (
     "MBTN_LEFT", "MBTN_RIGHT", "MBTN_MID", "q")) + "\n"
 
 
+VOLUME = 85                 # percent: the clip's own peak is -0.7 dB, so a little below full is loud enough without clipping the speakers
+
+
 def player_command(kind: str, exe: str, video: str | Path, muted: bool, input_conf: str | Path | None = None) -> list[str]:
-    """The command line that plays `video` full screen, once, then quits. Sound off = no audio at all."""
+    """The command line that plays `video` full screen, once, then quits. Sound off = no audio at all; sound on = unmuted at VOLUME %."""
     video = str(video)
     if kind == "mpv":
-        # full screen over everything (no border, on top), whole picture kept (black bars when the aspect differs, never cropped),
-        # mouse pointer hidden
-        cmd = [exe, "--no-config", "--fs", "--no-border", "--ontop", "--keepaspect", "--panscan=0", "--no-osc", "--osd-level=0",
+        # full screen over everything (no border, on top), the picture FILLS the whole display (panscan=1: on a 16:9 screen exactly,
+        # on other shapes the edges are cropped instead of leaving black bars), mouse pointer hidden, sound ON at VOLUME %
+        cmd = [exe, "--no-config", "--fs", "--no-border", "--ontop", "--keepaspect", "--panscan=1.0", "--no-osc", "--osd-level=0",
                "--really-quiet", "--no-terminal", "--keep-open=no", "--cursor-autohide=always", "--force-window=immediate",
                "--no-input-default-bindings"]
         if input_conf:
             cmd.append(f"--input-conf={input_conf}")
-        if muted:
-            cmd.append("--no-audio")
+        cmd.append("--no-audio" if muted else f"--volume={VOLUME}")
+        if not muted:
+            cmd += ["--mute=no", "--volume-max=100"]
         return cmd + ["--", video]
     if kind == "ffplay":
         cmd = [exe, "-fs", "-autoexit", "-loglevel", "quiet", "-noborder"]
-        if muted:
-            cmd.append("-an")
+        cmd += ["-an"] if muted else ["-volume", str(VOLUME)]
         return cmd + [video]
     # VLC
     cmd = [exe, "--fullscreen", "--no-video-deco", "--video-on-top", "--mouse-hide-timeout=1", "--play-and-exit", "--no-osd",

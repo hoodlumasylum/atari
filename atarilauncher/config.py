@@ -60,6 +60,7 @@ class Config:
     esc_exit: bool = True          # Esc twice / hold Esc / Ctrl+Esc / Guide+B quits a web app or Kodi and returns to Code
     intro_enabled: bool = True     # play the intro video you chose (~/.local/share/atari/intro.mp4 ...) when Code starts
     intro_default: bool = True     # with no video of your own: Code's own short start-up animation
+    intro_sound: bool = True       # the intro plays WITH its sound (independent of "sound effects")
     steam_bigpicture: bool = True  # the Steam tile opens Steam full screen in Big Picture (controller-friendly) mode
     reduce_animations: bool = False  # Settings > Reduce animations: no moving background, bobbing or fades
     first_run: bool = False
@@ -122,6 +123,7 @@ def load_config(path: Path | None = None) -> Config:
         cfg.steam_bigpicture = bool(ui.get("steam_bigpicture", True))
         cfg.intro_enabled = bool(ui.get("intro_enabled", True))
         cfg.intro_default = bool(ui.get("intro_default", True))
+        cfg.intro_sound = bool(ui.get("intro_sound", True))
     rc = data.get("recording", {})
     if isinstance(rc, dict):
         cfg.rec_audio = rc.get("audio", "desktop") if rc.get("audio") in ("none", "desktop", "mic", "both") else "desktop"
@@ -214,6 +216,7 @@ def dump_config(cfg: Config) -> str:
         "# Start-up intro: your own video (intro.mp4 / .webm / .mkv / .mov in ~/.local/share/atari) and Code's own short animation.",
         "intro_enabled = " + ("true" if cfg.intro_enabled else "false"),
         "intro_default = " + ("true" if cfg.intro_default else "false"),
+        "intro_sound = " + ("true" if cfg.intro_sound else "false"),
         "",
         "[retroarch]",
         '# Leave empty to auto-detect. Example: command = "flatpak run org.libretro.RetroArch"',

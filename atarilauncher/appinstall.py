@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import sober, apps, covers, installer, paths
+from . import sober, apps, covers, installer, paths, rootauth
 from .emulators import EMUS, flatpak_installed
 
 CHROME_DEB_URL = "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb"
@@ -148,11 +148,21 @@ def plan(t: Target, *, flatpak: bool, pkexec: bool, apt: bool) -> list[str]:
 def stream_run(cmd: list[str], out: Callable[[str], None], cancel: threading.Event | None = None,
                env: dict | None = None) -> int:
     """Run a command, pass each output line (and each \\r progress update) to ``out``. 127 = program missing, 130 = cancelled."""
+    cmd, secret, early = rootauth.prepare(cmd)          # pkexec -> sudo -S with the password typed in Code's own dialog (never logged)
+    if early is not None:
+        return early
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                env=env, bufsize=0)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                stdin=subprocess.PIPE if secret else subprocess.DEVNULL, env=env, bufsize=0)
     except OSError:
         return 127
+    if secret:
+        try:
+            proc.stdin.write(secret)
+            proc.stdin.close()
+        except OSError:
+            pass
+        secret = None
     buf = b""
     last_emit = 0.0
     try:
@@ -223,7 +233,7 @@ def _pkexec(env: Env, *cmd: str) -> list[str]:
 
 def _flatpak_ready(env: Env, out: Callable[[str], None], has_apt: bool) -> bool:
     if not env.which("flatpak"):
-        if not (has_apt and env.which("pkexec")):
+        if not (has_apt and rootauth.can_elevate(env.which)):
             return False
         out("Flatpak (the program that installs most apps) is missing. Installing it - a password window will pop up...")
         rc = env.run(_pkexec(env, "apt-get", "install", "-y", "flatpak"), out, env.cancel)
@@ -304,7 +314,7 @@ def install_one(t: Target, out: Callable[[str], None] = print, env: Env | None =
                 return Result(t.id, t.title, "failed", "Roblox (Sober) cannot run on this computer: " + bad.text)
             out("Checking this computer for Roblox: " + " ".join(c.text for c in checks if c.ok)[:160])
             if sober.needs_vulkan_driver(checks):
-                if has_apt and env.which("pkexec"):
+                if has_apt and rootauth.can_elevate(env.which):
                     out("No Vulkan graphics driver found. Installing mesa-vulkan-drivers (a password window will pop up)...")
                     try:
                         rc = env.run(_pkexec(env, "apt-get", "install", "-y", "mesa-vulkan-drivers"), out, env.cancel)
@@ -316,7 +326,7 @@ def install_one(t: Target, out: Callable[[str], None] = print, env: Env | None =
                                   " The graphics driver package could not be added; Roblox will use OpenGL (slower but works).")
                 else:
                     extra_note = " No Vulkan graphics driver was found; Roblox will use OpenGL (slower but works)."
-        steps = plan(t, flatpak=bool(env.which("flatpak")), pkexec=bool(env.which("pkexec")), apt=has_apt)
+        steps = plan(t, flatpak=bool(env.which("flatpak")), pkexec=bool(rootauth.can_elevate(env.which)), apt=has_apt)
         if not steps:
             return Result(t.id, t.title, "failed", no_way_text(t, env))
         reasons: list[str] = []
@@ -358,7 +368,7 @@ def no_way_text(t: Target, env: Env) -> str:
         bits.append("install Flatpak (Software Manager > search 'flatpak') and try again")
     if t.apt:
         bits.append(f"or run in a terminal:  sudo apt install {t.apt}")
-    if not env.which("pkexec") and t.apt:
+    if not rootauth.can_elevate(env.which) and t.apt:
         bits.insert(0, "the graphical password helper (pkexec / polkit) is missing")
     return f"Code has no way to install {t.title} on this computer by itself: " + "; ".join(bits or ["see the program's website"]) + "."
 

@@ -102,9 +102,10 @@ def test_the_shipped_intro_video_is_there_and_is_a_real_clip():
 
 def test_players_fill_the_whole_screen_borderless_keep_the_whole_picture_and_hide_the_pointer():
     mpv = intro.player_command("mpv", "mpv", "/x.mp4", muted=False)
-    for flag in ("--fs", "--no-border", "--ontop", "--keepaspect", "--panscan=0", "--cursor-autohide=always"):
-        assert flag in mpv, flag                                              # full screen, no frame, black bars not cropping, no pointer
-    assert not any(a.startswith("--panscan=") and a != "--panscan=0" for a in mpv) and "--video-zoom" not in " ".join(mpv)
+    for flag in ("--fs", "--no-border", "--ontop", "--keepaspect", "--panscan=1.0", "--cursor-autohide=always"):
+        assert flag in mpv, flag                                              # full screen, no frame, FILLS the display (no black bars), no pointer
+    assert "--panscan=0" not in mpv and "--video-zoom" not in " ".join(mpv)
+    assert "--volume=85" in mpv and "--mute=no" in mpv and "--no-audio" not in mpv         # sound ON at a sensible volume
     ff = intro.player_command("ffplay", "ffplay", "/x.mp4", muted=False)
     assert "-fs" in ff and "-noborder" in ff and "-x" not in ff and "-vf" not in ff     # ffplay keeps the aspect: black bars
     vlc = intro.player_command("cvlc", "cvlc", "/x.mp4", muted=False)
@@ -414,7 +415,16 @@ def test_sound_switch_controls_the_audio_of_your_video(app, tmp_path, monkeypatc
     ui = Ui(app, tmp_path, monkeypatch, config_exists=False)
     try:
         assert wait_for(app, lambda: out.exists() and out.read_text().strip() != "", 5)
-        assert "--no-audio" in out.read_text()                               # Sound effects OFF -> muted
+        assert "--no-audio" not in out.read_text()                           # Sound effects OFF does NOT silence the intro any more
+        ui.backend.skipIntro()
+    finally:
+        ui.close()
+    out.unlink()
+    conf(tmp_path, "[steam]\nenabled = false\n[ui]\nintro_sound = false\n")
+    ui = Ui(app, tmp_path, monkeypatch, config_exists=False)
+    try:
+        assert wait_for(app, lambda: out.exists() and out.read_text().strip() != "", 5)
+        assert "--no-audio" in out.read_text()                               # Intro sound OFF -> muted
         ui.backend.skipIntro()
     finally:
         ui.close()
@@ -581,3 +591,26 @@ def test_no_third_party_logo_or_video_is_shipped():
     assert shipped == ["atarilauncher/assets/intro/code-intro.mp4"]        # exactly one clip: the project owner's own Code intro
     assert (root / "atarilauncher" / "assets" / "sfx" / "intro.wav").is_file()
 
+
+
+def test_the_shipped_intro_is_the_original_video_with_its_sound():
+    import hashlib
+    f = intro.bundled_file()
+    assert f is not None
+    assert hashlib.sha256(f.read_bytes()).hexdigest() == "602023ee6e14728880e4690cb0e81c8144f64a1038138847456be2c1014e3e02"   # the file the owner sent, untouched
+    if shutil.which("ffprobe"):
+        out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name,channels",
+                              "-of", "csv=p=0", str(f)], capture_output=True, text=True).stdout.strip()
+        assert out == "aac,2"                                                 # the AAC track is kept
+    assert f.stat().st_size < 9_000_000
+
+
+def test_intro_sound_is_its_own_setting_default_on(tmp_path):
+    cfg = config.default_config()
+    assert cfg.intro_sound is True
+    cfg.intro_sound = False
+    f = tmp_path / "config.toml"
+    config.save_config(cfg, f)
+    assert config.load_config(f).intro_sound is False
+    f.write_text("[ui]\nvolume = 0.5\n")
+    assert config.load_config(f).intro_sound is True

@@ -13,6 +13,8 @@ import shlex
 import shutil
 import tempfile
 import urllib.request
+
+from . import rootauth
 from pathlib import Path
 from typing import Callable
 
@@ -67,7 +69,7 @@ def fix(out: Callable[[str], None], run: Callable | None = None, which: Callable
     """Install the rules. Returns (worked, plain-English result). Never raises."""
     from .appinstall import stream_run
     run = run or stream_run
-    if not which("pkexec"):
+    if not rootauth.can_elevate(which):
         return False, ("Code needs the 'pkexec' password window for this and it is missing. In a Terminal run:  "
                        "sudo apt install steam-devices")
     try:

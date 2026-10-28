@@ -320,6 +320,14 @@ def steam_running(proc_root: str = "/proc") -> bool:
     return False
 
 
+def steam_ui_ready(proc_root: str = "/proc") -> bool:
+    """True once Steam's own window process (steamwebhelper) exists: the client is past its start-up / update and can take a game request."""
+    for _pid, parts in _cmdlines(proc_root):
+        if any(os.path.basename(a.decode("utf-8", "replace")) == "steamwebhelper" for a in parts[:1]):
+            return True
+    return False
+
+
 def steam_game_running(proc_root: str = "/proc") -> bool:
     """True while a game started by Steam is running (its 'reaper' wrapper carries AppId=<id>)."""
     for _pid, parts in _cmdlines(proc_root):

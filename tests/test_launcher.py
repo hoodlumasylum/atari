@@ -129,7 +129,8 @@ def test_steam_session_tracking_with_fake_steam(tmp_path, isolated, monkeypatch)
                         lambda appid, proc_root="/proc": _pids_for(appid))
     cfg = cfg_with(steam_command=str(steam))
     g = Game("steam:4242", "Fake", "steam", "Steam", steam_appid="4242")
-    secs, err = launcher._run_steam(cfg, g, lambda: None, poll=0.1, start_timeout=10, grace=0.5)
+    secs, err = launcher._run_steam(cfg, g, lambda: None, poll=0.1, start_timeout=10, grace=0.5,
+                                     steam_running=lambda: True, ui_ready=lambda: True, settle=0)
     assert err == "" and 1.0 < secs < 4.0
 
 

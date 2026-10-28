@@ -16,3 +16,4 @@ FadeOnShow 1.0 FadeOnShow.qml
 StudioScreen 1.0 StudioScreen.qml
 Intro 1.0 Intro.qml
 WifiScreen 1.0 WifiScreen.qml
+InputDialog 1.0 InputDialog.qml

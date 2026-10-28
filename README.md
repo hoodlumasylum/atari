@@ -31,6 +31,15 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
+## What's new in 0.4.5
+
+- **Quiet boot / password bug fixed: Code now asks for the administrator password on its own screen.** The old button relied on pkexec (a polkit password window), which cannot appear in Code-only mode (no desktop, no authentication agent) or sits behind Code. Every privileged action (Quiet boot on/off, Update Code-only mode, installing the window manager, installing apps, power fallback) now opens Code's own password box (on-screen keyboard works with a controller; the password is shown as dots) and runs the command with `sudo -S`. The password is only sent to sudo's standard input - never put on a command line, in the environment, in config or in session.log - and is kept in memory for at most 90 s so a multi-step action asks once. A wrong password asks again with the reason (5 tries); Esc / Cancel is a clean "password window was closed - nothing changed"; a user not allowed to use sudo gets a plain message. Where no in-app dialog exists (tests, command line) nothing changes (pkexec).
+- **Quiet boot really applies, and says honestly what is applied.** Writes `GRUB_TIMEOUT_STYLE=hidden`, a 2 s timeout (Shift / Esc shows the menu), `quiet splash`, `GRUB_HIDDEN_TIMEOUT_QUIET`, in `/etc/default/grub.d/zz-code-quiet.cfg` (read after Mint's `50_linuxmint.cfg`); sets `GRUB_DISABLE_OS_PROBER=true` when the only Windows entry is a leftover "Windows Boot Manager" (no Windows disk) so it is not listed again; runs update-grub, installs the Plymouth theme with the Code logo, update-initramfs, and verifies each step (a failure undoes everything and names the step; a competing grub.d file is named). The Quiet boot page now has a **read-back list** (marker, grub.cfg hides the menu, kernel line has quiet + splash, competing overrides, plymouthd.conf Theme, theme files, the boot image contains the theme, leftover Windows entry, and what THIS start-up actually used). Still fully reversible (Turn off).
+- **File viewer ("My files").** A big green **OPEN THE FILE VIEWER** button at the top of Downloads, and **My files** in Options. Browses `~/Downloads`, `~/Games` and `~/Videos` only, with sizes, item counts and free disk space. For a file: **Open** (videos play full screen), **Extract here** (one button: zip, tar / tar.gz / .xz / .bz2, 7z, rar - into a new folder next to it, never overwriting; unsafe paths in an archive are refused), **Add to my games** (pick the system), **Rename** (typing box), **Delete** (asks first; the highlight starts on No). A password-protected archive asks for the password on the same in-app dialog. If 7-Zip / unrar is missing the screen shows an **Install** button. Esc / B goes up one folder.
+- **Steam game launch no longer sticks on "Starting up...".** Inferred cause (not observed on the Dell): Code sent `steam://rungameid/...` right away, so when Steam was not yet running (or still starting, with no Big Picture UI yet) the request was dropped or started a second client and Code kept waiting. Now Code starts Steam first (Big Picture in Code-only mode), waits until its UI is up, then sends the launch, then waits for the game process, with live status on the NOW PLAYING screen (Starting Steam / Starting the game / Waiting for the game ...), a hint after about 60 s, a **Cancel - back to Code** button (Esc / B), a resend of the launch if nothing started, a clear message if Steam closes before the game starts, and every step written to `session.log` ("steam launch: ...").
+- **Intro: the original video, with sound, filling the screen.** The shipped intro is byte-identical to the video you sent - the audio track (AAC) was never stripped. The no-sound cause: the intro was muted whenever the sound-effects switch was off. It now has its own switch (Settings > **Intro sound**, on by default), plays at volume 85 of 100, explicitly un-muted, scaled to fill the whole display (`--panscan=1.0`, no black bars), and any key or controller button skips it.
+- **Support Code (optional).** A **Support Code (optional)** button in Settings and in the Options menu opens the PayPal donate page (https://paypal.me/Codeemulator) in a browser window (its own private profile; Esc twice or Guide + B returns to Code). Code is free; nothing is ever shown unless you press it - no pop-ups, no reminders. The link is one constant (`DONATE_URL` in `atarilauncher/donate.py`) so it can be changed later.
+
 ## What's new in 0.4.4
 
 - **Steam always opens in Big Picture in Code-only mode, however it is started.** (1) The Steam tile always uses `-gamepadui` there (the "Open Steam in Big Picture" setting can no longer turn it off in Code-only mode). (2) Steam's own setting "Start Steam in Big Picture Mode" is switched on (`StartupMode = 1` in `~/.steam/registry.vdf`, written only while Steam is closed, with a backup `registry.vdf.code-backup`). (3) A `steam` wrapper is put first in Code's PATH, so a plain `steam` started by anything Code launches gets `-gamepadui` (or opens Big Picture in an already-running Steam). (4) While Code runs, a Steam client that Code did not start (an autostart entry, a desktop menu, a terminal) is told, 12 s and again 35 s after it appears, to open Big Picture (`steam://open/bigpicture`, harmless if Big Picture is already open).
@@ -71,7 +80,7 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 - **If the in-app updater cannot be trusted on your connection, one command does the same by hand** (resumes if it drops, checks the SHA256 against the release's own list, keeps your settings and games):
 
   ```bash
-  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.4.4.tar.gz https://github.com/hoodlumasylum/atari/releases/download/v0.4.4/atari-0.4.4.tar.gz && curl -fsSL https://github.com/hoodlumasylum/atari/releases/download/v0.4.4/SHA256SUMS.txt | grep ' atari-0.4.4.tar.gz$' | sha256sum -c - && tar xzf atari-0.4.4.tar.gz && cd atari-0.4.4 && ./install.sh --yes
+  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.4.5.tar.gz https://github.com/hoodlumasylum/atari/releases/download/v0.4.5/atari-0.4.5.tar.gz && curl -fsSL https://github.com/hoodlumasylum/atari/releases/download/v0.4.5/SHA256SUMS.txt | grep ' atari-0.4.5.tar.gz$' | sha256sum -c - && tar xzf atari-0.4.5.tar.gz && cd atari-0.4.5 && ./install.sh --yes
   ```
 
 ## What's new in 0.4.1
@@ -293,13 +302,13 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.4.4.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
+1. Download **`atari-0.4.5.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
 2. Open a **Terminal** and type:
 
    ```bash
    cd ~/Downloads
-   tar xzf atari-0.4.4.tar.gz
-   cd atari-0.4.4
+   tar xzf atari-0.4.5.tar.gz
+   cd atari-0.4.5
    ./install.sh
    ```
 
@@ -526,4 +535,8 @@ the real UI started headlessly (first run incl. Esc/B/Enter to leave setup, keyb
 Python 3 + **PySide6 / Qt Quick (QML)** for the interface; plain Python modules for Steam (`steam.py`, `vdf.py`), ROMs (`roms.py`),
 the emulator table (`emulators.py`), USB import (`importer.py`), settings (`config.py`), storage (`store.py`) and launching (`launcher.py`).
 Controllers are read by a small helper process using SDL2 (from the `pygame` package) and turned into key presses, so the keyboard and
-controller share one code path. MIT licensed — see `LICENSE`.
+controller share one code path.
+
+## Licence and supporting Code
+
+Code is **free to use, with no warranty**: MIT licensed - see `LICENSE`. Code's own files are the only things shipped in this repository (its own logo, intro video and sound effects); its dependencies (PySide6 / Qt, pygame / SDL2, which are LGPL) are installed from their own packages and are not copied into it, so the MIT licence fits. If you like Code and want to say thanks there is an optional **Support Code** button in Settings and the Options menu that opens https://paypal.me/Codeemulator - entirely optional, Code never asks or nags.

@@ -12,11 +12,11 @@ from pathlib import Path
 from PySide6.QtCore import Property, QObject, QProcess, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QKeyEvent
 
-from . import power, steamfix, downloads, golive, icons, inputfix, intro, kiosk, quietboot, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
+from . import donate, power, rootauth, files, steamfix, downloads, golive, icons, inputfix, intro, kiosk, quietboot, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
 from . import __version__
 from .config import Config, load_config, save_config
 from .import_model import ImportModel
-from .library import STEAM, LibraryResult, build_library, demo_library
+from .library import STEAM, Game, LibraryResult, build_library, demo_library
 from .model import SORT_MODES, GameModel, filter_games
 from .store import Store
 from .systems_meta import system_look
@@ -65,6 +65,11 @@ class Backend(QObject):
     introEnded = Signal(str)               # why the intro ended (from the player thread)
     powerFailed = Signal(str)               # the system refused the restart / shut down
     quietbootDone = Signal(bool, str)       # (worked, text) from the quiet-boot worker thread
+    filesEvent = Signal(str, bool, str)     # (kind, ok, text) from the file viewer's worker: progress | done
+    inputRequested = Signal()               # a worker thread queued a text / password request -> GUI thread shows it
+    inputChanged = Signal()
+    launchStatus = Signal(str, str)         # (phase, text) from the Steam launch worker -> queued to the GUI thread
+    runningStatusChanged = Signal()
     kioskDone = Signal(bool, str)           # (worked, text) from the Code-only mode worker thread
     inputFixDone = Signal(bool, str)        # (worked, text) from the permissions-fix thread
     iconArrived = Signal(str, str, bool)    # gid, file, fit (from the icon worker thread)
@@ -122,12 +127,33 @@ class Backend(QObject):
         self._rbx_state, self._rbx_steps, self._rbx_verdict = "idle", [], ""
         self._input_fixing = False
         self.kioskDone.connect(self._kiosk_finished, Qt.QueuedConnection)
+        self.launchStatus.connect(self._on_launch_status, Qt.QueuedConnection)
+        self.inputRequested.connect(self._input_next, Qt.QueuedConnection)
+        self.filesEvent.connect(self._files_event, Qt.QueuedConnection)
+        if not os.environ.get("ATARI_NO_ROOTAUTH"):
+            rootauth.set_provider(lambda prompt, error: self.ask_text_blocking("ADMINISTRATOR PASSWORD", prompt, True, "", error))
         self._kiosk_busy = False
         self._kiosk_msg = ""
         self._kiosk_layout = kiosk.DEFAULT
         self.quietbootDone.connect(self._quietboot_finished, Qt.QueuedConnection)
         self.powerFailed.connect(self._on_power_failed, Qt.QueuedConnection)
+        self._fm_dir: Path | None = None        # file viewer: the folder being shown (None = the list of places)
+        self._fm_items: list = []
+        self._fm_pick: Path | None = None       # the file / folder the actions page is about
+        self._fm_msg = ""
+        self._fm_ok = True
+        self._fm_busy = ""                      # what the worker is doing ("" = nothing)
+        self._fm_progress = ""
+        self._fm_tool = ""                      # app id Code can install so the pick can be unpacked
+        self._fm_cancel = threading.Event()
+        self._fm_pending_delete = False
+        self._dl_from_files = False
+        self._input_queue: list = []        # pending text / password requests: [title, prompt, secret, initial, error, callback]
+        self._input_cur: list | None = None
         self._steam_busy = False
+        self._run_status = ""
+        self._run_cancelable = False
+        self._launch_cancel = threading.Event()
         self._steam_run = subprocess.run
         self._running_gid = ""
         self._power_pending = ""            # "reboot" / "poweroff" while the Yes / No question is on the screen
@@ -790,8 +816,8 @@ class Backend(QObject):
         if st == "ask":
             t = [x for x, _c in self._inst_items()]
             many = len(t) > 1
-            how = ("Code downloads it for your user only (Flathub, official sites). A password window may pop up for a few of them."
-                   if many else "Code downloads it for you (Flathub, or your system's software list - then a password window pops up).")
+            how = ("Code downloads it for your user only (Flathub, official sites). Code may ask for your password on this screen for a few of them."
+                   if many else "Code downloads it for you (Flathub, or your system's software list - then Code asks for your password on this screen).")
             rows = [self._info(f"{what[:1].upper() + what[1:]} {'are' if many else 'is'} not installed yet. {how} Needs internet."
                                + (f"  {len(t)} programs: this can take 20 minutes or more." if len(t) > 6 else ""))]
             for x in t[:6]:
@@ -852,10 +878,10 @@ class Backend(QObject):
     def fixInputPermissions(self) -> None:
         """One press: install Valve's udev rules so Steam stops saying "Missing permissions for input devices"."""
         if self._input_fixing:
-            self.show_toast("Already working on it - a password window may be waiting.", 5000)
+            self.show_toast("Already working on it - Code may be waiting for your password.", 5000)
             return
         self._input_fixing = True
-        self.show_toast("Fixing controller permissions - a password window will pop up...", 8000)
+        self.show_toast("Fixing controller permissions - Code asks for your password on this screen...", 8000)
 
         def work():
             lines: list = []
@@ -989,7 +1015,7 @@ class Backend(QObject):
             _intro_log("no video player (mpv / ffplay / vlc) found - skipping the intro")
             self._end_intro("failed")
             return
-        muted = (not self.cfg.sound_effects) or bool(os.environ.get("ATARI_NO_SOUND"))
+        muted = (not self.cfg.intro_sound) or bool(os.environ.get("ATARI_NO_SOUND"))      # the intro's sound has its own switch (not "sound effects")
         cmd = intro.player_command(kind, exe, video, muted, intro.write_input_conf())
         _intro_log("intro: " + " ".join(cmd))
 
@@ -1065,6 +1091,11 @@ class Backend(QObject):
         self._save_prefs()
 
     @Slot()
+    def toggleIntroSound(self) -> None:
+        self.cfg.intro_sound = not self.cfg.intro_sound
+        self._save_prefs()
+
+    @Slot()
     def toggleIntroDefault(self) -> None:
         self.cfg.intro_default = not self.cfg.intro_default
         self._save_prefs()
@@ -1114,6 +1145,8 @@ class Backend(QObject):
         rows.append({"kind": "introdefault", "title": "Code's start-up video (default)", "value": "ON" if self.cfg.intro_default else "OFF",
                      "detail": "The 10-second Code logo reveal that comes with Code. It plays only when you have no intro video of your own "
                                "(and, with no video player installed, a short animation is shown instead)."})
+        rows.append({"kind": "introsound", "title": "Intro sound", "value": "ON" if self.cfg.intro_sound else "OFF",
+                     "detail": "The intro plays with its own sound (the music in the video), whatever Sound effects is set to. OFF = silent intro."})
         rows.append({"kind": "intropreview", "title": "Play the intro now", "value": "", "detail": "Shows what happens at start-up."})
         return rows
 
@@ -1122,7 +1155,7 @@ class Backend(QObject):
         lay = self._kiosk_layout
         rows: list = []
         if self._kiosk_busy:
-            return [self._info("Working - a password window may be waiting for you..."), {"kind": "item", "id": "back", "title": "Back"}]
+            return [self._info("Working - Code asks for your password on this screen first..."), {"kind": "item", "id": "back", "title": "Back"}]
         if self._kiosk_msg:
             rows.append(self._info("Result:  " + self._kiosk_msg))
         if kiosk.enabled(lay):
@@ -1173,7 +1206,7 @@ class Backend(QObject):
                 rows.append({"kind": "item", "id": "back", "title": "Back"})
                 return rows
             rows.append({"kind": "done", "id": "kioskon", "title": "Yes, turn Code-only mode ON",
-                         "detail": "A password window pops up. You can undo it any time."})
+                         "detail": "Code asks for your password on this screen. You can undo it any time."})
         rows += [self._info(t) for t in kiosk.FAST_BOOT_TIPS]
         rows.append({"kind": "item", "id": "back", "title": "No, keep my normal desktop" if not kiosk.enabled(lay) else "Back"})
         return rows
@@ -1255,8 +1288,8 @@ class Backend(QObject):
     def _quietboot_rows(self) -> list:
         lay = self._qb_layout
         if self._qb_busy:
-            return [self._info("Working - a password window may be waiting for you (look for it, it can be behind this screen). "
-                               "Rebuilding the boot image takes up to a minute. Do not press anything."),
+            return [self._info("Working - Code asks for your password on this screen first; then rebuilding the boot menu and boot image "
+                               "takes up to a minute. Do not press anything."),
                     {"kind": "item", "id": "noop", "title": "Working ..."}]
         rows: list = []
         if self._qb_msg:                                      # a result is always on the screen until the page is left
@@ -1264,11 +1297,15 @@ class Backend(QObject):
         tail = kiosk.log_tail(3)
         if self._qb_msg and tail:
             rows.append(self._info("Log (" + str(kiosk.session_log_path()) + "):  " + "  /  ".join(tail)))
+        facts = self._qb_facts()
+        rows.append(self._info("WHAT IS APPLIED RIGHT NOW (read back from the files, not assumed):  " + quietboot.status_summary(facts)))
+        for f in facts:
+            rows.append(self._info({"ok": "OK   ", "bad": "NOT APPLIED   ", "info": "Note   "}[f.state] + f.text))
         if quietboot.enabled(lay):
             rows += [self._info("Quiet boot is ON: no boot menu, no Mint logo, the Code logo on black, hardly any text."),
                      self._info(quietboot.HOW_TO_SHOW_MENU),
                      {"kind": "done", "id": "qboff", "title": "Turn quiet boot off (Mint's boot screens come back)",
-                      "detail": "Asks for your password once. Removes exactly the files quiet boot added."},
+                      "detail": "Asks for your password on this screen. Removes exactly the files quiet boot added."},
                      self._info(quietboot.RECOVERY)]
         else:
             checks = quietboot.preflight(lay, logo=quietboot.logo_path())
@@ -1285,12 +1322,21 @@ class Backend(QObject):
             if why:
                 rows.append({"kind": "item", "id": "back", "title": "Back"})
                 return rows
-            rows.append({"kind": "done", "id": "qbon", "title": "Yes, turn quiet boot ON", "detail": "A password window pops up. You can undo it any time."})
+            rows.append({"kind": "done", "id": "qbon", "title": "Yes, turn quiet boot ON", "detail": "Code asks for your password on this screen. You can undo it any time."})
             if any(not c.ok and "Another system" in c.text for c in checks):
                 rows.append({"kind": "item", "id": "qbforce", "title": "Turn it ON and hide the boot menu anyway",
                              "detail": "Only if no other system is on this disk (the entry above is a leftover). Shift / Esc still shows the menu."})
         rows.append({"kind": "item", "id": "back", "title": "Back" if quietboot.enabled(lay) else "No, leave the boot screens as they are"})
         return rows
+
+    def _qb_facts(self) -> list:
+        """The read-back status, recomputed at most every 5 seconds (it lists the boot image)."""
+        now = time.monotonic()
+        cached = getattr(self, "_qb_facts_cache", None)
+        if cached is None or now - cached[0] > 5.0:
+            cached = (now, quietboot.status(self._qb_layout))
+            self._qb_facts_cache = cached
+        return cached[1]
 
     def _quietboot_activate(self, rid: str) -> str:
         if rid in ("qbon", "qbforce", "qboff"):
@@ -1299,7 +1345,8 @@ class Backend(QObject):
             self._qb_busy = True
             self._qb_msg = ""
             lay = self._qb_layout
-            self.show_toast("Asking for your password - a window pops up (it can take a few seconds) ...", 8000)
+            self._qb_facts_cache = None
+            self.show_toast("Type your password in the box that opens on this screen ...", 8000)
 
             def work():
                 try:
@@ -1319,6 +1366,7 @@ class Backend(QObject):
     @Slot(bool, str)
     def _quietboot_finished(self, ok: bool, text: str) -> None:
         self._qb_busy = False
+        self._qb_facts_cache = None
         self._qb_ok = ok
         self._qb_msg = text
         self.show_toast(("Done: " if ok else "Failed: ") + text, 20000)
@@ -1337,7 +1385,7 @@ class Backend(QObject):
             self._kiosk_busy = True
             self._kiosk_msg = ""
             lay = self._kiosk_layout
-            self.show_toast("A password window will pop up...", 6000)
+            self.show_toast("Type your password in the box that opens on this screen ...", 6000)
 
             def work():
                 try:
@@ -1647,6 +1695,19 @@ class Backend(QObject):
             return
         self._launch_game(g)
 
+    @Slot()
+    def supportCode(self) -> None:
+        """Settings / Options > Support Code: open the donate page (donate.DONATE_URL) in the web browser. Only ever on a button press."""
+        if self._running:
+            return
+        ok, _text = webapps.status(self.cfg, webapps.SUPPORT)
+        if not ok:
+            self.show_toast("Support Code opens a web page, and no web browser is installed yet. Install one in Options > Emulators > "
+                            "Install emulators and apps, then try again. (Page: " + donate.DONATE_URL + ")", 12000)
+            return
+        self._launch_game(Game(gid=webapps.SUPPORT.gid, title=webapps.SUPPORT.title, platform=webapps.STREAMING,
+                               platform_name=webapps.STREAMING_NAME, note=webapps.SUPPORT.note))
+
     def _launch_game(self, g) -> None:
         self.playSound("launch")
         if self.cfg.music and self._snd_enabled():
@@ -1654,6 +1715,10 @@ class Backend(QObject):
         self._running = True
         self._running_title = g.title
         self._running_gid = g.gid
+        self._launch_cancel = threading.Event()
+        self._run_status = ""
+        self._run_cancelable = False
+        self.runningStatusChanged.emit()
         self._running_is_rom = g.platform != "steam"
         if g.gid == "app:steam" or g.platform == "steam":
             if g.gid == "app:steam" and getattr(self, "_steam_guard", None) is not None:
@@ -1672,7 +1737,9 @@ class Backend(QObject):
         def worker():
             err, secs = "", 0.0
             try:
-                secs, err = launcher.run_game(cfg, g, on_started=started)
+                cancel = self._launch_cancel
+                secs, err = launcher.run_game(cfg, g, on_started=started, cancel=cancel,
+                                              status=lambda phase, text: self.launchStatus.emit(phase, text))
             except launcher.LaunchError as exc:
                 err = str(exc)
             except Exception as exc:  # pragma: no cover - safety net
@@ -1684,6 +1751,39 @@ class Backend(QObject):
     @Property(str, notify=runningHintChanged)
     def runningHint(self):
         return self._running_hint
+
+    @Property(str, notify=runningStatusChanged)
+    def runningStatus(self):
+        return self._run_status
+
+    @Property(bool, notify=runningStatusChanged)
+    def runningCancelable(self):
+        return self._run_cancelable and self._running
+
+    @Slot(str, str)
+    def _on_launch_status(self, phase: str, text: str) -> None:
+        """Live progress of a Steam game start (Steam starting, asking, waiting, playing). In Code-only mode Code steps aside as soon as
+        Steam's own windows may need to be seen (reveal) or the game is up (playing)."""
+        if not self._running:
+            return
+        self._run_status = text
+        self._run_cancelable = phase in ("starting", "launching", "waiting", "reveal")
+        self.runningStatusChanged.emit()
+        guard = getattr(self, "_steam_guard", None)
+        if guard is not None and phase in ("starting", "launching"):
+            guard.handled_by_code()                       # Code itself is starting Steam: the watcher must not interfere
+        if phase in ("reveal", "playing") and self._shell_mode() and self._window is not None and not os.environ.get("ATARI_NO_MINIMIZE"):
+            self._hide_for_game()
+
+    @Slot()
+    def cancelLaunch(self) -> None:
+        """Esc / B / the Cancel button while a Steam game is starting: stop waiting and come back to Code (Steam keeps running)."""
+        if self._running and self._run_cancelable:
+            kiosk.log_event("steam launch: cancel pressed on the Now Playing screen")
+            self._launch_cancel.set()
+            self._run_status = "Cancelling..."
+            self._run_cancelable = False
+            self.runningStatusChanged.emit()
 
     @Slot()
     def _on_session_started(self) -> None:
@@ -1697,6 +1797,327 @@ class Backend(QObject):
         if self._running and self._window is not None and not self._minimized_for_game:
             self._minimized_for_game = True
             self._window.showMinimized()
+
+    # ----- in-app text / password dialog (no pkexec window: there is no desktop in Code-only mode) ---------------------
+    def ask_text(self, title: str, prompt: str, secret: bool, initial: str, error: str, callback) -> None:
+        """Show Code's on-screen-keyboard dialog. callback(text | None) runs on the GUI thread; None = cancelled. Safe from any thread."""
+        self._input_queue.append([title, prompt, bool(secret), initial, error, callback])
+        self.inputRequested.emit()
+
+    def ask_text_blocking(self, title: str, prompt: str, secret: bool = False, initial: str = "", error: str = "", timeout: float = 600.0):
+        """For worker threads: waits for the dialog. Returns the text, or None when cancelled / nobody answered."""
+        done = threading.Event()
+        box: list = [None]
+
+        def cb(text):
+            box[0] = text
+            done.set()
+        self.ask_text(title, prompt, secret, initial, error, cb)
+        if not done.wait(timeout):
+            self._input_timeout(cb)
+        return box[0]
+
+    def _input_timeout(self, cb) -> None:
+        self._input_queue = [r for r in self._input_queue if r[5] is not cb]
+        if self._input_cur is not None and self._input_cur[5] is cb:
+            self._input_cur = None
+            self.inputChanged.emit()
+
+    @Slot()
+    def _input_next(self) -> None:
+        if self._input_cur is None and self._input_queue:
+            self._input_cur = self._input_queue.pop(0)
+            self.inputChanged.emit()
+
+    @Property(bool, notify=inputChanged)
+    def inputActive(self):
+        return self._input_cur is not None
+
+    @Property(str, notify=inputChanged)
+    def inputTitle(self):
+        return self._input_cur[0] if self._input_cur else ""
+
+    @Property(str, notify=inputChanged)
+    def inputPrompt(self):
+        return self._input_cur[1] if self._input_cur else ""
+
+    @Property(bool, notify=inputChanged)
+    def inputSecret(self):
+        return bool(self._input_cur and self._input_cur[2])
+
+    @Property(str, notify=inputChanged)
+    def inputInitial(self):
+        return self._input_cur[3] if self._input_cur else ""
+
+    @Property(str, notify=inputChanged)
+    def inputError(self):
+        return self._input_cur[4] if self._input_cur else ""
+
+    @Slot(str)
+    def submitInput(self, text: str) -> None:
+        self._input_finish(text)
+
+    @Slot()
+    def cancelInput(self) -> None:
+        self._input_finish(None)
+
+    def _input_finish(self, text) -> None:
+        cur, self._input_cur = self._input_cur, None
+        self.inputChanged.emit()
+        if cur is not None:
+            try:
+                cur[5](text)                          # (a password is handed over here and nowhere else: never logged, never stored)
+            except Exception as exc:  # pragma: no cover - a broken callback must not freeze the dialog queue
+                kiosk.log_event(f"input dialog callback failed: {type(exc).__name__}")
+        if self._input_queue:
+            self._input_next()
+
+
+    # ----- file viewer: ~/Downloads, ~/Games, ~/Videos -------------------------------------
+    def _fm_home(self) -> Path:
+        return Path.home()
+
+    def _fm_set_msg(self, ok: bool, text: str) -> None:
+        self._fm_ok, self._fm_msg = ok, text
+        kiosk.log_event(f"files: {'OK' if ok else 'FAILED'} - {text}")
+
+    @Slot()
+    def filesReset(self) -> None:
+        self._fm_dir, self._fm_pick, self._fm_msg = None, None, ""
+
+    def _files_rows(self) -> list:
+        rows: list = []
+        if self._fm_busy:
+            return [self._info(self._fm_busy + (("  " + self._fm_progress) if self._fm_progress else "")),
+                    {"kind": "item", "id": "fmcancel", "title": "Cancel"}]
+        if self._fm_msg:
+            rows.append(self._info(("DONE:  " if self._fm_ok else "NOTE:  ") + self._fm_msg))
+        home = self._fm_home()
+        if self._fm_dir is None:
+            places = files.roots(home)
+            rows.append(self._info("Your files: pick a place. Code only shows Downloads, Games and Videos, and only changes things inside them."))
+            for i, (label, p) in enumerate(places):
+                rows.append({"kind": "item", "id": f"fmroot:{i}", "title": label, "value": "",
+                             "detail": f"{p}   -   {files.free_text(p)}"})
+            if not places:
+                rows.append(self._info("None of ~/Downloads, ~/Games or ~/Videos exists yet. Download or add something first."))
+            rows.append({"kind": "item", "id": "back", "title": "Back"})
+            return rows
+        d = self._fm_dir
+        entries, more = files.list_dir(d)
+        self._fm_items = entries
+        rows.append(self._info(f"{d}   -   {files.free_text(d)}"))
+        rows.append({"kind": "item", "id": "fmup", "title": "..  Up" if not files.is_root(d, home) else "..  All places",
+                     "detail": "Go back one folder."})
+        if not files.is_root(d, home):
+            rows.append({"kind": "item", "id": "fmhere", "title": "Actions for THIS folder (rename, delete, add to games)",
+                         "detail": f"{d.name}"})
+        if not entries:
+            rows.append(self._info("This folder is empty."))
+        for i, e in enumerate(entries):
+            if e.is_dir:
+                rows.append({"kind": "item", "id": f"fm:{i}", "title": e.name + "/", "value": f"{e.count} item" + ("" if e.count == 1 else "s"),
+                             "detail": "Folder - press to open it."})
+            else:
+                what = {"zip": "Archive (zip)", "tar": "Archive (tar)", "7z": "Archive (7z)", "rar": "Archive (rar)", "video": "Video"}.get(e.kind, "File")
+                extra = " - press, then Extract here to unpack it." if e.kind in ("zip", "tar", "7z", "rar") else " - press for Open, Rename, Delete, Add to my games."
+                rows.append({"kind": "item", "id": f"fm:{i}", "title": e.name, "value": importer.human_size(e.size),
+                             "detail": what + ", " + downloads.human_age(e.mtime) + extra})
+        if more:
+            rows.append(self._info(f"Only the first {files.LIST_CAP} items are shown."))
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    def _files_activate(self, rid: str) -> str:
+        home = self._fm_home()
+        if self._fm_busy:
+            if rid == "fmcancel":
+                self._fm_cancel.set()
+            return ""
+        self._fm_msg = ""
+        self._fm_pending_delete = False
+        if rid.startswith("fmroot:"):
+            try:
+                self._fm_dir = files.roots(home)[int(rid[7:])][1]
+            except (ValueError, IndexError):
+                return "refresh"
+            return "page:files"
+        if rid == "fmup":
+            d = self._fm_dir
+            self._fm_dir = None if (d is None or files.is_root(d, home)) else d.parent
+            return "page:files"
+        if rid == "fmhere" and self._fm_dir is not None:
+            self._fm_pick = self._fm_dir
+            return "page:fileact"
+        if rid.startswith("fm:"):
+            try:
+                e = self._fm_items[int(rid[3:])]
+            except (ValueError, IndexError):
+                return "refresh"
+            if e.is_dir:
+                self._fm_dir = e.path
+                return "page:files"
+            self._fm_pick = e.path
+            return "page:fileact"
+        return ""
+
+    def _fileact_rows(self) -> list:
+        p = self._fm_pick
+        if p is None or not (p.exists() or p.is_symlink()):
+            return [self._info("That file or folder is gone."), {"kind": "item", "id": "back", "title": "Back"}]
+        rows: list = []
+        if self._fm_msg:
+            rows.append(self._info(("DONE:  " if self._fm_ok else "NOTE:  ") + self._fm_msg))
+        if self._fm_busy:
+            return rows + [self._info(self._fm_busy + (("  " + self._fm_progress) if self._fm_progress else "")),
+                           {"kind": "item", "id": "fmcancel", "title": "Cancel"}]
+        isdir = p.is_dir()
+        kind = "folder" if isdir else (files.archive_kind(p) or "file")
+        size = files.folder_size(p) if isdir else p.stat().st_size
+        rows.append(self._info(f"{p.name}   -   {importer.human_size(size)}   -   {p.parent}"))
+        if self._fm_pending_delete:
+            rows.append(self._info(f"Delete \"{p.name}\" for good?" + (" Everything inside it goes too." if isdir else "") + " This cannot be undone."))
+            rows.append({"kind": "item", "id": "fmno", "title": "No, keep it"})
+            rows.append({"kind": "item", "id": "fmyes", "title": "Yes, delete it"})
+            return rows
+        if kind in ("zip", "tar", "7z", "rar"):
+            tool = files.missing_tool(kind)
+            if tool:
+                name = "7-Zip" if tool == "7zip" else "unrar"
+                rows.append(self._info(f"Unpacking .{kind} files needs {name}. It is free and installs in one press (Code asks for your password on this screen)."))
+                rows.append({"kind": "done", "id": f"fminstall:{tool}", "title": f"Install {name}", "detail": "Then come back and press Extract here."})
+            rows.append({"kind": "done", "id": "fmextract", "title": "Extract here  (unzip into a new folder)",
+                         "detail": f"Makes the folder \"{files.archive_stem(p)}\" next to it. A password-protected archive asks for the password on this screen."})
+        if isdir:
+            rows.append({"kind": "item", "id": "fmopen", "title": "Open this folder", "detail": "Look inside."})
+        else:
+            rows.append({"kind": "item", "id": "fmopen", "title": "Open", "detail": "With the program set up for this kind of file (videos play full screen)."})
+        rows.append({"kind": "item", "id": "fmadd", "title": "Add to my games", "detail": "Pick the system; the file moves into that games folder."})
+        rows.append({"kind": "item", "id": "fmrename", "title": "Rename", "detail": "Type a new name on this screen."})
+        rows.append({"kind": "item", "id": "fmdelete", "title": "Delete", "detail": "Asks you to confirm first."})
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    def _fileact_activate(self, rid: str) -> str:
+        p = self._fm_pick
+        if self._fm_busy:
+            if rid == "fmcancel":
+                self._fm_cancel.set()
+            return ""
+        if p is None:
+            return "page:files"
+        home = self._fm_home()
+        if rid == "fmno":
+            self._fm_pending_delete = False
+            return "page:fileact"
+        self._fm_msg = ""
+        if rid == "fmopen":
+            if p.is_dir():
+                self._fm_dir, self._fm_pick = p, None
+                return "page:files"
+            ok, text = files.open_file(p, home=home)
+            self._fm_set_msg(ok, text)
+            self.show_toast(text, 6000)
+            return "refresh"
+        if rid == "fmadd":
+            it = downloads.item_for(self.cfg, p)
+            if it is None:
+                self._fm_set_msg(False, "That file is gone.")
+                return "refresh"
+            self._dl_pick = it
+            self._dl_from_files = True
+            return "page:dlsystem"
+        if rid == "fmrename":
+            def done(text):
+                if text is None:
+                    return
+                ok, msg = files.rename(p, text, home)
+                if ok:
+                    self._fm_pick = p.parent / text.strip()
+                self._fm_set_msg(ok, msg)
+                self.pageChanged.emit()
+            self.ask_text("RENAME", f"New name for \"{p.name}\":", False, p.name, "", done)
+            return ""
+        if rid == "fmdelete":
+            self._fm_pending_delete = True
+            return "page:fileact"
+        if rid == "fmyes":
+            self._fm_pending_delete = False
+            ok, text = files.delete(p, home)
+            self._fm_set_msg(ok, text)
+            if ok:
+                self._fm_pick = None
+                return "page:files"
+            return "page:fileact"
+        if rid.startswith("fminstall:"):
+            tool = rid[10:]
+            known = {a.id: a for a in list(apps.APP_DEFS) + list(apps.HELPERS)}
+            if tool in known:
+                self.begin_install([tool], for_gid=f"app:{tool}", what=known[tool].title)
+            return ""
+        if rid == "fmextract":
+            self._fm_extract(p)
+            return "refresh"
+        return ""
+
+    def _fm_extract(self, p: Path) -> None:
+        self._fm_cancel = threading.Event()
+        self._fm_busy = f"Unpacking {p.name} ..."
+        self._fm_progress = ""
+        cancel = self._fm_cancel
+        home = self._fm_home()
+
+        def progress(i, n):
+            self.filesEvent.emit("progress", True, f"{i} of {n} files" if n else "(this can take a while)")
+
+        def work():
+            password, err = "", ""
+            for _attempt in range(4):
+                res = files.extract(p, password, progress, cancel, home=home)
+                if res.needs_password:
+                    password = self.ask_text_blocking("ARCHIVE PASSWORD", f"{p.name} is protected. Type its password:", True, "", err or "") or ""
+                    if not password:
+                        self.filesEvent.emit("done", False, "No password was entered, so nothing was unpacked.")
+                        return
+                    err = "That password did not work. Try again." if _attempt else ""
+                    continue
+                self._fm_tool = res.needs_tool
+                self.filesEvent.emit("done", res.ok, res.text)
+                return
+            self.filesEvent.emit("done", False, "The password did not work after several tries. Nothing was unpacked.")
+        threading.Thread(target=work, daemon=True, name="atari-files").start()
+
+    @Slot(str, bool, str)
+    def _files_event(self, kind: str, ok: bool, text: str) -> None:
+        if kind == "progress":
+            self._fm_progress = text
+        else:
+            self._fm_busy = ""
+            self._fm_progress = ""
+            self._fm_set_msg(ok, text)
+            self.show_toast(("Done: " if ok else "") + text, 9000)
+            if ok:
+                self.rescan(toast=False)
+        self.pageChanged.emit()
+
+    @Slot(str, result=str)
+    def pageEscape(self, name: str) -> str:
+        """Esc / B on a page: what to do. Most pages just close; the file viewer goes up one level."""
+        if name == "fileact":
+            if self._fm_busy:
+                self._fm_cancel.set()
+                return ""
+            self._fm_pending_delete = False
+            return "page:files"
+        if name == "files":
+            if self._fm_busy:
+                self._fm_cancel.set()
+                return ""
+            if self._fm_dir is not None:
+                self._fm_dir = None if files.is_root(self._fm_dir, self._fm_home()) else self._fm_dir.parent
+                self._fm_msg = ""
+                return "page:files"
+        return "back"
 
     # ----- Steam in Code-only mode: always Big Picture --------------------------------
     def _start_steam_guard(self) -> None:
@@ -1796,6 +2217,9 @@ class Backend(QObject):
             self.store.add_playtime(gid, secs)
         self._hide_timer.stop()
         self._running = False
+        self._run_status = ""
+        self._run_cancelable = False
+        self.runningStatusChanged.emit()
         self._running_title = ""
         self._running_hint = ""
         self.runningHintChanged.emit()
@@ -2806,6 +3230,7 @@ class Backend(QObject):
                      "value": "ON" if self.cfg.esc_exit else "OFF",
                      "detail": "Press Esc twice quickly, or hold Esc for 1 second (or Ctrl+Esc; on a controller hold Guide and press B) "
                                "to close a streaming app and come back here. One Esc still leaves video full screen as usual."})
+        rows.append({"kind": "support", "title": donate.TITLE, "value": "", "detail": donate.DETAIL})
         rows.append({"kind": "emulators", "title": "Emulators", "value": "",
                         "detail": "See what is installed, install emulators, and which consoles still need BIOS files."})
         for sc in self.cfg.systems.values():
@@ -2916,7 +3341,7 @@ class Backend(QObject):
                 "install": "INSTALL", "installmenu": "INSTALL EMULATORS & APPS", "steam": "STEAM",
                 "recordings": "RECORDINGS", "coverpick": "PICK A COVER", "nocovers": "COVERS NOT FOUND",
                 "addgames": "ADD GAMES", "kiosk": "CODE-ONLY MODE", "quietboot": "QUIET BOOT", "power": "POWER", "downloads": "DOWNLOADS", "golive": "GO LIVE", "robloxfix": "FIX ROBLOX",
-                "dlsystem": "WHICH SYSTEM IS THIS FILE FOR?"}.get(name, name.upper())
+                "dlsystem": "WHICH SYSTEM IS THIS FILE FOR?", "files": "MY FILES", "fileact": "WHAT TO DO WITH IT"}.get(name, name.upper())
 
     @Slot(str, result=str)
     def pageSub(self, name: str) -> str:
@@ -2924,6 +3349,8 @@ class Backend(QObject):
                 "golive": "Enter / A to press.  Esc / B = back.",
                 "robloxfix": "Enter / A on Run fix.  Esc / B = back.",
                 "downloads": "Enter / A on a finished file adds it to your games.  Esc / B = back.",
+                "files": "Downloads, Games, Videos.  Enter / A opens;  Esc / B goes up.",
+                "fileact": "Enter / A on the button you want.  Esc / B = back to the list.",
                 "dlsystem": "Enter / A picks the system - the file moves into that games folder.  Esc / B = back.",
                 "fix": "Code checked everything it can.  Esc / B = back.",
                 "winform": "Check the details, then choose \"Add this game\".  Esc / B = cancel.",
@@ -2987,6 +3414,8 @@ class Backend(QObject):
         tok, _t = apps.app_status(self.cfg, apps.BY_ID["transmission"])
         rows = [self._info("Browse the web yourself, download a file you own or may use, then come back here. Files land in ~/Downloads. "
                            "Code does not recommend or link any download site."),
+                {"kind": "done", "id": "dlfiles", "title": "OPEN THE FILE VIEWER  (unzip, rename, delete, add to my games)",
+                 "detail": "Browse Downloads, Games and Videos with sizes and free space. One button unzips a .zip / .7z / .rar / .tar."},
                 {"kind": "item", "id": "dlbrowser", "title": "Open the web browser", "detail": text,
                  "value": "" if ok else "No browser"},
                 {"kind": "item", "id": "dltorrent", "title": "Torrent client (Transmission)",
@@ -3033,6 +3462,10 @@ class Backend(QObject):
             return ""
         if rid == "dlrefresh":
             return "refresh"
+        if rid == "dlfiles":
+            self.filesReset()
+            self._fm_dir = files.roots(self._fm_home())[0][1] if files.roots(self._fm_home()) else None
+            return "page:files"
         if rid.startswith("dl:"):
             try:
                 it = self._dl_items[int(rid[3:])]
@@ -3072,6 +3505,11 @@ class Backend(QObject):
             if ok:
                 self._dl_pick = None
                 self.rescan(toast=False)
+            if self._dl_from_files:
+                self._dl_from_files = False
+                self._fm_pick = None
+                self._fm_set_msg(ok, text)
+                return "page:files"
             return "page:downloads"
         return ""
 
@@ -3109,6 +3547,10 @@ class Backend(QObject):
             return self._golive_rows()
         if name == "downloads":
             return self._downloads_rows()
+        if name == "files":
+            return self._files_rows()
+        if name == "fileact":
+            return self._fileact_rows()
         if name == "dlsystem":
             return self._dlsystem_rows()
         if name == "help":
@@ -3314,6 +3756,10 @@ class Backend(QObject):
             return self._golive_activate(rid)
         if name == "downloads":
             return self._downloads_activate(rid)
+        if name == "files":
+            return self._files_activate(rid)
+        if name == "fileact":
+            return self._fileact_activate(rid)
         if name == "dlsystem":
             return self._dlsystem_activate(rid)
         if name == "addgames":

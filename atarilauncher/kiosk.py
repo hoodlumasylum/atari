@@ -32,6 +32,8 @@ from typing import Callable
 
 SESSION_NAME = "atari"
 
+from . import rootauth
+
 
 @dataclass
 class Layout:
@@ -159,7 +161,7 @@ def preflight(layout: Layout = DEFAULT, which: Callable = shutil.which, dm_file:
                      "cannot be set up from here."))
     out.append(Check("user", user != "root", True, "You are a normal user." if user != "root" else
                      "Run Code as your normal user, not as root."))
-    out.append(Check("pkexec", bool(which("pkexec")), True, "The password window (pkexec) is available." if which("pkexec") else
+    out.append(Check("pkexec", bool(rootauth.can_elevate(which)), True, "The password window (pkexec) is available." if rootauth.can_elevate(which) else
                      "The password window (pkexec) is missing: install the 'policykit-1' package."))
     out.append(Check("xsessions", layout.p("usr/share/xsessions").is_dir(), True,
                      "The session list exists." if layout.p("usr/share/xsessions").is_dir() else
@@ -307,6 +309,8 @@ def _pkexec(script: str, out: Callable[[str], None], run: Callable | None) -> in
 def _result_text(rc: int, ok_text: str, fail_text: str) -> tuple[bool, str]:
     if rc == 0:
         return True, ok_text
+    if rc == rootauth.REFUSED:
+        return False, rootauth.last_error or "This account may not make this change (not an administrator)."
     if rc in (126, 127):
         return False, "The password window was closed, so nothing was changed. Press the button again when you are ready."
     return False, f"{fail_text} (code {rc}). Nothing else was changed."

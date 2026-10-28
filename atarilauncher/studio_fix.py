@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import paths
+from . import rootauth
 
 NUMPY_REQ = "numpy>=1.24"
 AUDIO_PKG = "pulseaudio-utils"          # parecord + pactl (PipeWire systems provide the same commands through pipewire-pulse)
@@ -71,7 +72,7 @@ def problems(numpy_ok: bool, which: Callable = shutil.which, sources: list | Non
         out.append(Problem("numpy", "The Studio needs one extra library (numpy) and it is not installed yet.", True))
     if not any(which(x) for x in ("parecord", "arecord", "ffmpeg")):
         out.append(Problem("audio-tools", "No recording program was found (parecord, arecord or ffmpeg), so the microphone cannot be used. "
-                                          "Beats still work.", bool(which("pkexec") and which("apt-get")), blocking=False))
+                                          "Beats still work.", bool(rootauth.can_elevate(which) and which("apt-get")), blocking=False))
     if sources is not None and not sources and which("pactl"):
         out.append(Problem("microphone", "No microphone was found. Plug in a USB microphone or headset, then open this screen again. "
                                          "If one is plugged in, check Linux Mint's Sound settings > Input.", False, blocking=False))
@@ -97,7 +98,7 @@ def fix(ps: list[Problem], out: Callable[[str], None], run: Callable | None = No
             out("Adding the numpy library (about 20 MB, needs internet)...")
             if in_venv():
                 rc = run([python, "-m", "pip", "install", "--disable-pip-version-check", NUMPY_REQ], out, None)
-            elif which("pkexec") and which("apt-get"):
+            elif rootauth.can_elevate(which) and which("apt-get"):
                 out("Code is not in its own Python environment, so numpy comes from your system. A password window will pop up...")
                 rc = run(["pkexec", "apt-get", "install", "-y", "python3-numpy"], out, None)
             else:

@@ -148,6 +148,8 @@ Window {
             { kind: "item", id: "settings", title: "Settings (Steam & ROM folders)" },
             { kind: "item", id: "golive", title: "Go Live: stream to Twitch, TikTok, YouTube with OBS" },
             { kind: "item", id: "downloads", title: "Downloads: web browser, add downloaded files to my games" },
+            { kind: "item", id: "files", title: "My files: browse Downloads, Games, Videos (unzip, rename, delete)" },
+            { kind: "item", id: "support", title: "Support Code (optional donation page)" },
             { kind: "item", id: "full", title: "Toggle full screen" },
             { kind: "item", id: "power", title: "Power: restart Code, restart device, shut down" }
         ]
@@ -249,7 +251,7 @@ Window {
     }
     function pageKey(e) {
         var k = e.key
-        if (k === Qt.Key_Escape || k === Qt.Key_B) { leavePage(); return }
+        if (k === Qt.Key_Escape || k === Qt.Key_B) { handleAction(backend.pageEscape(pageName)); return }
         if (k === Qt.Key_Up) pageList.move(-1)
         else if (k === Qt.Key_Down) pageList.move(1)
         else if (isEnter(k) || k === Qt.Key_Space) pageActivateRow(pageList.currentIndex)
@@ -473,6 +475,7 @@ Window {
         else if (id === "bios") openImport("library", "bios")
         else if (id === "studio") openStudio()
         else if (id === "downloads") openPage("downloads")
+        else if (id === "files") { backend.filesReset(); openPage("files") }
         else if (id === "golive") openPage("golive")
         else if (id === "winadd") openBrowser({ kind: "winfile", files: "exe" }, backend.winBrowseStart())
         else if (id === "pickcover") { backend.openCoverPicker(grid.count > 0 ? grid.currentIndex : -1); openPage("coverpick") }
@@ -484,6 +487,7 @@ Window {
         else if (id === "rescan") { backend.rescan(); buildLists(); mode = "library" }
         else if (id === "emus") { importReturn = "library"; openEmulators() }
         else if (id === "settings") openSetup()
+        else if (id === "support") { mode = "library"; backend.supportCode() }
         else if (id === "full") { backend.toggleFullscreen(); mode = "library" }
         else if (id === "power") { backend.powerReset(); openPage("power") }
         else backend.quit()
@@ -539,6 +543,8 @@ Window {
         else if (r.kind === "wifipage") openWifi("setup")
         else if (r.kind === "introvideo") { backend.toggleIntro(); refreshSetup(true) }
         else if (r.kind === "introdefault") { backend.toggleIntroDefault(); refreshSetup(true) }
+        else if (r.kind === "support") backend.supportCode()
+        else if (r.kind === "introsound") { backend.toggleIntroSound(); refreshSetup(true) }
         else if (r.kind === "introchoose") openBrowser({ kind: "introfile", files: "video" }, backend.introBrowseStart())
         else if (r.kind === "introremove") { backend.removeIntro(); refreshSetup(true) }
         else if (r.kind === "intropreview") backend.previewIntro()
@@ -633,8 +639,12 @@ Window {
             e.accepted = true
             if (e.key === Qt.Key_F11) { backend.toggleFullscreen(); return }
             if (e.key === Qt.Key_Q && (e.modifiers & Qt.ControlModifier)) { backend.quit(); return }
+            if (inputDlg.visible) { inputDlg.handleKey(e); return }            // the password / typing box has the keyboard first
             if (win.mode === "intro") { backend.skipIntro(); return }          // any key skips the intro
-            if (backend.running) return
+            if (backend.running) {
+                if (backend.runningCancelable && (e.key === Qt.Key_Escape || e.key === Qt.Key_B || e.key === Qt.Key_Backspace)) backend.cancelLaunch()
+                return
+            }
             var snd = win.keySound(e)
             if (win.mode === "library") libraryKey(e)
             else if (win.mode === "search") searchKey(e)
@@ -1608,9 +1618,22 @@ Window {
                 }
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    text: "Starting up... this screen returns when you quit the game."
+                    objectName: "runningStatus"
+                    width: Math.min(implicitWidth, root.width - 160 * win.u)
+                    wrapMode: Text.Wrap
+                    horizontalAlignment: Text.AlignHCenter
+                    text: backend.runningStatus !== "" ? backend.runningStatus : "Starting up... this screen returns when you quit the game."
                     color: Theme.dim
                     font.pixelSize: 26 * win.u
+                }
+                Rectangle {
+                    objectName: "cancelLaunch"
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    visible: backend.runningCancelable
+                    width: 420 * win.u; height: 64 * win.u; radius: height / 2
+                    color: "#26ffffff"; border.color: Theme.redBright; border.width: 2
+                    Text { anchors.centerIn: parent; text: "Cancel - back to Code  (Esc / B)"; color: "white"; font.pixelSize: 24 * win.u; font.bold: true }
+                    MouseArea { anchors.fill: parent; onClicked: backend.cancelLaunch() }
                 }
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
@@ -1625,6 +1648,15 @@ Window {
                 }
             }
         }
+    }
+
+    // the password / typing dialog (administrator password for Quiet boot etc., new file names): above everything
+    InputDialog {
+        id: inputDlg
+        objectName: "inputDialog"
+        anchors.fill: parent
+        u: win.u
+        z: 100
     }
 
     // ---- keyboard focus: the key handler lives on `root`, so make sure `root` really owns the focus.

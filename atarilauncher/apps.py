@@ -98,6 +98,7 @@ HELPERS: list[AppDef] = [
     AppDef("ffmpeg", "FFmpeg (screen recorder)", "", ("ffmpeg",), "Records the screen to an MP4 file (F9).", apt="ffmpeg"),
     AppDef("7zip", "7-Zip (opens .7z / .rar game archives)", "", ("7z", "7zz", "7za"), "Opens .7z and .rar archives.",
            apt="p7zip-full"),
+    AppDef("unrar", "unrar (opens .rar archives)", "", ("unrar",), "Opens .rar archives (the file viewer's Extract button).", apt="unrar"),
     AppDef("umu", "umu-launcher (runs Windows games with Proton)", "", ("umu-run",),
            "Code's first choice for Windows games. Installed from its official GitHub release."),
 ]

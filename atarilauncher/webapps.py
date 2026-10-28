@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from . import emulators, paths
+from . import donate, emulators, paths
 
 STREAMING = "streaming"
 STREAMING_NAME = "Streaming & Social"
@@ -69,7 +69,10 @@ WEBAPPS: list[WebApp] = [
     WebApp("facebook", "Facebook", "https://www.facebook.com", note="A mouse or touch screen helps."),
     WebApp("tiktok", "TikTok", "https://www.tiktok.com", note="A mouse or touch screen helps."),
 ]
+# The optional "Support Code" donate page: a browser window opened by a button in Settings / Options. It is NOT a tile (not in WEBAPPS).
+SUPPORT = WebApp("support", donate.TITLE, donate.DONATE_URL, browse=True, note=donate.NOTE)
 BY_ID = {w.id: w for w in WEBAPPS}
+BY_ID[SUPPORT.id] = SUPPORT
 
 
 @dataclass(frozen=True)

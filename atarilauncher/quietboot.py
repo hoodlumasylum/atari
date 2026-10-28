@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import kiosk
+from . import rootauth
 
 RECOVERY = ("To undo quiet boot by hand (Ctrl+Alt+F2, log in): sudo rm -f /etc/default/grub.d/zz-code-quiet.cfg /etc/default/grub.d/90-code-quiet.cfg; "
             "sudo plymouth-set-default-theme \"$(sed -n 's/^previous_theme=//p' /etc/code-boot/quiet-boot)\"; "
@@ -108,7 +109,7 @@ def preflight(layout: Layout = DEFAULT, which: Callable = None, logo: Path | Non
 
     def add(ok: bool, fatal: bool, good: str, bad: str):
         out.append(Check(ok, fatal, good if ok else bad))
-    add(bool(which("pkexec")), True, "The password window (pkexec) is available.", "The password window (pkexec) is missing: install the 'policykit-1' package.")
+    add(bool(rootauth.can_elevate(which)), True, "The password window (pkexec) is available.", "The password window (pkexec) is missing: install the 'policykit-1' package.")
     add(bool(which("update-initramfs")) and layout.p("usr/share/plymouth/themes").is_dir(), True, "Plymouth (the boot splash) is installed.",
         "This computer has no Plymouth boot splash (or no update-initramfs), so the logo cannot be changed here.")
     mods = list(layout.p("usr/lib").glob("**/plymouth/script.so")) if layout.p("usr/lib").is_dir() else []
@@ -137,10 +138,12 @@ def blocked(checks: list[Check]) -> str:
 
 
 # ------------------------------------------------------------------ file contents
-def render_grub(hide_menu: bool) -> str:
+def render_grub(hide_menu: bool, disable_os_prober: bool = False) -> str:
     lines = ["# Written by Code > Settings > Quiet boot. Remove with Settings > Quiet boot > Turn off."]
     if hide_menu:
-        lines += ["GRUB_TIMEOUT_STYLE=hidden", "GRUB_TIMEOUT=2"]          # Shift / Esc inside these 2 seconds shows the menu
+        lines += ["GRUB_TIMEOUT_STYLE=hidden", "GRUB_TIMEOUT=2", "GRUB_HIDDEN_TIMEOUT_QUIET=true"]    # Shift / Esc inside these 2 seconds shows the menu
+    if disable_os_prober:       # only a leftover "Windows Boot Manager" (no Windows disk) is on the machine: stop GRUB listing it again
+        lines += ["GRUB_DISABLE_OS_PROBER=true"]
     lines += [f'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT {CMDLINE}"', ""]
     return "\n".join(lines)
 
@@ -188,7 +191,7 @@ STEPS = {          # exit code of the pkexec script -> what was being done (the 
 
 
 def enable_script(layout: Layout = DEFAULT, logo: Path | None = None, hide_menu: bool = True, theme_visible_path: str | None = None,
-                  grub: bool = True) -> str:
+                  grub: bool = True, disable_os_prober: bool = False) -> str:
     """What pkexec runs as root. Any failure puts every file back and ends the script with the exit code of the step that failed (STEPS)."""
     g, lg, t, md, m, gm, pc = (str(layout.p(x)) for x in (layout.grub_cfg, layout.legacy_grub_cfg, layout.theme_dir, layout.marker_dir,
                                                          layout.marker, layout.grub_menu, layout.plymouth_conf))
@@ -210,7 +213,7 @@ def enable_script(layout: Layout = DEFAULT, logo: Path | None = None, hide_menu:
         f"rm -f {_q(lg)}",                                           # the file Code 0.4.2 wrote
     ]
     if grub:
-        lines.append(_write(g, render_grub(hide_menu)))
+        lines.append(_write(g, render_grub(hide_menu, disable_os_prober)))
     lines += [
         "STEP=82",
         f"mkdir -p {_q(t)}\ncp {_q(logo)} {_q(t + '/code-logo.png')}\nchmod 644 {_q(t + '/code-logo.png')}",
@@ -289,6 +292,8 @@ def explain(rc: int, doing: str, lines: list[str]) -> str:
     if rc in STEPS:
         why = (lines[-1] if lines else "").strip()
         return f"Failed while {STEPS[rc]}.{(' ' + why) if why else ''} Everything was put back, nothing changed."
+    if rc == rootauth.REFUSED:
+        return rootauth.last_error or "This account may not make this change (not an administrator)."
     if rc in (126, 127):
         return "No password was entered (the password window was closed or did not open), so nothing was changed. Press the button again when you are ready."
     return f"Could not {doing} (code {rc}). Nothing else was changed."
@@ -320,10 +325,16 @@ def enable(layout: Layout = DEFAULT, run: Callable | None = None, out: Callable[
             return False, why
         grub = bool(which("update-grub")) and layout.p(layout.grub_menu).exists()
         hide = grub and (force_hide or all(c.ok for c in checks))       # a real other system on the disk: the menu is left alone
-        kiosk.log_event(f"quiet boot on: asking for the password (hide_menu={hide}, grub={grub})")
-        rc = _run(layout, enable_script(layout, logo, hide_menu=hide, grub=grub), run, collect)
+        others, stale = boot_menu_systems(layout, fstypes) if grub else ([], [])
+        prober_off = bool(hide and stale and not others)           # the Windows entry is a leftover: stop os-prober listing it again
+        kiosk.log_event(f"quiet boot on: asking for the password (hide_menu={hide}, grub={grub}, os_prober_off={prober_off}, stale={stale})")
+        rc = _run(layout, enable_script(layout, logo, hide_menu=hide, grub=grub, disable_os_prober=prober_off), run, collect)
         if rc != 0:
             text = explain(rc, "turn quiet boot on", lines)
+            if rc == 84:
+                over = [o for o in grub_overrides(layout) if o.wins]
+                if over:
+                    text += " Competing settings: " + "; ".join(f"{o.file} sets {o.key}={o.value}" for o in over) + "."
             _log("on", False, text, lines)
             return False, text
         if not enabled(layout):
@@ -362,6 +373,134 @@ def disable(layout: Layout = DEFAULT, run: Callable | None = None, out: Callable
         text = f"Could not turn quiet boot off: {exc}"
         _log("off", False, text, lines)
         return False, text
+
+
+# ------------------------------------------------------------------ what GRUB / Plymouth really have now (read back from disk)
+@dataclass
+class Override:
+    file: str
+    key: str
+    value: str
+    wins: bool          # sourced after Code's file, so it would beat it
+
+
+GRUB_KEYS = ("GRUB_TIMEOUT_STYLE", "GRUB_TIMEOUT", "GRUB_HIDDEN_TIMEOUT", "GRUB_HIDDEN_TIMEOUT_QUIET", "GRUB_DISABLE_OS_PROBER")
+
+
+def grub_overrides(layout: Layout = DEFAULT) -> list[Override]:
+    """Other places that set the boot-menu keys. /etc/default/grub is read BEFORE the grub.d files (Code's file is 'zz-...', the last
+    one), so only a grub.d file that sorts after it - or after it in the same name - could win. Mint's own 50_linuxmint.cfg sorts before."""
+    ours = Path(layout.grub_cfg).name
+    found: list[Override] = []
+    files = [(layout.p("etc/default/grub"), False)]
+    d = layout.p("etc/default/grub.d")
+    try:
+        files += [(f, f.name > ours) for f in sorted(d.glob("*.cfg")) if f.name not in (ours, Path(layout.legacy_grub_cfg).name)]
+    except OSError:
+        pass
+    for f, wins in files:
+        try:
+            text = f.read_text(errors="replace")
+        except OSError:
+            continue
+        for m in re.finditer(r"^\s*(?:export\s+)?(%s)=(.*)$" % "|".join(GRUB_KEYS), text, re.M):
+            found.append(Override(str(f), m.group(1), m.group(2).strip().strip("\"'"), wins))
+    return found
+
+
+@dataclass
+class Fact:
+    state: str          # "ok" (applied) | "bad" (NOT applied) | "info"
+    text: str
+
+
+def _newest_initrd(layout: Layout) -> Path | None:
+    try:
+        files = sorted(layout.p("boot").glob("initrd.img-*"), key=lambda f: f.stat().st_mtime)
+        return files[-1] if files else None
+    except OSError:
+        return None
+
+
+def status(layout: Layout = DEFAULT, fstypes: Callable | None = None, cmdline: str | None = None, lsinitramfs: Callable | None = None) -> list[Fact]:
+    """What is REALLY applied, read back from the files GRUB and Plymouth use (not what Code hopes it did). Never raises."""
+    import shutil
+    import subprocess
+    out: list[Fact] = []
+
+    def add(state: str, text: str):
+        out.append(Fact(state, text))
+    try:
+        on = enabled(layout)
+        add("ok" if on else "info", "Quiet boot is ON (Code's marker file exists)." if on else "Quiet boot is OFF (no Code marker file).")
+        f = layout.p(layout.grub_cfg)
+        add("ok" if f.exists() else "bad", "Code's GRUB setting file is in /etc/default/grub.d." if f.exists() else "Code's GRUB setting file is not there.")
+        try:
+            cfg = layout.p(layout.grub_menu).read_text(errors="replace")
+            hidden = "timeout_style=hidden" in cfg
+            tm = re.search(r"set timeout=(\d+)", cfg)
+            add("ok" if hidden else "bad", ("GRUB's generated menu (grub.cfg) hides the menu" + (f" (timeout {tm.group(1)} s, Shift / Esc shows it)" if tm else "")) if hidden else
+                "GRUB's generated menu (grub.cfg) still SHOWS the menu (no timeout_style=hidden in it)")
+            splash = bool(re.search(r"\bquiet\b.*\bsplash\b|\bsplash\b.*\bquiet\b", cfg))
+            add("ok" if splash else "bad", "The kernel line in grub.cfg has quiet + splash." if splash else "The kernel line in grub.cfg lacks quiet / splash.")
+        except OSError:
+            add("info", "GRUB's grub.cfg could not be read here (a different boot loader, or no permission).")
+        for o in grub_overrides(layout):
+            if o.wins:
+                add("bad", f"{o.file} sets {o.key}={o.value} AFTER Code's file, so it can override quiet boot.")
+            elif layout.p(layout.grub_cfg).exists() and o.key in ("GRUB_TIMEOUT_STYLE", "GRUB_TIMEOUT", "GRUB_HIDDEN_TIMEOUT"):
+                add("info", f"{Path(o.file).name} also sets {o.key}={o.value}; Code's file is read later and wins.")
+        try:
+            conf = layout.p(layout.plymouth_conf).read_text(errors="replace")
+            th = re.search(r"^\s*Theme\s*=\s*(\S+)", conf, re.M)
+            name = th.group(1) if th else "(not set)"
+            add("ok" if name == "code" else "bad", f"Plymouth's theme (plymouthd.conf) is '{name}'" + ("." if name == "code" else " - not the Code theme."))
+        except OSError:
+            add("bad" if on else "info", "Plymouth's config (plymouthd.conf) was not found, so the theme is not set that way.")
+        theme = layout.p(layout.theme_dir)
+        have = (theme / "code.plymouth").exists() and (theme / "code-logo.png").exists()
+        add("ok" if have else "bad", "The Code boot-splash theme and logo are installed." if have else "The Code boot-splash theme / logo files are missing.")
+        initrd = _newest_initrd(layout)
+        if initrd is None:
+            add("info", "No boot image (initrd) was found to check.")
+        else:
+            lsi = lsinitramfs or (lambda p: subprocess.run(["lsinitramfs", str(p)], capture_output=True, text=True, timeout=20))
+            try:
+                if lsinitramfs is None and not shutil.which("lsinitramfs"):
+                    raise OSError("no lsinitramfs")
+                r = lsi(initrd)
+                if r.returncode == 0:
+                    ok = "plymouth/themes/code/code.plymouth" in r.stdout
+                    add("ok" if ok else "bad", f"The boot image {initrd.name} " + ("contains the Code theme." if ok else "does NOT contain the Code theme (the logo will not show until update-initramfs runs)."))
+                else:
+                    add("info", f"The boot image {initrd.name} could not be listed (it needs the administrator).")
+            except (OSError, subprocess.SubprocessError):
+                add("info", f"The boot image {initrd.name} could not be checked here.")
+        others, stale = boot_menu_systems(layout, fstypes)
+        if others:
+            add("info", "Another system is really on the disk (" + ", ".join(others) + "): the menu stays visible on purpose.")
+        if stale:
+            add("info", "GRUB lists a leftover entry (" + ", ".join(stale) + ") but no Windows disk exists; it does not block hiding.")
+        if cmdline is None:
+            try:
+                cmdline = layout.p("proc/cmdline").read_text()
+            except OSError:
+                cmdline = ""
+        if cmdline:
+            words = cmdline.split()
+            q, sp = "quiet" in words, "splash" in words
+            add("ok" if (q and sp) else "info", "THIS start-up used: " + ("quiet splash." if q and sp else "no quiet / splash (it was started before quiet boot, or the menu edited it)."))
+    except Exception as exc:  # pragma: no cover - never take Code down
+        add("info", f"Could not read everything back ({exc}).")
+    return out
+
+
+def status_summary(facts: list[Fact]) -> str:
+    bad = [f for f in facts if f.state == "bad"]
+    good = [f for f in facts if f.state == "ok"]
+    if bad:
+        return f"{len(good)} things are applied, {len(bad)} are NOT."
+    return f"All {len(good)} checks pass." if good else "Nothing is applied."
 
 
 def diagnose(layout: Layout = DEFAULT, fstypes: Callable | None = None) -> list[str]:

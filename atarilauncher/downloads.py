@@ -82,6 +82,20 @@ def scan(cfg, home: Path | None = None, limit: int = LIMIT) -> list[Item]:
     return out[:limit]
 
 
+def item_for(cfg, path: Path) -> Item | None:
+    """An Item for any file or folder (what "Add to my games" needs), with the likely systems guessed from the extension."""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    if path.is_dir():
+        size, partial = folder_info(path)
+        return Item(path, size, st.st_mtime, partial, True, [])
+    low = path.name.lower()
+    ext = low.rsplit(".", 1)[-1] if "." in low else ""
+    return Item(path, st.st_size, st.st_mtime, low.endswith(PARTIAL), False, importer._extension_table(cfg).get(ext, []))
+
+
 def folder_info(path: Path, cap: int = 500) -> tuple[int, bool]:
     """(bytes, still arriving?) of a folder: a torrent client keeps unfinished files as *.part. Looks at `cap` files at most."""
     total, partial, n = 0, False, 0
