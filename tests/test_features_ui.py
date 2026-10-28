@@ -27,7 +27,7 @@ def conf(tmp_path, text="[steam]\nenabled = false\n"):
     (tmp_path / "conf" / "config.toml").write_text(text)
 
 
-MENU_ORDER = ["resume", "sort", "add", "bios", "studio", "winadd", "pickcover", "record", "recordings", "fix", "help", "rescan", "emus", "update", "settings", "full", "quit"]
+MENU_ORDER = ["resume", "sort", "add", "bios", "studio", "winadd", "pickcover", "record", "recordings", "fix", "help", "rescan", "emus", "update", "settings", "golive", "downloads", "full", "power"]
 
 
 def open_menu_item(ui, item_id):

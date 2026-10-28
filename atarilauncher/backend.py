@@ -12,7 +12,7 @@ from pathlib import Path
 from PySide6.QtCore import Property, QObject, QProcess, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QKeyEvent
 
-from . import downloads, golive, icons, inputfix, intro, kiosk, quietboot, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
+from . import power, downloads, golive, icons, inputfix, intro, kiosk, quietboot, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
 from . import __version__
 from .config import Config, load_config, save_config
 from .import_model import ImportModel
@@ -63,6 +63,7 @@ class Backend(QObject):
     coversFinished = Signal(object)         # covers.Report
     introChanged = Signal()
     introEnded = Signal(str)               # why the intro ended (from the player thread)
+    powerFailed = Signal(str)               # the system refused the restart / shut down
     quietbootDone = Signal(bool, str)       # (worked, text) from the quiet-boot worker thread
     kioskDone = Signal(bool, str)           # (worked, text) from the Code-only mode worker thread
     inputFixDone = Signal(bool, str)        # (worked, text) from the permissions-fix thread
@@ -125,8 +126,12 @@ class Backend(QObject):
         self._kiosk_msg = ""
         self._kiosk_layout = kiosk.DEFAULT
         self.quietbootDone.connect(self._quietboot_finished, Qt.QueuedConnection)
+        self.powerFailed.connect(self._on_power_failed, Qt.QueuedConnection)
+        self._power_pending = ""            # "reboot" / "poweroff" while the Yes / No question is on the screen
+        self._power_run = power.run
         self._qb_busy = False
         self._qb_msg = ""
+        self._qb_ok = True
         self._qb_layout = quietboot.DEFAULT
         self.importProgressed.connect(self._on_import_progress, Qt.QueuedConnection)
         self.importFinished.connect(self._on_import_finished, Qt.QueuedConnection)
@@ -1163,15 +1168,92 @@ class Backend(QObject):
         rows.append({"kind": "item", "id": "back", "title": "No, keep my normal desktop" if not kiosk.enabled(lay) else "Back"})
         return rows
 
+    # ----- Power menu ------------------------------------------------------------------
+    @Slot()
+    def powerReset(self) -> None:
+        self._power_pending = ""
+
+    def _power_rows(self) -> list:
+        pend = self._power_pending
+        if pend:
+            what, _ = power.ACTIONS[pend]
+            return [self._info(f"Really {what}?  Anything you are playing that is not saved will be lost."),
+                    {"kind": "item", "id": "power_no", "title": "No, go back"},          # first: a stray Enter cancels
+                    {"kind": "item", "id": "power_yes", "title": "Yes, " + what + " now"}]
+        return [{"kind": "item", "id": "power_restartcode", "title": "Restart Code" if kiosk.in_session() else "Restart Code (close it and open it again)",
+                 "detail": "Starts Code again. Your games keep their settings and play time."},
+                *([] if kiosk.in_session() else [{"kind": "item", "id": "power_quitcode", "title": "Quit Code"}]),
+                {"kind": "item", "id": "power_reboot", "title": "Restart device", "detail": "Restarts the whole computer (asks first)."},
+                {"kind": "item", "id": "power_poweroff", "title": "Shut down", "detail": "Turns the computer off (asks first)."},
+                {"kind": "item", "id": "power_suspend", "title": "Sleep", "detail": "Suspends the computer; press the power button to wake it."},
+                {"kind": "item", "id": "back", "title": "Back"}]
+
+    def _power_activate(self, rid: str) -> str:
+        if rid == "power_restartcode":
+            self.restartCode()
+            return ""
+        if rid == "power_quitcode":
+            self.quit()
+            return ""
+        if rid in ("power_reboot", "power_poweroff"):
+            self._power_pending = rid[len("power_"):]
+            return "page:power"          # reopen the page: the highlight goes to the first row, "No, go back" (a refresh would keep the old row = Yes)
+        if rid == "power_no":
+            self._power_pending = ""
+            return "page:power"
+        if rid in ("power_yes", "power_suspend"):
+            action = self._power_pending if rid == "power_yes" else "suspend"
+            self._power_pending = ""
+            if action not in power.ACTIONS:
+                return "page:power"
+            self.doPower(action)
+            return "close"
+        return ""
+
+    @Slot()
+    def restartCode(self) -> None:
+        """In the Code-only session the session program starts Code again when it ends; otherwise Code starts itself again."""
+        if self._demo:
+            self.show_toast("Demo mode: nothing restarts.")
+        elif kiosk.in_session():
+            self.quit()
+        else:
+            self.restartAtari()
+
+    @Slot(str)
+    def doPower(self, action: str) -> None:
+        """Restart / shut down / sleep, after the screen's own Yes (sleep needs none). Runs in the background; says what happened."""
+        if action not in power.ACTIONS:
+            return
+        if self._demo:
+            self.show_toast("Demo mode: the computer is left alone.")
+            return
+        self.show_toast(power.ACTIONS[action][1], 8000)
+
+        def work():
+            ok, text = self._power_run(action)
+            studio_fix.log(f"power {action}: ok={ok} {text}")
+            if not ok:
+                self.powerFailed.emit(text)
+        threading.Thread(target=work, daemon=True, name="atari-power").start()
+
+    @Slot(str)
+    def _on_power_failed(self, text: str) -> None:
+        self.show_toast(text, 14000)
+
     # ----- Quiet boot (hide the Mint branding) ----------------------------------------
     def _quietboot_rows(self) -> list:
         lay = self._qb_layout
         if self._qb_busy:
-            return [self._info("Working - a password window may be waiting for you. Rebuilding the boot image takes up to a minute..."),
-                    {"kind": "item", "id": "back", "title": "Back"}]
+            return [self._info("Working - a password window may be waiting for you (look for it, it can be behind this screen). "
+                               "Rebuilding the boot image takes up to a minute. Do not press anything."),
+                    {"kind": "item", "id": "noop", "title": "Working ..."}]
         rows: list = []
-        if self._qb_msg:
-            rows.append(self._info("Result:  " + self._qb_msg))
+        if self._qb_msg:                                      # a result is always on the screen until the page is left
+            rows.append(self._info(("DONE:  " if self._qb_ok else "FAILED:  ") + self._qb_msg))
+        tail = kiosk.log_tail(3)
+        if self._qb_msg and tail:
+            rows.append(self._info("Log (" + str(kiosk.session_log_path()) + "):  " + "  /  ".join(tail)))
         if quietboot.enabled(lay):
             rows += [self._info("Quiet boot is ON: no boot menu, no Mint logo, the Code logo on black, hardly any text."),
                      self._info(quietboot.HOW_TO_SHOW_MENU),
@@ -1185,33 +1267,40 @@ class Backend(QObject):
                                 "Code logo on black, and the start-up text is switched off. Works best together with Code-only mode."),
                      self._info("What changes (password once): a GRUB setting file, a boot-splash theme called \"code\", and a rebuild of the boot image "
                                 "(update-grub, update-initramfs). Turning it off removes exactly those. " + quietboot.HOW_TO_SHOW_MENU),
-                     self._info("Safe by design: the boot menu is NOT hidden when another system (Windows ...) is on the disk, GRUB still shows by itself "
-                                "after a failed start, recovery mode is untouched, and if anything fails Code puts everything back.")]
+                     self._info("Safe by design: the boot menu is NOT hidden when another system is really on the disk, GRUB still shows by itself "
+                                "after a failed start, recovery mode is untouched, and if anything fails Code puts everything back and says which step failed.")]
             for c in checks:
-                if not c.ok:
+                if not c.ok or "leftover" in c.text:
                     rows.append(self._info(("CANNOT CONTINUE: " if c.fatal else "Note: ") + c.text))
             if why:
                 rows.append({"kind": "item", "id": "back", "title": "Back"})
                 return rows
             rows.append({"kind": "done", "id": "qbon", "title": "Yes, turn quiet boot ON", "detail": "A password window pops up. You can undo it any time."})
+            if any(not c.ok and "Another system" in c.text for c in checks):
+                rows.append({"kind": "item", "id": "qbforce", "title": "Turn it ON and hide the boot menu anyway",
+                             "detail": "Only if no other system is on this disk (the entry above is a leftover). Shift / Esc still shows the menu."})
         rows.append({"kind": "item", "id": "back", "title": "Back" if quietboot.enabled(lay) else "No, leave the boot screens as they are"})
         return rows
 
     def _quietboot_activate(self, rid: str) -> str:
-        if rid in ("qbon", "qboff"):
+        if rid in ("qbon", "qbforce", "qboff"):
             if self._qb_busy:
                 return ""
             self._qb_busy = True
             self._qb_msg = ""
             lay = self._qb_layout
-            self.show_toast("A password window will pop up...", 6000)
+            self.show_toast("Asking for your password - a window pops up (it can take a few seconds) ...", 8000)
 
             def work():
                 try:
-                    done, msg = quietboot.disable(lay) if rid == "qboff" else quietboot.enable(lay)
+                    if rid == "qboff":
+                        done, msg = quietboot.disable(lay)
+                    else:
+                        done, msg = quietboot.enable(lay, force_hide=(rid == "qbforce"))
                 except Exception as exc:  # pragma: no cover - safety net
                     done, msg = False, f"The change hit a problem: {exc}"
                 studio_fix.log(f"quiet boot {rid}: ok={done} {msg}")
+                kiosk.log_event(f"quiet boot {rid} finished: {'OK' if done else 'FAILED'} - {msg}")
                 self.quietbootDone.emit(done, msg)
             threading.Thread(target=work, daemon=True, name="atari-quietboot").start()
             return "refresh"
@@ -1220,8 +1309,9 @@ class Backend(QObject):
     @Slot(bool, str)
     def _quietboot_finished(self, ok: bool, text: str) -> None:
         self._qb_busy = False
+        self._qb_ok = ok
         self._qb_msg = text
-        self.show_toast(text, 12000)
+        self.show_toast(("Done: " if ok else "Failed: ") + text, 20000)
         self.pageChanged.emit()
 
     @Slot()
@@ -2753,7 +2843,7 @@ class Backend(QObject):
                 "winchoose": "WHICH PROGRAM STARTS THE GAME?", "winwork": "OPENING THE ARCHIVE",
                 "install": "INSTALL", "installmenu": "INSTALL EMULATORS & APPS", "steam": "STEAM",
                 "recordings": "RECORDINGS", "coverpick": "PICK A COVER", "nocovers": "COVERS NOT FOUND",
-                "addgames": "ADD GAMES", "kiosk": "CODE-ONLY MODE", "quietboot": "QUIET BOOT", "downloads": "DOWNLOADS", "golive": "GO LIVE", "robloxfix": "FIX ROBLOX",
+                "addgames": "ADD GAMES", "kiosk": "CODE-ONLY MODE", "quietboot": "QUIET BOOT", "power": "POWER", "downloads": "DOWNLOADS", "golive": "GO LIVE", "robloxfix": "FIX ROBLOX",
                 "dlsystem": "WHICH SYSTEM IS THIS FILE FOR?"}.get(name, name.upper())
 
     @Slot(str, result=str)
@@ -2775,6 +2865,7 @@ class Backend(QObject):
                 "nocovers": "Games that no cover was found for.  Esc / B = back.",
                 "addgames": "Up/Down to choose, Enter / A or a click to press.  Esc / B = back.",
                 "kiosk": "Read this, then choose.  Esc / B = back - nothing changes until you press Yes.",
+                "power": "Up/Down to choose, Enter / A to press.  Restart and shut down ask first.  Esc / B = back.",
                 "quietboot": "Read this, then choose.  Esc / B = back - nothing changes until you press Yes."}.get(name, "")
 
     # ----- Go Live: OBS + the Twitch / TikTok / YouTube dashboards -------------------------------
@@ -2972,6 +3063,8 @@ class Backend(QObject):
             return self._kiosk_rows()
         if name == "quietboot":
             return self._quietboot_rows()
+        if name == "power":
+            return self._power_rows()
         if name == "winwork":
             return [{"kind": "info", "title": self._win_text or "Working..."},
                     {"kind": "item", "id": "cancel", "title": "Cancel"}]
@@ -3174,6 +3267,8 @@ class Backend(QObject):
             return self._kiosk_activate(rid)
         if name == "quietboot":
             return self._quietboot_activate(rid)
+        if name == "power":
+            return self._power_activate(rid)
         if name == "steam":
             if rid == "steaminstall":
                 self.installSteam()

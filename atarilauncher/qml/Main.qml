@@ -149,7 +149,7 @@ Window {
             { kind: "item", id: "golive", title: "Go Live: stream to Twitch, TikTok, YouTube with OBS" },
             { kind: "item", id: "downloads", title: "Downloads: web browser, add downloaded files to my games" },
             { kind: "item", id: "full", title: "Toggle full screen" },
-            { kind: "item", id: "quit", title: backend.kioskSession ? "Restart Code" : "Quit Code" }
+            { kind: "item", id: "power", title: "Power: restart Code, restart device, shut down" }
         ]
     }
     function openSort() {
@@ -485,6 +485,7 @@ Window {
         else if (id === "emus") { importReturn = "library"; openEmulators() }
         else if (id === "settings") openSetup()
         else if (id === "full") { backend.toggleFullscreen(); mode = "library" }
+        else if (id === "power") { backend.powerReset(); openPage("power") }
         else backend.quit()
     }
     function sortKey(e) {

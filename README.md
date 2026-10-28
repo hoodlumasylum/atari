@@ -31,6 +31,18 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
+## What's new in 0.4.3
+
+- **Power menu.** Options (F10 / Menu / the controller's Start button) > **Power: restart Code, restart device, shut down** (the last entry; it replaces "Quit Code" / "Restart Code", which are now inside it). **Restart Code** relaunches the app (in Code-only mode it ends Code and the session program starts it again), **Quit Code** (desktop only), **Restart device**, **Shut down** and **Sleep**. Restart and shut down ask first, and the highlight starts on **"No, go back"**, so a stray Enter / A cancels. It runs `systemctl reboot` / `systemctl poweroff` / `systemctl suspend` (normally no password for the person at the computer), and if the system refuses it asks for the password with `pkexec systemctl ...`; if that fails too, the reason and the plain command are shown. Works the same in Code-only mode.
+- **Quiet boot is fixed and now always tells you what happened.** What was wrong in 0.4.2 (found by reading the code, not observed on the Dell): (1) GRUB lists **"Windows Boot Manager" even after Windows is deleted** (its old files stay on the EFI partition), and 0.4.2 treated any Windows entry as "another system is here" and left the menu showing - now it only counts when an NTFS / BitLocker partition still exists, and there is a "hide the menu anyway" button for the other cases; (2) the boot-splash theme was only chosen with `update-alternatives`, but current Plymouth reads its theme from `/etc/plymouth/plymouthd.conf`, which only `plymouth-set-default-theme` writes - Code now uses that tool (and remembers your previous theme to put it back); (3) the GRUB file was named `90-code-quiet.cfg`, so a later `grub.d` file could override it - it is now `zz-code-quiet.cfg` (the old file is removed); (4) nothing checked that it worked and a missing command inside the script was shown as "password window closed" - now Code checks `grub.cfg` really contains the hidden-menu setting and the boot image really contains the Code theme, puts everything back if not, and names the step that failed; (5) the result was only a short toast - now the first line of the page says **DONE:** or **FAILED:** with the reason, a 20-second message appears, and every step is written to `~/.local/share/atari/session.log`.
+- **See what quiet boot did, in one line** (Terminal; works on 0.4.2 too):
+
+  ```bash
+  ls -l /etc/code-boot /etc/default/grub.d /usr/share/plymouth/themes/code; cat /etc/default/grub.d/*code* 2>/dev/null; grep -c 'timeout_style=hidden' /boot/grub/grub.cfg; grep -n "menuentry 'Windows" /boot/grub/grub.cfg; plymouth-set-default-theme; cat /etc/plymouth/plymouthd.conf 2>/dev/null; update-alternatives --display default.plymouth | head -6; lsblk -o NAME,FSTYPE,LABEL; tail -20 ~/.local/share/atari/session.log
+  ```
+
+  or, on 0.4.3: `cd ~/.local/share/atari-launcher && python3 -m atarilauncher.quietboot --check`.
+
 ## What's new in 0.4.2
 
 - **Updater fix** ("The downloaded file is damaged or was changed (its checksum does not match)"): the release files were fine. When a connection ended early (Wi-Fi drop, sleep, proxy), the old download code quietly accepted the half file, and the checksum step correctly refused it. The updater now checks the length the server announced, retries dropped connections (resuming where they stopped), asks for fresh uncached bytes, tries once more from scratch with a fresh checksum list before giving up, and a real mismatch shows the expected and actual SHA256 and the file size.
@@ -52,7 +64,7 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 - **If the in-app updater cannot be trusted on your connection, one command does the same by hand** (resumes if it drops, checks the SHA256 against the release's own list, keeps your settings and games):
 
   ```bash
-  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.4.2.tar.gz https://github.com/hoodlumasylum/atari/releases/download/v0.4.2/atari-0.4.2.tar.gz && curl -fsSL https://github.com/hoodlumasylum/atari/releases/download/v0.4.2/SHA256SUMS.txt | grep ' atari-0.4.2.tar.gz$' | sha256sum -c - && tar xzf atari-0.4.2.tar.gz && cd atari-0.4.2 && ./install.sh --yes
+  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.4.3.tar.gz https://github.com/hoodlumasylum/atari/releases/download/v0.4.3/atari-0.4.3.tar.gz && curl -fsSL https://github.com/hoodlumasylum/atari/releases/download/v0.4.3/SHA256SUMS.txt | grep ' atari-0.4.3.tar.gz$' | sha256sum -c - && tar xzf atari-0.4.3.tar.gz && cd atari-0.4.3 && ./install.sh --yes
   ```
 
 ## What's new in 0.4.1
@@ -274,13 +286,13 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.4.2.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
+1. Download **`atari-0.4.3.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
 2. Open a **Terminal** and type:
 
    ```bash
    cd ~/Downloads
-   tar xzf atari-0.4.2.tar.gz
-   cd atari-0.4.2
+   tar xzf atari-0.4.3.tar.gz
+   cd atari-0.4.3
    ./install.sh
    ```
 

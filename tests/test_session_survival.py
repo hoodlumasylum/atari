@@ -113,8 +113,8 @@ def test_in_code_only_mode_quit_is_a_restart_and_the_window_retakes_the_whole_sc
     calls.clear()
     b._restore_window()                                        # not minimised: still re-asserts full screen
     assert calls[:3] == ["full", "raise", "activate"]
-    qml = (kiosk.Path(kiosk.__file__).parent / "qml" / "Main.qml").read_text()
-    assert 'backend.kioskSession ? "Restart Code" : "Quit Code"' in qml
+    rows = {r["id"]: r["title"] for r in b.pageRows("power")}                  # the Power page: Restart Code, and no Quit in Code-only mode
+    assert rows["power_restartcode"] == "Restart Code" and "power_quitcode" not in rows
 
 
 def test_outside_code_only_mode_nothing_changes(tmp_path, monkeypatch):
