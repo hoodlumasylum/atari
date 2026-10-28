@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from . import paths
+from . import emulators, paths
 from .config import Config, SystemConfig
 from .library import Game
 
@@ -34,70 +34,27 @@ def clean_env() -> dict[str, str]:
     return env
 
 
-def flatpak_installed(app_id: str, home: Path | None = None) -> bool:
-    home = home or Path.home()
-    return any(p.exists() for p in (home / ".var" / "app" / app_id,
-                                    Path("/var/lib/flatpak/app") / app_id,
-                                    home / ".local/share/flatpak/app" / app_id))
-
-
 def resolve_retroarch(cfg: Config, home: Path | None = None) -> list[str]:
-    if cfg.retroarch_command.strip():
-        return shlex.split(cfg.retroarch_command)
-    if shutil.which("retroarch"):
-        return ["retroarch"]
-    if shutil.which("flatpak") and flatpak_installed("org.libretro.RetroArch", home):
-        return ["flatpak", "run", "org.libretro.RetroArch"]
-    return ["retroarch"]
-
-
-def cores_dirs(cfg: Config, home: Path | None = None) -> list[Path]:
-    home = home or Path.home()
-    if cfg.cores_dir.strip():
-        return [Path(cfg.cores_dir).expanduser()]
-    return [home / ".config/retroarch/cores",
-            home / ".var/app/org.libretro.RetroArch/config/retroarch/cores",
-            home / "snap/retroarch/current/.config/retroarch/cores",
-            Path("/usr/lib/x86_64-linux-gnu/libretro"), Path("/usr/lib64/libretro"),
-            Path("/usr/lib/libretro"), Path("/usr/local/lib/libretro")]
-
-
-def resolve_core_path(cfg: Config, core: str, home: Path | None = None) -> str:
-    if not core:
-        return ""
-    name = core if core.endswith(".so") else core + ".so"
-    dirs = cores_dirs(cfg, home)
-    for d in dirs:
-        if (d / name).is_file():
-            return str(d / name)
-    return str(dirs[0] / name)  # best guess; RetroArch will explain if missing
+    return emulators.find_emu(cfg, "retroarch", home)[0]
 
 
 def build_rom_command(cfg: Config, system: SystemConfig, rom: str, home: Path | None = None) -> list[str]:
+    """The command that starts one game: your own command if you wrote one, else the chosen/detected emulator."""
     template = system.command.strip()
-    if not template:
+    if template:  # custom command (also used for consoles that are not in the built-in table)
+        try:
+            return emulators.expand(template, cfg, system, rom, [], system.core, home)
+        except ValueError as exc:
+            raise LaunchError(f"The launch command for {system.name} is not valid: {exc}")
+    choice = emulators.choose(cfg, system, home)
+    if choice is None:
         raise LaunchError(f"No launch command is set for {system.name}. Edit {paths.config_file()}.")
-    try:
-        tokens = shlex.split(template)
-    except ValueError as exc:
-        raise LaunchError(f"The launch command for {system.name} is not valid: {exc}")
-    repl = {
-        "{rom}": rom,
-        "{rom_dir}": str(Path(rom).parent),
-        "{rom_name}": Path(rom).stem,
-        "{core}": system.core,
-        "{core_path}": resolve_core_path(cfg, system.core, home),
-        "{cores_dir}": str(cores_dirs(cfg, home)[0]),
-    }
-    out: list[str] = []
-    for tok in tokens:
-        if tok == "{retroarch}":
-            out += resolve_retroarch(cfg, home)
-            continue
-        for k, v in repl.items():
-            tok = tok.replace(k, v)
-        out.append(tok)
-    return out
+    return emulators.expand(choice.emu.template, cfg, system, rom, choice.cmd, choice.core, home)
+
+
+flatpak_installed = emulators.flatpak_installed
+cores_dirs = emulators.cores_dirs
+resolve_core_path = emulators.resolve_core_path
 
 
 def steam_base_command(cfg: Config, home: Path | None = None) -> list[str]:
@@ -167,7 +124,15 @@ def run_game(cfg: Config, game: Game, on_started: Callable[[], None],
         raise LaunchError(f"Unknown system '{game.platform}'.")
     if not Path(game.rom_path).is_file():
         raise LaunchError("That game file is missing. Is the drive plugged in? Try Rescan.")
-    cmd = build_rom_command(cfg, system, game.rom_path)
+    is_pkg = system.id == "ps3" and game.rom_path.lower().endswith(".pkg")
+    if is_pkg:  # a .pkg is an installer: RPCS3 only installs packages with its window open
+        cmd = emulators.find_emu(cfg, "rpcs3")[0] + ["--installpkg", game.rom_path]
+    else:
+        cmd = build_rom_command(cfg, system, game.rom_path)
+    if not system.command.strip() and cmd and not shutil.which(cmd[0]):
+        ready, _label, hint = emulators.status_line(cfg, system)
+        if not ready:
+            raise LaunchError(f"{system.name} needs an emulator that is not installed yet. {hint}")
     _check_executable(cmd, system.name)
     _log("launch: " + shlex.join(cmd))
     try:
@@ -184,6 +149,9 @@ def run_game(cfg: Config, game: Game, on_started: Callable[[], None],
     on_started()
     code = proc.wait()
     elapsed = time.time() - started
+    if is_pkg:
+        return 0.0, ("Package installer closed. Installed PS3 games live inside RPCS3 - to list a game here, "
+                     "put its game folder (with PS3_GAME) or .iso in your PS3 folder.")
     if code != 0 and elapsed < 5:
         return 0.0, (f"The emulator closed right away (code {code}). Check the emulator and core are "
                      f"installed; details are in {paths.log_file()}")

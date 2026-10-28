@@ -2,7 +2,7 @@
 
 It uses SDL2 (bundled with the `pygame` package) which understands practically every
 controller (Xbox, PlayStation, Switch Pro, 8BitDo...). It prints one word per line:
-up down left right accept back search favorite menu prev next
+up down left right accept back favorite options system search prev next
 
 Running it in its own process keeps SDL's settings out of the emulators we launch,
 and a controller problem can never crash the launcher.
@@ -17,9 +17,11 @@ REPEAT_RATE = 0.11
 STICK_DEADZONE = 0.55
 
 # SDL "game controller" button names -> launcher actions (Xbox-style layout)
+# A = select/launch, B = back, X = favourite, Y = options/sort menu, Start/Menu = change system,
+# Select/View = search, LB/RB = previous/next system, d-pad and left stick = move.
 BUTTON_MAP = {
-    "a": "accept", "b": "back", "x": "search", "y": "favorite",
-    "start": "menu", "back": "menu",
+    "a": "accept", "b": "back", "x": "favorite", "y": "options",
+    "start": "system", "back": "search",
     "leftshoulder": "prev", "rightshoulder": "next",
     "dpad_up": "up", "dpad_down": "down", "dpad_left": "left", "dpad_right": "right",
 }

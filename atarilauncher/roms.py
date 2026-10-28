@@ -23,6 +23,47 @@ class Rom:
     path: Path
     system: str
     title: str
+    mtime: float = 0.0
+
+
+def read_sfo_title(sfo: Path) -> str:
+    """TITLE from a PS3 PARAM.SFO file ('' if unreadable)."""
+    import struct
+    try:
+        data = sfo.read_bytes()
+        if data[:4] != b"\0PSF":
+            return ""
+        key_off, data_off, count = struct.unpack_from("<III", data, 8)
+        for i in range(min(count, 64)):
+            k_off, fmt, ln, _mx, d_off = struct.unpack_from("<HHIII", data, 20 + i * 16)
+            key = data[key_off + k_off:data.index(b"\0", key_off + k_off)].decode("ascii", "replace")
+            if key == "TITLE":
+                return data[data_off + d_off:data_off + d_off + ln].split(b"\0")[0].decode("utf-8", "replace").strip()
+    except (OSError, ValueError, struct.error):
+        pass
+    return ""
+
+
+def _ps3_game_in(dirpath: str, dirnames: list[str], filenames: list[str]) -> tuple[Path, str] | None:
+    """If this folder is a PS3 game (PS3_GAME/USRDIR/EBOOT.BIN, or an installed USRDIR/EBOOT.BIN),
+    return (path of EBOOT.BIN, title)."""
+    base = Path(dirpath)
+    upper = {d.upper(): d for d in dirnames}
+    if "PS3_GAME" in upper:
+        game = base / upper["PS3_GAME"]
+        eboot = game / "USRDIR" / "EBOOT.BIN"
+        if not eboot.is_file():
+            hits = [p for p in (game / "USRDIR").glob("*") if p.name.upper() == "EBOOT.BIN"]
+            eboot = hits[0] if hits else eboot
+        title = read_sfo_title(game / "PARAM.SFO") or clean_title(base.name)
+        return eboot, title
+    if "USRDIR" in upper:
+        usr = base / upper["USRDIR"]
+        hits = [p for p in usr.glob("*") if p.name.upper() == "EBOOT.BIN"] if usr.is_dir() else []
+        if hits:
+            title = read_sfo_title(base / "PARAM.SFO") or clean_title(base.name)
+            return hits[0], title
+    return None
 
 
 def scan_folder(folder: Path, extensions, system: str, max_files: int = 20000) -> list[Rom]:
@@ -32,13 +73,28 @@ def scan_folder(folder: Path, extensions, system: str, max_files: int = 20000) -
     if not folder.is_dir():
         return roms
     for dirpath, dirnames, filenames in os.walk(folder, followlinks=False):
+        if system == "ps3":
+            game = _ps3_game_in(dirpath, dirnames, filenames)
+            if game:  # a PS3 game folder is one game: do not look inside it
+                try:
+                    mtime = Path(dirpath).stat().st_mtime
+                except OSError:
+                    mtime = 0.0
+                roms.append(Rom(game[0], system, game[1], mtime))
+                dirnames[:] = []
+                continue
         dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
         for fn in sorted(filenames):
             if fn.startswith("."):
                 continue
             ext = fn.rsplit(".", 1)[-1].lower() if "." in fn else ""
             if ext in exts:
-                roms.append(Rom(Path(dirpath) / fn, system, clean_title(fn)))
+                full = Path(dirpath) / fn
+                try:
+                    mtime = full.stat().st_mtime
+                except OSError:
+                    mtime = 0.0
+                roms.append(Rom(full, system, clean_title(fn), mtime))
                 if len(roms) >= max_files:
                     return roms
     return roms

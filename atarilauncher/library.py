@@ -1,12 +1,13 @@
 """Combine Steam games and ROMs into one list of Game objects."""
 from __future__ import annotations
 
+import json
 import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import paths, roms, steam
+from . import emulators, paths, roms, steam
 from .config import Config
 
 STEAM = "steam"
@@ -23,6 +24,9 @@ class Game:
     steam_appid: str = ""
     rom_path: str = ""
     note: str = ""  # small warning/info line shown in the detail bar
+    header: str = ""  # wide banner art for the detail panel (Steam header.jpg) or ""
+    added: float = 0.0  # file date, used by "Recently added"
+    meta: dict = field(default_factory=dict)  # optional genre / players / release / rating
 
 
 @dataclass
@@ -33,16 +37,48 @@ class LibraryResult:
     steam_note: str = ""  # friendly status for the setup screen / empty state
 
 
-def find_custom_cover(system_id: str, rom_path: Path, covers_root: Path | None = None) -> str:
-    """User-supplied art: ~/.config/atari/covers/<system>/<rom file name without extension>.png"""
-    root = (covers_root or paths.covers_dir()) / system_id
-    if not root.is_dir():
-        return ""
-    for ext in _IMG_EXT:
-        for cand in (root / f"{rom_path.stem}.{ext}", root / f"{rom_path.stem}.{ext.upper()}"):
-            if cand.is_file():
-                return str(cand)
+def _dir_index(folder: Path) -> dict[str, str]:
+    """{lower-case file name: real file name} for the image files of one folder."""
+    try:
+        return {n.lower(): n for n in os.listdir(folder) if n.rsplit(".", 1)[-1].lower() in _IMG_EXT}
+    except OSError:
+        return {}
+
+
+def find_custom_cover(system_id: str, rom_path: Path, covers_root: Path | None = None,
+                      title: str = "", _cache: dict | None = None) -> str:
+    """Your own art for a ROM. Looked up (name match is not case sensitive) as
+    ~/.local/share/atari/covers/<game name>.png|jpg  (also in a <system> sub folder), and as the older
+    ~/.config/atari/covers/<system>/<rom file name>.png.  <game name> = the clean title or the file name."""
+    roots = [covers_root] if covers_root else [paths.user_covers_dir(), paths.covers_dir()]
+    cache = _cache if _cache is not None else {}
+    names = [n for n in dict.fromkeys([rom_path.stem, title, rom_path.stem.replace("_", " ")]) if n]
+    for root in roots:
+        for folder in (root / system_id, root):
+            if folder not in cache:
+                cache[folder] = _dir_index(folder)
+            idx = cache[folder]
+            if not idx:
+                continue
+            for name in names:
+                for ext in _IMG_EXT:
+                    hit = idx.get(f"{name}.{ext}".lower())
+                    if hit:
+                        return str(folder / hit)
     return ""
+
+
+def load_metadata(path: Path | None = None) -> dict:
+    """Optional ~/.local/share/atari/metadata.json: {"Game title or game id": {"genre": "...", "players": "1-2",
+    "release": "1982", "rating": 4.5}}. Keys are matched case-insensitively. Missing/broken file = {}."""
+    path = path or paths.metadata_file()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(k).lower(): v for k, v in data.items() if isinstance(v, dict)}
 
 
 def steam_status_text(scan: steam.SteamScan, enabled: bool = True) -> str:
@@ -62,8 +98,13 @@ def steam_status_text(scan: steam.SteamScan, enabled: bool = True) -> str:
 
 
 def build_library(cfg: Config, home: Path | None = None, covers_root: Path | None = None,
-                  mounts_file: str = "/proc/mounts") -> LibraryResult:
+                  mounts_file: str = "/proc/mounts", metadata: dict | None = None) -> LibraryResult:
     res = LibraryResult()
+    meta = load_metadata() if metadata is None else metadata
+
+    def meta_for(gid: str, title: str) -> dict:
+        return meta.get(gid.lower()) or meta.get(title.lower()) or {}
+
     if cfg.steam_enabled:
         try:
             res.steam_scan = steam.scan_steam(home, cfg.steam_root, cfg.steam_extra_libraries, mounts_file)
@@ -76,9 +117,12 @@ def build_library(cfg: Config, home: Path | None = None, covers_root: Path | Non
                 note = "Installed on a Windows (NTFS) drive - may not run well on Linux"
             res.games.append(Game(
                 gid=f"steam:{g.appid}", title=g.name, platform=STEAM, platform_name="Steam",
-                cover=steam.find_art(scan.root, g.appid), steam_appid=g.appid, note=note))
+                cover=steam.find_art(scan.root, g.appid), steam_appid=g.appid, note=note,
+                header=steam.find_header(scan.root, g.appid), added=g.added,
+                meta=meta_for(f"steam:{g.appid}", g.name)))
     res.steam_note = steam_status_text(res.steam_scan, cfg.steam_enabled)
 
+    cover_cache: dict = {}
     for sc in cfg.systems.values():
         if not sc.roms:
             continue
@@ -89,10 +133,13 @@ def build_library(cfg: Config, home: Path | None = None, covers_root: Path | Non
             found = []
         res.rom_counts[sc.id] = len(found)
         for r in found:
+            gid = f"rom:{sc.id}:{os.path.realpath(r.path)}"
+            cover = find_custom_cover(sc.id, r.path, covers_root, r.title, cover_cache)
             res.games.append(Game(
-                gid=f"rom:{sc.id}:{os.path.realpath(r.path)}", title=r.title, platform=sc.id,
-                platform_name=sc.name, cover=find_custom_cover(sc.id, r.path, covers_root),
-                rom_path=str(r.path)))
+                gid=gid, title=r.title, platform=sc.id, platform_name=sc.name, cover=cover,
+                rom_path=str(r.path), header=cover, added=r.mtime, meta=meta_for(gid, r.title),
+                note=("PS3 installer package: Play opens RPCS3's install window."
+                      if r.path.suffix.lower() == ".pkg" else (emulators.SYSTEM_BY_ID[sc.id].note if sc.id in emulators.SYSTEM_BY_ID else ""))))
     return res
 
 
@@ -100,19 +147,25 @@ def demo_library() -> LibraryResult:
     """Made-up games used for the screenshot / --demo. No real titles or art."""
     steam_titles = ["Cosmic Crawler", "Neon Pinball Deluxe", "Dungeon of Pixels", "Turbo Kart Rally",
                     "Lantern Valley", "Orbital Defense", "Mushroom Kingdom Builder", "Rust & Rails"]
-    games = [Game(f"steam:{9000000 + i}", t, STEAM, "Steam", steam_appid=str(9000000 + i))
-             for i, t in enumerate(steam_titles)]
+    now = time.time()
+    games = [Game(f"steam:{9000000 + i}", t, STEAM, "Steam", steam_appid=str(9000000 + i),
+                  added=now - i * 3600) for i, t in enumerate(steam_titles)]
     retro = {
         "atari2600": ("Atari 2600", ["Blocky Breakout", "Desert Raider", "Sky Gunner", "Maze Muncher"]),
         "atari7800": ("Atari 7800", ["Space Harrier Jr", "Pixel Hockey"]),
         "nes": ("Nintendo NES", ["Plumber Panic", "Ninja Frogs", "Castle Quest"]),
         "snes": ("Super Nintendo", ["Cloud Racers", "Dragon Tamer"]),
         "genesis": ("Sega Genesis", ["Hedgehog Hustle", "Street Brawlers"]),
+        "ps1": ("PlayStation", ["Turbo Kart Zero", "Dino Dash"]),
+        "ps2": ("PlayStation 2", ["Midnight Racer", "Sword of Dawn"]),
+        "dreamcast": ("Dreamcast", ["Orbit Fighters", "Lantern Quest"]),
+        "gamecube": ("GameCube", ["Island Hoppers", "Block Party"]),
         "gba": ("Game Boy Advance", ["Tiny Tactics", "Pocket Fishing"]),
     }
     counts = {}
     for sid, (name, titles) in retro.items():
         counts[sid] = len(titles)
-        games += [Game(f"rom:{sid}:/demo/{t}", t, sid, name, rom_path=f"/demo/{t}") for t in titles]
+        games += [Game(f"rom:{sid}:/demo/{t}", t, sid, name, rom_path=f"/demo/{t}", added=now - 86400 * len(games))
+                  for t in titles]
     scan = steam.SteamScan(root=Path("/demo/Steam"))
     return LibraryResult(games, scan, counts, "Demo mode - these games are made up.")

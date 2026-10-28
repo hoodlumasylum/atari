@@ -58,3 +58,39 @@ def test_starts_with_populated_library(tmp_path, fake_system):
 def test_demo_mode(tmp_path):
     r = run(tmp_path, tmp_path, "--demo", "--selftest")
     assert r.returncode == 0, r.stderr
+
+
+def test_add_games_from_fake_usb_end_to_end(tmp_path, fake_system):
+    """Options -> Add Games -> pick the USB stick -> scan -> copy, all through the real UI."""
+    media = tmp_path / "media"
+    stick = media / "STICK"
+    (stick / "NES").mkdir(parents=True)
+    (stick / "NES" / "Brick Bash (USA).nes").write_bytes(b"x" * 2048)
+    roms = tmp_path / "Games" / "Atari"
+    conf = tmp_path / "conf"
+    conf.mkdir()
+    (conf / "config.toml").write_text(f'[systems.nes]\nroms = ["{roms / "nes"}"]\n')
+    env_media = {"ATARI_MEDIA_ROOTS": str(media)}
+    old = dict(os.environ)
+    os.environ.update(env_media)
+    try:
+        r = run(tmp_path, fake_system["home"], "--selftest",
+                keys="options,down,down,accept,wait,accept,wait:1000,accept,wait:2500")
+    finally:
+        os.environ.clear()
+        os.environ.update(old)
+    assert r.returncode == 0, r.stderr
+    assert "Traceback" not in r.stderr and "qml" not in r.stderr.lower()
+    assert (roms / "nes" / "Brick Bash (USA).nes").read_bytes() == b"x" * 2048
+    assert not list(roms.rglob("*.part"))
+    assert (stick / "NES" / "Brick Bash (USA).nes").read_bytes() == b"x" * 2048  # stick untouched
+
+
+def test_settings_and_emulators_pages_open(tmp_path):
+    home = tmp_path / "h2"
+    home.mkdir()
+    (tmp_path / "conf").mkdir()
+    (tmp_path / "conf" / "config.toml").write_text("[steam]\nenabled = false\n")
+    r = run(tmp_path, home, "--selftest", keys="menu,wait,down,down,down,down,accept,wait,back,back,wait")
+    assert r.returncode == 0, r.stderr
+    assert "Traceback" not in r.stderr and "qml" not in r.stderr.lower()

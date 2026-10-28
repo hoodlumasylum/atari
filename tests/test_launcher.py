@@ -37,9 +37,9 @@ def test_any_emulator_command_works():
 
 def test_empty_or_invalid_command_gives_friendly_error():
     cfg = cfg_with()
-    cfg.systems["gba"].command = ""
+    cfg.systems["custom"] = config.SystemConfig("custom", "My Console", ["x"])  # not in the built-in table
     with pytest.raises(launcher.LaunchError):
-        launcher.build_rom_command(cfg, cfg.systems["gba"], "/x")
+        launcher.build_rom_command(cfg, cfg.systems["custom"], "/x")
     cfg.systems["gba"].command = 'unterminated "quote'
     with pytest.raises(launcher.LaunchError):
         launcher.build_rom_command(cfg, cfg.systems["gba"], "/x")
@@ -137,3 +137,56 @@ def _pids_for(appid):
     import subprocess
     out = subprocess.run(["pgrep", "-f", f"AppId={appid}"], capture_output=True, text=True).stdout.split()
     return [int(p) for p in out if int(p) != os.getpid()]
+
+
+def test_table_picks_installed_emulator_native_or_flatpak(tmp_path, monkeypatch):
+    from atarilauncher import emulators
+    cfg = cfg_with()
+    home = tmp_path / "home"
+    monkeypatch.setattr(emulators.shutil, "which", lambda n: "/usr/bin/flatpak" if n == "flatpak" else None)
+    # nothing installed: best guess + friendly status
+    ready, label, hint = emulators.status_line(cfg, cfg.systems["ps2"], home)
+    assert not ready and "flatpak install flathub net.pcsx2.PCSX2" in hint
+    # Flatpak installed: detected automatically
+    (home / ".var/app/net.pcsx2.PCSX2").mkdir(parents=True)
+    cmd = launcher.build_rom_command(cfg, cfg.systems["ps2"], "/g/x.iso", home)
+    assert cmd == ["flatpak", "run", "net.pcsx2.PCSX2", "-batch", "-fullscreen", "--", "/g/x.iso"]
+    assert emulators.status_line(cfg, cfg.systems["ps2"], home)[:2] == (True, "PCSX2 (Flatpak)")
+    # a program on PATH wins over nothing; user override wins over detection
+    monkeypatch.setattr(emulators.shutil, "which", lambda n: f"/usr/bin/{n}" if n in ("rpcs3", "xemu") else None)
+    assert launcher.build_rom_command(cfg, cfg.systems["ps3"], "/g/x.iso", home) == ["rpcs3", "--no-gui", "/g/x.iso"]
+    assert launcher.build_rom_command(cfg, cfg.systems["xbox"], "/g/x.iso", home) == ["xemu", "-dvd_path", "/g/x.iso"]
+    cfg.emulator_commands["xemu"] = "flatpak run app.xemu.xemu"
+    assert launcher.build_rom_command(cfg, cfg.systems["xbox"], "/g/x.iso", home)[:3] == ["flatpak", "run", "app.xemu.xemu"]
+
+
+def test_user_choice_of_emulator_and_cycle(tmp_path, monkeypatch):
+    from atarilauncher import emulators
+    cfg = cfg_with(retroarch_command="retroarch", cores_dir=str(tmp_path))
+    (tmp_path / "mgba_libretro.so").write_bytes(b"")
+    monkeypatch.setattr(emulators.shutil, "which", lambda n: "/usr/bin/mgba-qt" if n == "mgba-qt" else None)
+    gba = cfg.systems["gba"]
+    assert launcher.build_rom_command(cfg, gba, "/g.gba")[0] == "mgba-qt"
+    gba.emulator = emulators.next_preference(cfg, gba)
+    assert gba.emulator == "mgba"
+    gba.emulator = emulators.next_preference(cfg, gba)
+    assert gba.emulator == "retroarch"
+    assert launcher.build_rom_command(cfg, gba, "/g.gba")[:2] == ["retroarch", "-f"]
+    gba.emulator = emulators.next_preference(cfg, gba)
+    assert gba.emulator == ""
+
+
+def test_scummvm_uses_game_id_from_file(tmp_path):
+    cfg = cfg_with()
+    f = tmp_path / "Monkey.scummvm"
+    f.write_text("monkey\n")
+    cmd = launcher.build_rom_command(cfg, cfg.systems["scummvm"], str(f))
+    assert cmd[-1] == "monkey" and f"--path={tmp_path}" in cmd
+
+
+def test_every_system_has_valid_templates():
+    from atarilauncher import emulators
+    for sd in emulators.SYSTEMS:
+        for eid in sd.emus:
+            assert eid in emulators.EMUS, (sd.id, eid)
+        assert sd.extensions and ("retroarch" not in sd.emus or sd.core)

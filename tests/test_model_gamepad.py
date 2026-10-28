@@ -26,6 +26,30 @@ def test_filters_and_search(tmp_path):
     assert [x.title for x in filter_games(g, s, "all", "super nin")] == ["Gamma Run"]  # matches platform name
 
 
+def test_sort_orders(tmp_path):
+    s = Store(tmp_path / "s.json")
+    g = games()
+    g[0].added, g[1].added, g[2].added, g[3].added = 10, 40, 30, 20
+    titles = lambda sort: [x.title for x in filter_games(g, s, "all", "", sort)]  # noqa: E731
+    assert titles("az") == ["Alpha Quest", "Beta Blaster", "Gamma Run", "Zelda-ish"]
+    assert titles("za") == ["Zelda-ish", "Gamma Run", "Beta Blaster", "Alpha Quest"]
+    assert titles("added") == ["Alpha Quest", "Beta Blaster", "Gamma Run", "Zelda-ish"]
+    g[3].added = 99
+    assert titles("added")[0] == "Gamma Run"
+    s.mark_launched("rom:snes:c", 100)
+    s.mark_launched("steam:1", 200)
+    assert titles("played") == ["Zelda-ish", "Gamma Run", "Alpha Quest", "Beta Blaster"]
+
+
+def test_prefs_persist_and_old_state_files_load(tmp_path):
+    p = tmp_path / "s.json"
+    p.write_text('{"version": 1, "games": {"steam:1": {"favorite": true, "last_played": 5}}}')  # a 0.1.0 file
+    s = Store(p)
+    assert s.is_favorite("steam:1") and s.get_pref("sort", "az") == "az"
+    s.set_pref("sort", "za")
+    assert Store(p).get_pref("sort") == "za" and Store(p).is_favorite("steam:1")
+
+
 def test_stick_direction():
     assert gp.stick_direction(0.1, 0.2) is None
     assert gp.stick_direction(0.9, 0.1) == "right" and gp.stick_direction(-0.9, 0.1) == "left"
@@ -44,5 +68,13 @@ def test_repeater_repeats_after_delay_and_stops_on_release():
 
 
 def test_button_map_covers_every_action():
-    assert set(gp.BUTTON_MAP.values()) >= {"accept", "back", "search", "favorite", "menu", "prev", "next",
+    assert set(gp.BUTTON_MAP.values()) >= {"accept", "back", "search", "favorite", "options", "system", "prev", "next",
                                            "up", "down", "left", "right"}
+    # the mockup's hints: A Select, B Back, X Favourite, Y Options, Menu change system, LB/RB previous/next
+    assert [gp.BUTTON_MAP[b] for b in ("a", "b", "x", "y", "start", "leftshoulder", "rightshoulder")] == \
+        ["accept", "back", "favorite", "options", "system", "prev", "next"]
+
+
+def test_every_gamepad_action_has_a_key():
+    from atarilauncher.backend import ACTION_KEYS
+    assert set(gp.BUTTON_MAP.values()) <= set(ACTION_KEYS)

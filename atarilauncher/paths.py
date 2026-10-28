@@ -34,4 +34,15 @@ def log_file() -> Path:
 
 
 def covers_dir() -> Path:
+    """Older location (0.1.0): ~/.config/atari/covers/<system>/<file name>.png"""
     return config_dir() / "covers"
+
+
+def user_covers_dir() -> Path:
+    """Preferred place for your own box art: ~/.local/share/atari/covers/<game name>.png"""
+    return data_dir() / "covers"
+
+
+def metadata_file() -> Path:
+    """Optional hand-written details (genre, players, release, rating): ~/.local/share/atari/metadata.json"""
+    return data_dir() / "metadata.json"

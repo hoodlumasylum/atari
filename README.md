@@ -3,23 +3,41 @@
 ![Atari home screen](docs/screenshot.png)
 
 **Atari** is a full-screen, controller-friendly "console style" menu for a Linux gaming PC.
-You pick a game from a wall of big tiles, press **A** (or **Enter**), and it starts.
-It shows:
+Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts.
 
-* your **Steam** games (it finds them automatically, even on several drives),
-* your **retro games** (NES, SNES, Mega Drive/Genesis, Atari 2600/7800, Game Boy, GBA, N64, PlayStation 1 and more) from folders you choose,
-* **Favorites** and **Recent** lists, **search**, and how long you have played each game.
+* **Steam** games (found automatically, even on several drives) with the artwork Steam already has on disk,
+* **retro and modern console games** — Atari 2600/5200/7800/Lynx/Jaguar, NES, SNES, N64, Game Boy/GBA, Genesis, Master System,
+  Saturn, Dreamcast, PlayStation 1/2/**3**/PSP, GameCube/Wii/Wii U, Switch, 3DS/DS, **Xbox Classic**, Arcade/MAME, DOS, ScummVM, Amiga,
+  C64, MSX, ZX Spectrum and more — through the emulators you install,
+* an **Add Games** button that copies games from a **USB stick** into your library,
+* **Favourites** and **Recent** lists, **search**, sorting, and play time.
 
 > **About the name.** "Atari" is just the name of this personal hobby project. It is **not** affiliated with,
-> endorsed by, or connected to Atari or any other company. There are no company logos in it: the look
-> (black, wood grain, orange-to-red stripes) is original artwork drawn in code, and the covers are generated
-> placeholder tiles. **No games or ROMs are included** — you need to own the games you play.
+> endorsed by, or connected to Atari or any other company. There are **no company logos, character art or
+> trademarked artwork** in it: the wordmark is plain styled text, the console tiles are original vector glyphs,
+> the banner is a generated neon gradient, and covers are generated placeholders unless you provide your own.
+> **No games, ROMs, emulators, BIOS files, firmware or keys are included** — you need to own the games you play
+> and supply your own BIOS/firmware where an emulator needs it.
 
-| Search with a controller | Setup screen |
+| Search with a controller | Add Games from a USB stick |
 |---|---|
-| ![search](docs/screenshot-search.png) | ![setup](docs/screenshot-setup.png) |
+| ![search](docs/screenshot-search.png) | ![add games](docs/screenshot-add-games.png) |
+| **Emulators page** | **Setup screen** |
+| ![emulators](docs/screenshot-emulators.png) | ![setup](docs/screenshot-setup.png) |
 
-(The screenshots use made-up demo games.)
+(The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
+
+## What's new in 0.2.0
+
+* **New look**: banner with a red ATARI wordmark, tab row (All Games / Favourites / Recent / Systems / Settings), live clock, a scrollable
+  row of big console tiles, sidebar, cover grid, a detail panel with a big **PLAY** button, and a controller-hint bar.
+* **Add Games** (top bar, Settings, empty screen): detects USB sticks, finds games on them, lets you tick what to copy (with total size),
+  copies with a progress bar, skips duplicates, and never changes the USB stick.
+* **Many more consoles** from one data-driven table, including **PlayStation 3 (RPCS3)** and **Xbox Classic (xemu)**, with native *and*
+  Flatpak emulator detection. A new **Settings → Emulators** page shows what is installed and how to install the rest;
+  `atari-install-emulators` (or `scripts/install-emulators.sh`) installs them from a terminal.
+* Sort (A-Z, Z-A, Recently played, Recently added), "Show all systems" option, better covers (Steam library art, your own pictures).
+* Your settings, favourites and play history carry over from 0.1.0 automatically.
 
 ---
 
@@ -27,116 +45,138 @@ It shows:
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.1.0.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest) and unpack it
-   (right-click → *Extract Here*). Or, if you know Git: `git clone https://github.com/hoodlumasylum/atari.git`.
-2. Open a **Terminal** *inside* the unpacked folder (right-click in the folder → *Open in Terminal*) and type:
+1. Download **`atari-0.2.0.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
+2. Open a **Terminal** and type:
 
    ```bash
+   cd ~/Downloads
+   tar xzf atari-0.2.0.tar.gz
+   cd atari-0.2.0
    ./install.sh
    ```
 
-   It may ask for your password to install a few standard system libraries (it asks first).
-   It then creates a private Python environment inside the folder and adds **Atari** to your application menu (under *Games*).
+   It may ask for your password to install a few standard system libraries (it asks first, and skips this when there is no terminal).
+   It copies the app to `~/.local/share/atari-launcher`, creates a private Python environment there and adds **Atari** to your
+   application menu (under *Games*) and an `atari` command. **You can delete the downloaded folder afterwards.**
 
-   * Want it to open by itself when you log in (like a console)? Use `./install.sh --autostart` instead.
-   * **Keep the folder** where it is after installing (the menu entry points to it). If you move it, run `./install.sh` again.
+   * Want it to open by itself when you log in (like a console)? Use `./install.sh --autostart`.
+   * Other options: `--yes` (no questions), `--no-gamepad` (skip the controller library).
+   * **Upgrading from 0.1.0** (or any older version): just run the same steps again. Your config (`~/.config/atari/config.toml`),
+  favourites and history (`~/.local/share/atari/state.json`) are left alone.
 
-Exact commands on a fresh Linux Mint / Ubuntu machine:
-
-```bash
-cd ~/Downloads
-tar xzf atari-0.1.0.tar.gz
-cd atari-0.1.0
-./install.sh
-```
-
-To remove it later: `./uninstall.sh` (your settings and play history are kept; delete the folder to remove the rest).
+To remove it later: `~/.local/share/atari-launcher/uninstall.sh` (your settings, play history and games are kept).
 
 ## 2. Start it
 
 * Open your application menu and click **Atari**, or
-* in a terminal: `./run.sh` (add `--windowed` for a normal window instead of full screen).
+* in a terminal: `atari` (add `--windowed` for a normal window instead of full screen; `./run.sh --windowed` works from a source folder too).
 
-**Keys** (a controller works the same way — Xbox/PlayStation/Switch/8BitDo pads are all recognised by SDL):
+**Controls** (Xbox/PlayStation/Switch/8BitDo pads are all recognised by SDL):
 
 | Do this | Keyboard | Controller |
 |---|---|---|
 | Move around | Arrow keys | D-pad / left stick |
-| Play the selected game | Enter | A (✕ on PlayStation) |
-| Back / close | Esc | B (○) |
-| Add/remove favorite | F | Y (△) |
-| Search | `/` | X (□) |
-| Switch list (Recent, Favorites, Steam, consoles…) | Q / E, or press Up to reach the list bar | LB / RB |
-| Menu (rescan, setup, quit) | F10 or M | Start |
+| Select / play | Enter | A |
+| Back / close | Esc | B |
+| Add/remove favourite | F | X |
+| Options menu (Add Games, sort, rescan, quit…) | F10 or O | Y |
+| Change system (jump between consoles) | Tab | ≡ Menu/Start |
+| Previous / next system | Q / E | LB / RB |
+| Search | `/` | View/Back button, or the search icon |
+| Sort | S | Y → Sort |
 | Full screen on/off | F11 | — |
 
 Search has an on-screen keyboard for controllers; with a real keyboard just type.
+The console tile row shows only systems that have games (plus Steam); choose **Show all systems** to see every supported console.
 
-## 3. Point it at Steam and your ROMs
+## 3. Add your games
 
-On the **first start** Atari shows a setup screen automatically. Later: **Menu → Set up folders**.
+### From a USB stick (easiest)
+1. Plug in the stick, choose **Add Games** (top bar, or Settings, or the empty-library screen).
+2. Pick the drive (press **Refresh** if it isn't listed; **Browse folder…** lets you choose any folder instead, e.g. a card on another drive).
+3. Atari scans the drive (read-only) for games by file type and folder name, and lists them by console with sizes.
+   Tick the ones you want — *Select all* is there — and choose **Copy**.
+4. Files go to `~/Games/Atari/<console>/` (or the folder you configured for that console) with a progress bar; files that already
+   exist are skipped, **Cancel** stops cleanly, and then the library refreshes. The USB stick is never modified, and NTFS/exFAT/FAT
+   sticks and big files (multi-GB discs) are fine. PlayStation 3 game folders (`PS3_GAME`/`EBOOT.BIN`), `.iso`, `.pkg`, and Xbox `.iso`/`.xiso` are recognised.
+
+### From folders
+On the **first start** Atari shows a setup screen. Later: **Options → Settings** (or the Settings tab). Pick a console, press **Enter**, choose the
+folder with its games and **Use this folder**. Atari searches sub-folders and tidies names (`Super_Game (USA) [!].sfc` → "Super Game").
+Folders like `~/ROMs/snes`, `~/Games/Atari/snes` are pre-filled when they exist.
 
 ### Steam
-Nothing to do if Steam is installed normally. Atari looks in `~/.steam`, `~/.local/share/Steam`,
-the Flatpak location and the Snap location, and reads **all** your Steam library folders (the ones you added
-with Steam → *Settings → Storage*), including drives mounted under `/media`, `/mnt` or `/run/media`.
-It lists everything that is fully installed (not tools such as Proton), shows the artwork Steam has already
-downloaded to your computer (otherwise a coloured tile), and starts games with Steam itself
-(`steam steam://rungameid/<id>`). Steam has to be installed and signed in; the first launch may bring up Steam's own window.
+Nothing to do if Steam is installed normally: Atari looks in `~/.steam`, `~/.local/share/Steam`, the Flatpak and Snap locations and reads
+**all** your Steam library folders, including drives under `/media`, `/mnt` or `/run/media`. It lists fully installed games (not tools such as Proton)
+and starts them with Steam itself (`steam steam://rungameid/<id>`). Steam must be installed and signed in.
 
-If a library lives on a drive that is **not mounted** or is a **Windows (NTFS) drive**, the setup screen and the
-game's info line say so. See "Caveats" below.
+> **Steam libraries on NTFS Windows drives often fail under Proton; a Linux Steam library is recommended.** (More below, and in the Settings
+> page and empty screen.)
 
-### Retro games (ROMs)
-1. On the setup screen, pick a console (for example *Super Nintendo*) and press **Enter**.
-2. Browse to the folder that holds those games (the browser also lists your USB drives) and choose **Use this folder**.
-3. Choose **Save and start playing**.
+### Covers
+* **Steam games:** the artwork Steam already stored locally (`~/.steam/steam/appcache/librarycache/<appid>/library_600x900.jpg`, `header.jpg`).
+* **Other games:** put a PNG or JPG named like the game (without extension) in `~/.local/share/atari/covers/`, e.g. `~/.local/share/atari/covers/Super Game.png`.
+  (The older `~/.config/atari/covers/<console>/` folder still works.)
+* Otherwise Atari draws a coloured placeholder cover. Nothing is downloaded from the internet.
+* Optional details (genre, players, release, rating) can be given in `~/.local/share/atari/metadata.json`:
+  `{"Super Game": {"genre": "Platformer", "players": "1-2", "release": "1993", "rating": 4.5}}`.
 
-Atari searches the folder and all its sub-folders for the right file types and cleans up the names
-(`Super_Game (USA) [!].sfc` → "Super Game"). If you keep ROMs in `~/ROMs/snes`, `~/Roms/nes` etc., Atari
-pre-fills them for you on first run.
+## 4. Emulators
 
-**Emulators:** Atari does not contain emulators. By default it starts games through **RetroArch**
-(easiest: the Flatpak `org.libretro.RetroArch` from the Software Manager, which can download cores for you via
-*Load Core → Download a Core*; the Ubuntu/Mint package works too but its cores come as separate packages such as
-`libretro-snes9x`), choosing a standard core for each console (e.g. `snes9x`, `fceumm`, `stella`, `mgba`).
-Other emulators work too — see below.
+Atari doesn't contain emulators. Each console in the table lists emulators in order of preference — a program on your PATH **or** a Flatpak —
+and Atari uses the first one it finds. Consoles without an emulator still show, with an install hint. See **Settings → Emulators**
+(press Enter on a console to cycle the emulator or see how to install it), or in a terminal:
 
-**Box art:** Atari doesn't download anything from the internet. Retro games get a generated tile. To use your own picture,
-put a PNG/JPG named exactly like the game file (without the extension) here:
-`~/.config/atari/covers/<console>/Super_Game (USA).png`, for example `~/.config/atari/covers/snes/...`.
+```bash
+atari-install-emulators --list              # what's installed, and how to get the rest
+atari-install-emulators duckstation pcsx2   # install some via Flatpak (per-user, no sudo)
+atari-install-emulators --all
+```
 
-### The settings file (optional, for tinkering)
-Everything is stored in plain text in **`~/.config/atari/config.toml`** (created after the first setup). Example:
+| Console | Default emulator candidates (Flatpak ID) |
+|---|---|
+| Atari 2600/5200/7800/Lynx/Jaguar, NES, SNES, Genesis, Master System, Game Gear, Sega CD, Saturn, PC Engine, Neo Geo, GB/GBC/GBA, MSX, Amiga, etc. | RetroArch (`org.libretro.RetroArch`) + the right core, or a standalone emulator (e.g. mGBA, VICE) |
+| N64 | RMG, mupen64plus or RetroArch (mupen64plus-next) |
+| PlayStation 1 / 2 / 3 / PSP | DuckStation (`org.duckstation.DuckStation`) / PCSX2 (`net.pcsx2.PCSX2`) / RPCS3 (`net.rpcs3.RPCS3`) / PPSSPP (`org.ppsspp.PPSSPP`) |
+| GameCube / Wii / Wii U | Dolphin (`org.DolphinEmu.dolphin-emu`) / Cemu (`info.cemu.Cemu`) |
+| Nintendo 3DS / DS | Azahar, Lime3DS or Citra / melonDS or DeSmuME |
+| Dreamcast | Flycast (`org.flycast.Flycast`) |
+| Xbox Classic | xemu (`app.xemu.xemu`) |
+| Arcade, DOS, ScummVM, C64, ZX Spectrum… | MAME, DOSBox, ScummVM, VICE, Fuse via native programs or Flatpak |
+| Switch | Configurable command only (set your emulator's command in Settings; no firmware or keys involved in Atari) |
+| PS Vita | Note only (Vita3K installs games inside its own window) |
+| Xbox 360 | Not supported on Linux |
+
+**PlayStation 3:** started as `rpcs3 --no-gui <EBOOT.BIN | game folder | iso>`. Install with `flatpak install flathub net.rpcs3.RPCS3`.
+You must install RPCS3's **firmware** and supply your own games; PS3 emulation is heavy on integrated graphics.
+**Xbox Classic:** started as `xemu -dvd_path <iso>`. You supply your own BIOS/HDD image/games in xemu's settings.
+**You must supply your own BIOS, firmware, keys and games for any emulator that needs them.**
+
+Override anything in `~/.config/atari/config.toml` (or via the Settings page):
 
 ```toml
-[systems.snes]
-name = "Super Nintendo"
-roms = ["/home/me/ROMs/snes", "/media/me/USB/more-snes"]   # several folders are fine
-extensions = ["sfc", "smc", "zip"]
-core = "snes9x_libretro"
-command = "{retroarch} -f -L {core_path} {rom}"           # default
-
 [systems.gba]
 roms = ["/home/me/ROMs/gba"]
-command = "mgba-qt -f {rom}"                               # any emulator works
+emulator = "mgba"                                          # pick a specific emulator from the table
+command = "mgba-qt -f {rom}"                               # or a full custom command (empty = automatic)
 
-[systems.dreamcast]                                        # brand-new console of your own
-name = "Dreamcast"
-roms = ["/home/me/ROMs/dc"]
+[systems.ps3]
+command = "rpcs3 --no-gui {rom}"
+
+[systems.myconsole]                                        # brand-new console of your own
+name = "My Console"
+roms = ["/home/me/ROMs/mine"]
 extensions = ["cdi", "gdi", "chd"]
 command = "flycast {rom}"
 
-[retroarch]
-command = "flatpak run org.libretro.RetroArch"            # only if auto-detection is wrong
+[emulators]                                                # emulator program overrides
+rpcs3 = "flatpak run net.rpcs3.RPCS3"
 ```
 
-Placeholders in `command`: `{rom}` (the game file), `{retroarch}`, `{core_path}`, `{core}`, `{cores_dir}`, `{rom_dir}`, `{rom_name}`.
-Spaces in file names are handled for you. Also available: `[steam] extra_libraries = [...]` and `[general] fullscreen = false`.
-Restart Atari (or use *Menu → Rescan library*) after editing.
+Placeholders in `command`: `{rom}`, `{rom_dir}`, `{rom_name}`, and for RetroArch `{retroarch}`, `{core_path}`, `{core}`, `{cores_dir}`.
+Also available: `[steam] extra_libraries = [...]`, `[general] fullscreen = false`. Restart Atari (or *Options → Rescan*) after hand-editing.
 
-Play time and recents are saved in `~/.local/share/atari/state.json`. A log of launches (useful if an emulator won't start)
-is in `~/.local/share/atari/launch.log`.
+Play time, favourites and recents are in `~/.local/share/atari/state.json`. A launch log (useful if an emulator won't start) is in `~/.local/share/atari/launch.log`.
 
 ---
 
@@ -198,16 +238,16 @@ check [protondb.com](https://www.protondb.com) for each game; and big Windows up
 
 ## Caveats and limits (honest list)
 
-* Atari was **tested without a real Steam install, real controller, or real emulator** (see *Testing* below). The Steam,
-  controller and emulator parts are built to the documented formats and covered by simulated tests, but expect to report small bugs on real hardware.
-* Steam play-time is measured by watching for the game's process after Steam starts it; if it can't detect the start,
-  the game still launches but no time is recorded. Steam's own time stays in Steam.
+* Atari was **tested headlessly only** — with fake Steam libraries, fake ROMs and a fake USB mount — **not with a real controller, real USB stick,
+  or real emulators**. Emulator command lines and Flatpak IDs are written from the emulators' documentation and may need a tweak on your system
+  (use the `command =` override).
+* The console tiles are original glyph art, not photos of consoles (by design: no company artwork).
+* Steam play-time is measured by watching for the game's process; if it can't detect the start, the game still launches but no time is recorded.
 * Atari does not manage Steam sign-in, downloads, Proton versions, or shader caches — Steam does.
-* Retro defaults assume RetroArch cores exist. A missing core shows RetroArch's own error; details go to `launch.log`.
-* No automatic box-art download (by design, to keep it offline and copyright-clean).
 * Controller input only works while Atari is the focused window (so it never steals input from a game).
 * Wayland/X11 are both supported by Qt, but only headless (offscreen) testing was done. Full screen on some Wayland setups may need `F11`.
-* There is **no AppImage** in this version (needs extra work to be reliable); the folder + `install.sh` is the supported way.
+* Animations are kept light (no GPU effects) for integrated graphics, but performance was not measured on real hardware.
+* There is **no AppImage**; the tarball + `install.sh` is the supported way.
 
 ## Testing
 
@@ -216,15 +256,15 @@ check [protondb.com](https://www.protondb.com) for each game; and big Windows up
 .venv/bin/pytest
 ```
 
-Covers the Steam VDF/ACF parser (fixtures with multiple libraries, NTFS mount detection, broken files), ROM scanner, config
-round-trips, launch-command building (RetroArch, Flatpak, custom emulators), play-time tracking with a fake emulator and fake Steam
-process, search/favorites/recent logic, controller dead-zone/repeat logic, and starting the real UI headlessly (empty setup,
-first run, populated). The screenshots are made with:
+Covers the Steam parser, ROM scanner (incl. PS3 folders), the USB import (fake mounts, duplicates, cancel), config round-trips and migration,
+emulator detection and launch-command building (native + Flatpak), play-time tracking, search/favourites/sort logic, controller logic, and
+the real UI started headlessly (first run, empty, populated, Add Games end to end, Settings/Emulators pages). Screenshots:
 `QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software ./run.sh --demo --windowed --size 1920x1080 --screenshot docs/screenshot.png`
+(`scripts/make_demo_home.py` builds a fake home with ~20 games and a fake USB stick.)
 
 ## How it is built
 
 Python 3 + **PySide6 / Qt Quick (QML)** for the interface; plain Python modules for Steam (`steam.py`, `vdf.py`), ROMs (`roms.py`),
-settings (`config.py`), play-time storage (`store.py`) and launching (`launcher.py`). Controllers are read by a small helper
-process using SDL2 (from the `pygame` package) and turned into key presses, so the keyboard and controller share one code path.
-MIT licensed — see `LICENSE`.
+the emulator table (`emulators.py`), USB import (`importer.py`), settings (`config.py`), storage (`store.py`) and launching (`launcher.py`).
+Controllers are read by a small helper process using SDL2 (from the `pygame` package) and turned into key presses, so the keyboard and
+controller share one code path. MIT licensed — see `LICENSE`.

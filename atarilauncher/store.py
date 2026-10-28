@@ -13,23 +13,36 @@ class Store:
     def __init__(self, path: Path | None = None):
         self.path = path or paths.state_file()
         self.games: dict[str, dict] = {}
+        self.prefs: dict = {}  # small UI choices, e.g. the sort order
         self.load()
 
     def load(self) -> None:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
             self.games = data.get("games", {}) if isinstance(data, dict) else {}
+            prefs = data.get("prefs", {}) if isinstance(data, dict) else {}
+            self.prefs = prefs if isinstance(prefs, dict) else {}
+            if not isinstance(self.games, dict):
+                self.games = {}
         except (OSError, ValueError):
-            self.games = {}
+            self.games, self.prefs = {}, {}
 
     def save(self) -> None:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_suffix(".tmp")
-            tmp.write_text(json.dumps({"version": 1, "games": self.games}, indent=1), encoding="utf-8")
+            tmp.write_text(json.dumps({"version": 1, "games": self.games, "prefs": self.prefs}, indent=1), encoding="utf-8")
             os.replace(tmp, self.path)
         except OSError as exc:
             print(f"[atari] could not save {self.path}: {exc}")
+
+    def get_pref(self, key: str, default=None):
+        return self.prefs.get(key, default)
+
+    def set_pref(self, key: str, value) -> None:
+        if self.prefs.get(key) != value:
+            self.prefs[key] = value
+            self.save()
 
     def get(self, gid: str) -> dict:
         return self.games.get(gid, {})

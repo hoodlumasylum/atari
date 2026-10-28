@@ -3,29 +3,44 @@ from __future__ import annotations
 
 import hashlib
 
-from PySide6.QtCore import QAbstractListModel, QByteArray, QModelIndex, Qt, QUrl
+from PySide6.QtCore import QAbstractListModel, QByteArray, QModelIndex, Qt, QUrl, Slot
 
 from .library import Game
 from .store import Store, format_last_played, format_playtime
 
 
-def filter_games(games: list[Game], store: Store, key: str, query: str) -> list[Game]:
+SORT_MODES = [("az", "A-Z"), ("za", "Z-A"), ("played", "Recently played"), ("added", "Recently added")]
+
+
+def sort_games(games: list[Game], store: Store, sort: str) -> list[Game]:
+    """Pure sorting function (unit-tested). Unknown sort names mean A-Z."""
+    if sort == "za":
+        return sorted(games, key=lambda g: g.title.lower(), reverse=True)
+    if sort == "played":
+        # most recently played first; never-played games follow in A-Z order
+        return sorted(games, key=lambda g: (-store.last_played(g.gid), g.title.lower()))
+    if sort == "added":
+        return sorted(games, key=lambda g: (-g.added, g.title.lower()))
+    return sorted(games, key=lambda g: g.title.lower())
+
+
+def filter_games(games: list[Game], store: Store, key: str, query: str, sort: str = "az") -> list[Game]:
     """Pure filtering function (unit-tested)."""
     q = query.strip().lower()
+    special = key in ("all", "recent", "favorites")
     if q:
-        pool = [g for g in games if key not in ("all", "recent", "favorites") and g.platform == key] \
-            if key not in ("all", "recent", "favorites") else list(games)
+        pool = list(games) if special else [g for g in games if g.platform == key]
         words = q.split()
         pool = [g for g in pool if all(w in g.title.lower() or w in g.platform_name.lower() for w in words)]
-        return sorted(pool, key=lambda g: g.title.lower())
+        return sort_games(pool, store, sort)
     if key == "all":
-        return sorted(games, key=lambda g: g.title.lower())
+        return sort_games(games, store, sort)
     if key == "favorites":
-        return sorted([g for g in games if store.is_favorite(g.gid)], key=lambda g: g.title.lower())
+        return sort_games([g for g in games if store.is_favorite(g.gid)], store, sort)
     if key == "recent":
         by_id = {g.gid: g for g in games}
         return [by_id[i] for i in store.recent_ids() if i in by_id]
-    return sorted([g for g in games if g.platform == key], key=lambda g: g.title.lower())
+    return sort_games([g for g in games if g.platform == key], store, sort)
 
 
 class GameModel(QAbstractListModel):
@@ -69,8 +84,40 @@ class GameModel(QAbstractListModel):
         if name == "note":
             return g.note
         if name == "hue":
-            return int(hashlib.sha1(g.title.encode()).hexdigest()[:4], 16) / 65535.0
+            return self._hue(g)
         return None
+
+    @Slot(int, result="QVariantMap")
+    def get(self, row: int):
+        """Everything the detail panel shows about one game ('-' where nothing is known)."""
+        g = self.game_at(row)
+        if g is None:
+            return {}
+        s = self._store
+        m = g.meta or {}
+
+        def text(key: str) -> str:
+            v = m.get(key)
+            return str(v).strip() if v not in (None, "") else "-"
+
+        try:
+            rating = max(0.0, min(5.0, float(m.get("rating")))) if m.get("rating") not in (None, "") else -1.0
+        except (TypeError, ValueError):
+            rating = -1.0
+        return {
+            "gid": g.gid, "title": g.title, "platform": g.platform, "platformName": g.platform_name,
+            "cover": QUrl.fromLocalFile(g.cover).toString() if g.cover else "",
+            "art": QUrl.fromLocalFile(g.header or g.cover).toString() if (g.header or g.cover) else "",
+            "wideArt": bool(g.header) and g.header != g.cover,
+            "favorite": s.is_favorite(g.gid), "playtime": format_playtime(s.playtime(g.gid)),
+            "lastPlayed": format_last_played(s.last_played(g.gid)), "note": g.note,
+            "hue": self._hue(g), "genre": text("genre"), "players": text("players"),
+            "release": text("release"), "rating": rating,
+        }
+
+    @staticmethod
+    def _hue(g: Game) -> float:
+        return int(hashlib.sha1(g.title.encode()).hexdigest()[:4], 16) / 65535.0
 
     def set_visible(self, games: list[Game]) -> None:
         self.beginResetModel()

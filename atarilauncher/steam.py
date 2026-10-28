@@ -105,6 +105,7 @@ class SteamGame:
     size_on_disk: int = 0
     on_ntfs: bool = False
     has_compatdata: bool = False  # a Proton prefix exists => runs through Proton
+    added: float = 0.0  # when the game's manifest was created/modified (used for "Recently added")
 
 
 @dataclass
@@ -154,6 +155,10 @@ def scan_library_dir(lib_path: Path, on_ntfs: bool = False) -> list[SteamGame]:
             continue
         if appid in SKIP_APPIDS or name.startswith(SKIP_NAME_PREFIXES):
             continue
+        try:
+            added = os.stat(manifest).st_mtime
+        except OSError:
+            added = 0.0
         games.append(
             SteamGame(
                 appid=appid,
@@ -163,6 +168,7 @@ def scan_library_dir(lib_path: Path, on_ntfs: bool = False) -> list[SteamGame]:
                 size_on_disk=_int(st.get("sizeondisk")),
                 on_ntfs=on_ntfs,
                 has_compatdata=(steamapps / "compatdata" / appid).is_dir(),
+                added=added,
             )
         )
     return games
@@ -227,6 +233,28 @@ def find_art(root: Path | None, appid: str) -> str:
     sub = cache / appid
     if sub.is_dir():
         for name in wanted:  # newer layout: <appid>/<hash>/<file> or <appid>/<file>
+            direct = sub / name
+            if direct.is_file():
+                return str(direct)
+            hits = sorted(glob.glob(str(sub / "*" / name)))
+            if hits:
+                return hits[0]
+    return ""
+
+
+def find_header(root: Path | None, appid: str) -> str:
+    """Path of a wide banner image (header.jpg) in Steam's local cache ('' if none)."""
+    if root is None:
+        return ""
+    cache = root / "appcache" / "librarycache"
+    if not cache.is_dir():
+        return ""
+    for p in (cache / f"{appid}_header.jpg", cache / f"{appid}_library_header.jpg"):
+        if p.is_file():
+            return str(p)
+    sub = cache / appid
+    if sub.is_dir():
+        for name in ("header.jpg", "library_header.jpg", "library_hero.jpg"):
             direct = sub / name
             if direct.is_file():
                 return str(direct)

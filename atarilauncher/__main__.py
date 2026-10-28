@@ -13,7 +13,8 @@ def parse_args(argv=None):
     ap.add_argument("--fullscreen", action="store_true", help="force full screen")
     ap.add_argument("--demo", action="store_true", help="show made-up demo games (used for screenshots)")
     ap.add_argument("--screenshot", metavar="PNG", help="save a screenshot after start-up and exit")
-    ap.add_argument("--screenshot-keys", default="", help="comma-separated actions to press before the shot")
+    ap.add_argument("--screenshot-keys", default="", help="comma-separated actions to press before the shot "
+                    "(up down left right accept back favorite options system search prev next, wait[:ms])")
     ap.add_argument("--size", default="", help="window size WIDTHxHEIGHT (windowed mode)")
     ap.add_argument("--selftest", action="store_true", help="start, load the UI, then exit 0 (for testing)")
     ap.add_argument("--version", action="store_true")
@@ -79,10 +80,23 @@ def main(argv=None) -> int:
             app.exit(1 if errors else 0)
 
         def press_keys():
+            # actions are pressed one after the other (like a person); "wait" or "wait:700" pauses (ms)
             os.environ["ATARI_TEST_INPUT"] = "1"
-            for action in [a for a in args.screenshot_keys.split(",") if a]:
-                backend.send_action(action)
-            QTimer.singleShot(800, finish)
+            todo = [a for a in args.screenshot_keys.split(",") if a]
+
+            def step():
+                if not todo:
+                    QTimer.singleShot(800, finish)
+                    return
+                action = todo.pop(0)
+                delay = 40
+                if action.startswith("wait"):
+                    delay = int(action.split(":")[1]) if ":" in action else 500
+                else:
+                    backend.send_action(action)
+                QTimer.singleShot(delay, step)
+
+            step()
 
         QTimer.singleShot(1200, press_keys)
     return app.exec()

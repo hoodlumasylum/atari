@@ -1,5 +1,13 @@
 singleton Theme 1.0 Theme.qml
-StripeBar 1.0 StripeBar.qml
-WoodPanel 1.0 WoodPanel.qml
+Icon 1.0 Icon.qml
+PadButton 1.0 PadButton.qml
+Cover 1.0 Cover.qml
 GameTile 1.0 GameTile.qml
+SystemTile 1.0 SystemTile.qml
+TopBar 1.0 TopBar.qml
+DetailPanel 1.0 DetailPanel.qml
+HintBar 1.0 HintBar.qml
+SideItem 1.0 SideItem.qml
 MenuList 1.0 MenuList.qml
+ImportScreen 1.0 ImportScreen.qml
+Wordmark 1.0 Wordmark.qml

@@ -5,7 +5,35 @@ def test_defaults_have_all_main_systems():
     cfg = config.default_config()
     for sid in ("nes", "snes", "genesis", "atari2600", "atari7800", "gba", "n64", "ps1"):
         assert sid in cfg.systems
-        assert "{rom}" in cfg.systems[sid].command and cfg.systems[sid].core.endswith("_libretro")
+        assert cfg.systems[sid].command == ""  # empty = automatic emulator choice
+    for sid in ("nes", "snes", "genesis", "atari2600", "atari7800", "ps1", "dreamcast"):
+        assert cfg.systems[sid].core.endswith("_libretro")
+    for sid in ("ps2", "ps3", "psp", "xbox", "gamecube", "wii", "wiiu", "switch", "n3ds", "dos", "scummvm",
+                "saturn", "segacd", "neogeo", "arcade", "amiga", "c64", "msx", "zxspectrum", "atari5200",
+                "atarilynx", "atarijaguar", "gamegear"):
+        assert sid in cfg.systems
+
+
+def test_old_0_1_0_config_keeps_working(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text('[general]\nfullscreen = false\n[systems.snes]\nname = "Super Nintendo"\n'
+                 'roms = ["/home/me/snes"]\ncore = "snes9x_libretro"\n'
+                 'command = "{retroarch} -f -L {core_path} {rom}"\n'
+                 '[systems.gba]\nroms = ["/g"]\ncommand = "mgba-qt -f {rom}"\n')
+    cfg = config.load_config(p)
+    assert cfg.systems["snes"].roms == ["/home/me/snes"] and cfg.systems["snes"].command == ""
+    assert cfg.systems["gba"].command == "mgba-qt -f {rom}"  # your own command stays
+    assert "ps2" in cfg.systems and not cfg.fullscreen
+
+
+def test_emulator_overrides_roundtrip(tmp_path):
+    cfg = config.default_config()
+    cfg.emulator_commands = {"rpcs3": "flatpak run net.rpcs3.RPCS3"}
+    cfg.systems["ps2"].emulator = "pcsx2"
+    p = config.save_config(cfg, tmp_path / "c.toml")
+    back = config.load_config(p)
+    assert back.emulator_commands == {"rpcs3": "flatpak run net.rpcs3.RPCS3"}
+    assert back.systems["ps2"].emulator == "pcsx2"
 
 
 def test_missing_file_means_first_run(tmp_path):

@@ -53,7 +53,7 @@ def test_launch_records_playtime_recent_and_favorite(tmp_path, monkeypatch):
     b.setFilter("favorites")
     assert b.model.rowCount() == 1
     b.toggleFavorite(0)
-    assert b.model.rowCount() == 0 and "No favorites" in b.emptyMessage()
+    assert b.model.rowCount() == 0 and "No favourites" in b.emptyMessage()
 
 
 def test_launch_missing_emulator_shows_friendly_message(tmp_path, monkeypatch):
