@@ -1,3 +1,3 @@
-"""Atari - a console-style game launcher for Linux (personal project, unaffiliated with any trademark owner)."""
+"""Code - a console-style game launcher for Linux (personal project, unaffiliated with any trademark owner)."""
 
-__version__ = "0.3.2"
+__version__ = "0.4.0"

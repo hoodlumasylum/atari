@@ -1,4 +1,4 @@
-"""One shared "install this program for me" engine, used by every Install button in Atari (a tile whose program is
+"""One shared "install this program for me" engine, used by every Install button in Code (a tile whose program is
 missing, the first-run checklist, Settings > Install everything) and by the terminal installer.
 
 It knows ONE table of programs: the emulators (emulators.EMUS), the PC apps and helpers (apps.APP_DEFS / apps.HELPERS,
@@ -10,7 +10,7 @@ How one program gets installed (first way that works wins; every step is explain
      Flathub (mednafen, mupen64plus, Steam as a fallback: package ``steam-installer``, which takes care of the 32-bit
      libraries itself) and for installing Flatpak itself when the computer has none.
   3. Google Chrome only: Google's official .deb is downloaded and installed with ``pkexec apt-get install`` (Chrome from
-     the .deb needs a password once; it is Atari's first choice for Netflix & co. because of Widevine).
+     the .deb needs a password once; it is Code's first choice for Netflix & co. because of Widevine).
 Nothing is ever installed without the user pressing the Install button, nothing needs a terminal, and a failure of one
 way just moves on to the next. BIOS files, firmware, keys and games are never downloaded.
 """
@@ -354,7 +354,7 @@ def no_way_text(t: Target, env: Env) -> str:
         bits.append(f"or run in a terminal:  sudo apt install {t.apt}")
     if not env.which("pkexec") and t.apt:
         bits.insert(0, "the graphical password helper (pkexec / polkit) is missing")
-    return f"Atari has no way to install {t.title} on this computer by itself: " + "; ".join(bits or ["see the program's website"]) + "."
+    return f"Code has no way to install {t.title} on this computer by itself: " + "; ".join(bits or ["see the program's website"]) + "."
 
 
 def failure_text(t: Target, reasons: list[str], steps: list[str]) -> str:

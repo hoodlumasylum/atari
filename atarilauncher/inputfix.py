@@ -68,7 +68,7 @@ def fix(out: Callable[[str], None], run: Callable | None = None, which: Callable
     from .appinstall import stream_run
     run = run or stream_run
     if not which("pkexec"):
-        return False, ("Atari needs the 'pkexec' password window for this and it is missing. In a Terminal run:  "
+        return False, ("Code needs the 'pkexec' password window for this and it is missing. In a Terminal run:  "
                        "sudo apt install steam-devices")
     try:
         if which("apt-get"):
@@ -88,5 +88,5 @@ def fix(out: Callable[[str], None], run: Callable | None = None, which: Callable
         if rc == 126 or rc == 127:
             return False, "The password window was closed, so nothing was changed. Press the button again when you are ready."
         return False, f"The fix did not work (code {rc}). In a Terminal run:  sudo apt install steam-devices"
-    except Exception as exc:  # never take Atari down
+    except Exception as exc:  # never take Code down
         return False, f"The fix hit a problem: {exc}"

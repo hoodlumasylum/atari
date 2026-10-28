@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from . import apps, controls, emulators, exitwatch, freegames, paths, webapps, windows, xbox
+from . import apps, controls, emulators, exitwatch, freegames, paths, sober, webapps, windows, xbox
 from .config import Config, SystemConfig
 from .library import Game
 
@@ -73,7 +73,7 @@ def controls_hint(cfg: Config, game: Game) -> str:
         return ""
     if game.gid == "app:steam" and getattr(cfg, "steam_bigpicture", True):
         return exit_hint(cfg)
-    if game.platform == webapps.STREAMING:            # Netflix, YouTube, ... and Kodi: how to get back to Atari
+    if game.platform == webapps.STREAMING:            # Netflix, YouTube, ... and Kodi: how to get back to Code
         return exit_hint(cfg)
     system = cfg.systems.get(game.platform)
     if system is None or system.command.strip():
@@ -274,7 +274,7 @@ def _run_app(cfg: Config, game: Game, on_started):
         logfh = open(paths.log_file(), "ab")
     except OSError:
         logfh = subprocess.DEVNULL
-    watched = game.platform == webapps.STREAMING and exitwatch.enabled(cfg)    # Kodi: Esc twice / hold Esc returns to Atari
+    watched = game.platform == webapps.STREAMING and exitwatch.enabled(cfg)    # Kodi: Esc twice / hold Esc returns to Code
     if watched:
         time.sleep(_hint_delay())
     started = time.time()
@@ -293,12 +293,44 @@ def _run_app(cfg: Config, game: Game, on_started):
     done = _finish_watched(watch, app.title, code, started)
     if done:
         return done
+    if app.id == "roblox" and not game.launch:
+        fixed = _roblox_recover(cmd, started, logfh)
+        if fixed is not None:
+            return fixed
     elapsed = time.time() - started
     if code != 0 and elapsed < 5:
         extra = (" Sober is unofficial and can break after a Roblox update: reinstall it with Settings > Emulators "
                  "> Install emulators and apps." if app.id == "roblox" else "")
         return 0.0, (f"{app.title} closed right away (code {code}).{extra} Details: {paths.log_file()}")
     return elapsed, ""
+
+
+def _roblox_recover(cmd, started: float, logfh):
+    """Sober showed its "Install Roblox - application bundle (APK) required" screen (its own download failed). Follow Sober's
+    advice: if the connection to its servers works, update Sober and start it once more (it retries the download itself);
+    if not - or if it fails again - say plainly what is wrong. Never downloads a Roblox APK. Returns None when this
+    start was normal, else (seconds, message)."""
+    if not sober.bundle_state(started):
+        return None
+    _log("roblox: Sober fell back to the manual APK screen")
+    checks = sober.service_checks()
+    retried = False
+    if all(c.ok for c in checks):
+        ok, out = sober.update_sober()
+        _log("roblox: flatpak update org.vinegarhq.Sober -> " + ("ok" if ok else "failed: " + out[-200:]))
+        retried = True
+        t0 = time.time()
+        try:
+            p2 = subprocess.Popen(cmd, env=clean_env(), stdout=logfh, stderr=logfh, stdin=subprocess.DEVNULL)
+            p2.wait()
+        except OSError as exc:
+            _log("roblox: retry could not start: " + str(exc))
+            return 0.0, INFO + sober.recovery_note(retried, checks)
+        if not sober.bundle_state(t0):
+            return time.time() - t0, ""
+        checks = sober.service_checks()
+    _log("roblox: still needs the bundle; " + sober.explain(checks))
+    return 0.0, INFO + sober.recovery_note(retried, checks)
 
 
 def bigpicture_command(cfg: Config, base: list[str], running: bool) -> list[str]:
@@ -320,7 +352,7 @@ def _close_bigpicture(base: list[str]):
 
 class _SteamProc:
     """Stands in for "the Steam process" in the Esc watcher: alive while the Steam client runs (it may have been
-    started long before Atari, so it is not our child)."""
+    started long before Code, so it is not our child)."""
     pid = 0
 
     def __init__(self, running=None):
@@ -340,7 +372,7 @@ class _SteamProc:
 
 
 def _run_steam_bigpicture(cfg: Config, game: Game, cmd: list[str], on_started):
-    """Steam tile: open Steam full screen in Big Picture, and come back to Atari with the Esc / Guide+B gesture."""
+    """Steam tile: open Steam full screen in Big Picture, and come back to Code with the Esc / Guide+B gesture."""
     from . import steam as steam_mod
     base = list(cmd)
     cmd = bigpicture_command(cfg, base, steam_mod.steam_running())
@@ -472,7 +504,7 @@ def _run_web(cfg: Config, game: Game, on_started):
     except OSError:
         logfh = subprocess.DEVNULL
     if exitwatch.enabled(cfg):
-        time.sleep(_hint_delay())       # let the "Press Esc twice to return to Atari" screen be read before the browser covers it
+        time.sleep(_hint_delay())       # let the "Press Esc twice to return to Code" screen be read before the browser covers it
     started = time.time()
     try:
         proc = subprocess.Popen(cmd, env=clean_env(), stdout=logfh, stderr=logfh, stdin=subprocess.DEVNULL,

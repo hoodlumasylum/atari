@@ -26,6 +26,7 @@ QtObject {
         "clock": "<circle cx='12' cy='12' r='9' /><path d='M12 7v5.5l3.5 2' />",
         "pad": "<path d='M7 8h10a5 5 0 0 1 5 5v2a3 3 0 0 1-5.2 2L15 15H9l-1.8 2A3 3 0 0 1 2 15v-2a5 5 0 0 1 5-5z' /><path d='M7 10.5v3M5.5 12h3' /><circle cx='16.5' cy='11' r='.9' fill='@C' /><circle cx='18.5' cy='13' r='.9' fill='@C' />",
         "gear": "<circle cx='12' cy='12' r='6.5' /><circle cx='12' cy='12' r='2.4' /><circle cx='12' cy='12' r='9.6' stroke-width='3' stroke-dasharray='2.2 5.1' />",
+        "wifi": "<path d='M2.5 9.2a14 14 0 0 1 19 0M5.6 12.6a9.5 9.5 0 0 1 12.8 0M8.8 16a5 5 0 0 1 6.4 0' /><circle cx='12' cy='19.4' r='1.3' fill='@C' />",
         "search": "<circle cx='10.5' cy='10.5' r='6.5' /><path d='M15.5 15.5 21 21' />",
         "plus": "<path d='M12 4v16M4 12h16' />",
         "grid": "<rect x='4' y='4' width='6.5' height='6.5' rx='1.2' fill='@C' /><rect x='13.5' y='4' width='6.5' height='6.5' rx='1.2' fill='@C' /><rect x='4' y='13.5' width='6.5' height='6.5' rx='1.2' fill='@C' /><rect x='13.5' y='13.5' width='6.5' height='6.5' rx='1.2' fill='@C' />",

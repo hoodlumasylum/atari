@@ -6,7 +6,7 @@ Window {
     visible: true
     width: 1280
     height: 720
-    title: "Atari"
+    title: "Code"
     color: Theme.bg
     visibility: backend.fullscreen ? Window.FullScreen : Window.Windowed
 
@@ -15,9 +15,10 @@ Window {
     readonly property real u: Math.max(0.4, Math.min(width / 1920, height / 1080))
 
     // library | search | menu | sort | setup | browse | emulators | controls | update | import
-    property string mode: backend.firstRun ? "setup" : "library"
+    property string mode: backend.introActive ? "intro" : (backend.firstRun ? "setup" : "library")
+    property string introBack: backend.firstRun ? "setup" : "library"     // where to go when the intro ends
     property string area: "grid"        // which part of the library has the highlight: tabs tiles side grid detail
-    property int tabFocus: 0            // 0-4 tabs, 5 Add Games, 6 search
+    property int tabFocus: 0            // 0-4 tabs, 5 Add Games, 6 search, 7 WiFi
     property int tileIndex: 0
     property int sideIndex: 0
     property int detailIndex: 0
@@ -111,6 +112,7 @@ Window {
         else if (i === 3) area = "tiles"
         else if (i === 4) openSetup()
         else if (i === 5) openPage("addgames")
+        else if (i === 7) openWifi("library")
         else openSearch()
     }
     function toggleFav() {
@@ -123,6 +125,8 @@ Window {
     function launchCurrent() { if (grid.count > 0) backend.launch(grid.currentIndex) }
 
     function openStudio() { studioScreen.open(); mode = "studio" }
+    property string wifiReturn: "library"
+    function openWifi(from) { wifiReturn = from || "library"; wifiScreen.open(); mode = "wifi" }
     function openOptions() { menuList.model = menuItems(); menuList.currentIndex = 0; mode = "menu" }
     function menuItems() {
         return [
@@ -139,10 +143,12 @@ Window {
             { kind: "item", id: "help", title: "Help & getting started" },
             { kind: "item", id: "rescan", title: "Rescan library" },
             { kind: "item", id: "emus", title: "Emulators" },
-            { kind: "item", id: "update", title: backend.updateAvailable ? "Update Atari  (" + backend.updateVersion + " is ready)" : "Update Atari" },
+            { kind: "item", id: "update", title: backend.updateAvailable ? "Update Code  (" + backend.updateVersion + " is ready)" : "Update Code" },
             { kind: "item", id: "settings", title: "Settings (Steam & ROM folders)" },
+            { kind: "item", id: "golive", title: "Go Live: stream to Twitch, TikTok, YouTube with OBS" },
+            { kind: "item", id: "downloads", title: "Downloads: web browser, add downloaded files to my games" },
             { kind: "item", id: "full", title: "Toggle full screen" },
-            { kind: "item", id: "quit", title: "Quit Atari" }
+            { kind: "item", id: "quit", title: "Quit Code" }
         ]
     }
     function openSort() {
@@ -370,7 +376,7 @@ Window {
         if (k === Qt.Key_F) { toggleFav(); return }
         if (area === "tabs") {
             if (k === Qt.Key_Left) tabFocus = Math.max(0, tabFocus - 1)
-            else if (k === Qt.Key_Right) tabFocus = Math.min(6, tabFocus + 1)
+            else if (k === Qt.Key_Right) tabFocus = Math.min(7, tabFocus + 1)
             else if (k === Qt.Key_Down) area = "tiles"
             else if (isEnter(k) || k === Qt.Key_Space) activateTab(tabFocus)
             return
@@ -464,6 +470,8 @@ Window {
         else if (id === "add") openPage("addgames")
         else if (id === "bios") openImport("library", "bios")
         else if (id === "studio") openStudio()
+        else if (id === "downloads") openPage("downloads")
+        else if (id === "golive") openPage("golive")
         else if (id === "winadd") openBrowser({ kind: "winfile", files: "exe" }, backend.winBrowseStart())
         else if (id === "pickcover") { backend.openCoverPicker(grid.count > 0 ? grid.currentIndex : -1); openPage("coverpick") }
         else if (id === "record") { mode = "library"; backend.toggleRecording() }
@@ -523,6 +531,12 @@ Window {
         else if (r.kind === "installmenu") backend.installEmulators()
         else if (r.kind === "steampage") openPage("steam")
         else if (r.kind === "kioskpage") openPage("kiosk")
+        else if (r.kind === "wifipage") openWifi("setup")
+        else if (r.kind === "introvideo") { backend.toggleIntro(); refreshSetup(true) }
+        else if (r.kind === "introdefault") { backend.toggleIntroDefault(); refreshSetup(true) }
+        else if (r.kind === "introchoose") openBrowser({ kind: "introfile", files: "video" }, backend.introBrowseStart())
+        else if (r.kind === "introremove") { backend.removeIntro(); refreshSetup(true) }
+        else if (r.kind === "intropreview") backend.previewIntro()
         else if (r.kind === "bigpicture") { backend.toggleSteamBigPicture(); refreshSetup(true) }
         else if (r.kind === "escexit") { backend.toggleEscExit(); refreshSetup(true) }
         else if (r.kind === "anim") { backend.toggleAnimations(); refreshSetup(true) }
@@ -589,6 +603,7 @@ Window {
         else if (r.kind === "file" && enter) {
             if (browseTarget.kind === "winfile") handleAction(backend.winPicked(r.path))
             else if (browseTarget.kind === "gamecover") handleAction(backend.coverFromFile(browseTarget.gid, r.path))
+            else if (browseTarget.kind === "introfile") { backend.introPicked(r.path); refreshSetup(true); mode = "setup" }
             else handleAction(backend.winPickedCover(r.path))
         }
         else if (r.kind === "nocover" && enter) handleAction(backend.winPickedCover(""))
@@ -613,6 +628,7 @@ Window {
             e.accepted = true
             if (e.key === Qt.Key_F11) { backend.toggleFullscreen(); return }
             if (e.key === Qt.Key_Q && (e.modifiers & Qt.ControlModifier)) { backend.quit(); return }
+            if (win.mode === "intro") { backend.skipIntro(); return }          // any key skips the intro
             if (backend.running) return
             var snd = win.keySound(e)
             if (win.mode === "library") libraryKey(e)
@@ -627,6 +643,7 @@ Window {
             else if (win.mode === "page") pageKey(e)
             else if (win.mode === "import") importScreen.handleKey(e)
             else if (win.mode === "studio") studioScreen.handleKey(e)
+            else if (win.mode === "wifi") wifiScreen.handleKey(e)
             if (snd !== "" && !backend.running) backend.playSound(snd)
         }
 
@@ -1332,6 +1349,16 @@ Window {
         }
         Connections { target: backend; function onStudioRequested() { win.openStudio() } }
 
+        // ---------------------------------------------------- WiFi
+        WifiScreen {
+            id: wifiScreen
+            objectName: "wifiScreen"
+            anchors.fill: parent
+            u: win.u
+            visible: win.mode === "wifi"
+            onClosed: { if (win.wifiReturn === "setup") { win.refreshSetup(true); win.mode = "setup" } else { win.mode = "library"; win.buildLists() } }
+        }
+
         // ---------------------------------------------------- overlay: add games
         ImportScreen {
             id: importScreen
@@ -1414,7 +1441,28 @@ Window {
         }
         NumberAnimation { id: gridFade; target: grid; property: "opacity"; from: 0.2; to: 1.0; duration: 200; easing.type: Easing.OutQuad }
 
-        // ------------------------------------------------- overlay: update Atari
+        // ------------------------------------------------- the start-up intro (on top of everything)
+        Intro {
+            id: introScreen
+            anchors.fill: parent
+            z: 1000
+            u: win.u
+            visible: win.mode === "intro"
+        }
+        Connections {
+            target: backend
+            function onIntroChanged() {
+                if (backend.introActive && win.mode !== "intro") { win.introBack = win.mode; win.mode = "intro" }
+                else if (!backend.introActive && win.mode === "intro") {
+                    win.mode = win.introBack
+                    if (win.mode === "setup") win.refreshSetup(true)
+                    root.forceActiveFocus()
+                    Qt.callLater(win.ensureFocus)
+                }
+            }
+        }
+
+        // ------------------------------------------------- overlay: update Code
         Rectangle {
             id: updScreen
             anchors.fill: parent
@@ -1440,7 +1488,7 @@ Window {
                     anchors.leftMargin: 48 * win.u
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 6 * win.u
-                    Text { text: "UPDATE ATARI"; color: Theme.redBright; font.pixelSize: 42 * win.u; font.bold: true
+                    Text { text: "UPDATE CODE"; color: Theme.redBright; font.pixelSize: 42 * win.u; font.bold: true
                            font.letterSpacing: 4 * win.u }
                     Text { text: "You have version " + backend.version + ". Your games, settings and favourites are never touched."
                            color: "#e6e8f2"; font.pixelSize: 21 * win.u }
@@ -1509,7 +1557,7 @@ Window {
                     opacity: updScreen.st === "checking" ? 0.4 : 1
                     Text { id: updPrimaryText; anchors.centerIn: parent; color: "white"; font.pixelSize: 22 * win.u; font.bold: true
                            text: updScreen.st === "available" ? "INSTALL UPDATE  (Enter)"
-                               : updScreen.st === "done" ? "RESTART ATARI NOW  (Enter)"
+                               : updScreen.st === "done" ? "RESTART CODE NOW  (Enter)"
                                : updScreen.st === "error" ? "TRY AGAIN  (Enter)"
                                : updScreen.st === "uptodate" ? "OK  (Enter)" : "PLEASE WAIT ..." }
                     MouseArea { anchors.fill: parent; onClicked: win.updPrimary() }

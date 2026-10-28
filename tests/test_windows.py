@@ -95,9 +95,9 @@ def test_store_add_remove_unique_ids_and_cover_copy(env, tmp_path):
     assert Path(a.cover).is_file() and Path(a.cover).read_bytes() == b"png"
     assert [g.name for g in windows.load_games()] == ["Dreams of Saturn"] * 2
     assert windows.remove_game(a.gid) and len(windows.load_games()) == 1
-    assert exe.exists()                                              # only Atari's entry goes
+    assert exe.exists()                                              # only Code's entry goes
     windows.games_file().write_text("{broken")
-    assert windows.load_games() == []                                # a damaged file never crashes Atari
+    assert windows.load_games() == []                                # a damaged file never crashes Code
 
 
 def test_games_show_up_in_the_library(env, tmp_path):

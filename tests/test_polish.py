@@ -30,7 +30,7 @@ def test_all_sound_files_are_small_valid_original_wavs():
             frames = w.readframes(w.getnframes())
         assert max(abs(int.from_bytes(frames[i:i + 2], "little", signed=True)) for i in range(0, len(frames), 2)) > 1000
         assert f.stat().st_size < 200 * 1024
-    assert sum(p.stat().st_size for p in SFX.glob("*.wav")) < 400 * 1024
+    assert sum(p.stat().st_size for p in SFX.glob("*.wav")) < 480 * 1024
 
 
 def test_ambient_loop_is_seamless():

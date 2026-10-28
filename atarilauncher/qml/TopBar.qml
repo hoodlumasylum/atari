@@ -5,7 +5,7 @@ Item {
     id: tb
     property real u: 1
     property int activeTab: 0
-    property int focusIndex: -1      // 0-4 tabs, 5 Add Games, 6 search; -1 = nothing focused
+    property int focusIndex: -1      // 0-4 tabs, 5 Add Games, 6 search, 7 WiFi; -1 = nothing focused
     signal activated(int index)
     signal updateRequested()
 
@@ -115,7 +115,7 @@ Item {
         anchors.rightMargin: 36 * tb.u
         anchors.verticalCenter: parent.verticalCenter
         spacing: 26 * tb.u
-        Rectangle {   // a newer Atari release exists (found by the quiet daily check)
+        Rectangle {   // a newer Code release exists (found by the quiet daily check)
             visible: backend.updateAvailable
             anchors.verticalCenter: parent.verticalCenter
             height: 34 * tb.u
@@ -139,6 +139,32 @@ Item {
             border.color: "#cfd3e0"
             Icon { anchors.centerIn: parent; name: "search"; size: 24 * tb.u; color: "white" }
             MouseArea { anchors.fill: parent; onClicked: tb.activated(6) }
+        }
+        Rectangle {   // WiFi: the network name (or Cable / No WiFi) - press to open the WiFi screen
+            id: wifiBtn
+            objectName: "wifiButton"
+            readonly property bool hot: tb.focusIndex === 7
+            anchors.verticalCenter: parent.verticalCenter
+            height: 46 * tb.u
+            width: wifiRow.implicitWidth + 30 * tb.u
+            radius: height / 2
+            color: hot ? "#26ffffff" : "#40000000"
+            border.width: hot ? 2 * tb.u : 0
+            border.color: "#cfd3e0"
+            Row {
+                id: wifiRow
+                anchors.centerIn: parent
+                spacing: 9 * tb.u
+                Icon { name: "wifi"; size: 24 * tb.u; color: backend.wifi.summary === "Offline" || backend.wifi.summary === "No WiFi" || backend.wifi.summary === "WiFi off" ? Theme.faint : "white"
+                       anchors.verticalCenter: parent.verticalCenter }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: text !== ""
+                    text: backend.wifi.summary.length > 16 ? backend.wifi.summary.substring(0, 15) + "\u2026" : backend.wifi.summary
+                    color: "#d6d9e6"; font.pixelSize: 15 * tb.u; font.bold: true
+                }
+            }
+            MouseArea { anchors.fill: parent; onClicked: tb.activated(7) }
         }
         Text {
             id: clock

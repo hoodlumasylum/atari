@@ -1,15 +1,15 @@
-"""Atari-only mode ("kiosk"): the computer starts straight into Atari - no Linux Mint desktop.
+"""Code-only mode ("kiosk"): the computer starts straight into Code - no Linux Mint desktop.
 
 What turning it ON does (one password window, `pkexec`; three small files, all named "atari"):
-  1. /usr/local/bin/atari-session                       the session program: starts Atari full screen
+  1. /usr/local/bin/atari-session                       the session program: starts Code full screen
   2. /usr/share/xsessions/atari.desktop                 a "session" entry, so the login screen can start it
   3. /etc/lightdm/lightdm.conf.d/90-atari-kiosk.conf    LightDM logs you in by itself and picks that session
 Nothing else is touched. Turning it OFF removes exactly those three files.
 
 Ways back to the normal Mint desktop (also written in the README and Help):
-  * Atari > Settings > "Back to Mint desktop"  (needs the password once; removes the three files)
-  * Atari > Settings > "Open the Mint desktop once"  (no password; this login only)
-  * safety net: if Atari fails to start 3 times in a row, the session starts the Mint desktop by itself
+  * Code > Settings > "Back to Mint desktop"  (needs the password once; removes the three files)
+  * Code > Settings > "Open the Mint desktop once"  (no password; this login only)
+  * safety net: if Code fails to start 3 times in a row, the session starts the Mint desktop by itself
   * at the login screen: click the session icon (top right / next to your name) and choose Cinnamon
   * from a text console (Ctrl+Alt+F2, log in, then):  sudo rm /etc/lightdm/lightdm.conf.d/90-atari-kiosk.conf && sudo systemctl restart lightdm
 
@@ -49,7 +49,7 @@ RECOVERY = ("If you ever get stuck: at the login screen choose the Cinnamon sess
             "or press Ctrl+Alt+F2, log in, and type:  sudo rm /etc/lightdm/lightdm.conf.d/90-atari-kiosk.conf "
             "&& sudo systemctl restart lightdm")
 FAST_BOOT_TIPS = [
-    "Optional - make the computer start faster. Atari changes none of this by itself.",
+    "Optional - make the computer start faster. Code changes none of this by itself.",
     "See what is slow:  systemd-analyze blame   (in a Terminal).",
     "Printer-less PC:  sudo systemctl disable --now cups cups-browsed",
     "No mobile modem:  sudo systemctl disable --now ModemManager",
@@ -68,7 +68,7 @@ class Check:
 
 
 def run_script_path() -> Path:
-    """Atari's own start script (run.sh in the install folder)."""
+    """Code's own start script (run.sh in the install folder)."""
     return Path(__file__).resolve().parent.parent / "run.sh"
 
 
@@ -110,24 +110,24 @@ def preflight(layout: Layout = DEFAULT, which: Callable = shutil.which, dm_file:
     dm = default_display_manager(dm_file)
     out.append(Check("lightdm", "lightdm" in dm, True,
                      "The login screen is LightDM (Linux Mint's normal one)." if "lightdm" in dm else
-                     "This computer does not use LightDM (found: " + (os.path.basename(dm) or "unknown") + "), so Atari-only mode "
+                     "This computer does not use LightDM (found: " + (os.path.basename(dm) or "unknown") + "), so Code-only mode "
                      "cannot be set up from here."))
     out.append(Check("user", user != "root", True, "You are a normal user." if user != "root" else
-                     "Run Atari as your normal user, not as root."))
+                     "Run Code as your normal user, not as root."))
     out.append(Check("pkexec", bool(which("pkexec")), True, "The password window (pkexec) is available." if which("pkexec") else
                      "The password window (pkexec) is missing: install the 'policykit-1' package."))
     out.append(Check("xsessions", layout.p("usr/share/xsessions").is_dir(), True,
                      "The session list exists." if layout.p("usr/share/xsessions").is_dir() else
                      "No /usr/share/xsessions folder - this does not look like a normal desktop install."))
-    out.append(Check("run", run_sh.is_file(), True, "Atari's start script was found." if run_sh.is_file() else
-                     "Atari's start script (run.sh) was not found - install Atari with ./install.sh first."))
+    out.append(Check("run", run_sh.is_file(), True, "Code's start script was found." if run_sh.is_file() else
+                     "Code's start script (run.sh) was not found - install Code with ./install.sh first."))
     st = (session_type if session_type is not None else os.environ.get("XDG_SESSION_TYPE", "")).lower()
     out.append(Check("x11", st != "wayland", False, "You are on the normal X11 desktop." if st != "wayland" else
-                     "This login uses Wayland. Atari-only mode starts an X11 session, which is fine on Mint."))
+                     "This login uses Wayland. Code-only mode starts an X11 session, which is fine on Mint."))
     conflict = autologin_conflict(lightdm_conf)
     out.append(Check("conflict", not conflict, False, "No other auto-login setting found." if not conflict else
-                     f"{lightdm_conf} already has its own auto-login lines, and they win over Atari's. "
-                     "Remove those two lines, or Atari-only mode will not start by itself."))
+                     f"{lightdm_conf} already has its own auto-login lines, and they win over Code's. "
+                     "Remove those two lines, or Code-only mode will not start by itself."))
     return out
 
 
@@ -147,16 +147,16 @@ def enabled(layout: Layout = DEFAULT) -> bool:
 # ------------------------------------------------------------------ the three files
 def render_session_script(run_sh: Path, desktop_exec: str, home_hint: str = "") -> str:
     return f"""#!/bin/sh
-# Atari-only session. Written by Atari > Settings > Atari-only mode. Remove it with Settings > Back to Mint desktop.
+# Code-only session. Written by Code > Settings > Code-only mode. Remove it with Settings > Back to Mint desktop.
 RUN={shlex.quote(str(run_sh))}
 FLAG="$HOME/.config/atari/desktop-once"
 desktop() {{
     exec {desktop_exec}
 }}
-# "Open the Mint desktop once" in Atari's settings leaves this flag file.
+# "Open the Mint desktop once" in Code's settings leaves this flag file.
 if [ -e "$FLAG" ]; then rm -f "$FLAG"; desktop; fi
 [ -x "$RUN" ] || desktop
-# a small window manager keeps the full-screen window focused (optional; Atari also runs without one)
+# a small window manager keeps the full-screen window focused (optional; Code also runs without one)
 for wm in openbox metacity marco xfwm4; do
     if command -v "$wm" >/dev/null 2>&1; then "$wm" >/dev/null 2>&1 & break; fi
 done
@@ -167,15 +167,15 @@ while [ "$n" -lt 3 ]; do
     if [ $(( $(date +%s) - t )) -ge 30 ]; then exit 0; fi   # it ran for a while and was closed on purpose: log out
     n=$((n + 1))
 done
-# Atari would not start three times in a row: never leave the computer without a desktop
+# Code would not start three times in a row: never leave the computer without a desktop
 desktop
 """
 
 
 def render_xsession(session_script: str = "/usr/local/bin/atari-session") -> str:
     return f"""[Desktop Entry]
-Name=Atari
-Comment=Atari game launcher as the whole session (no desktop)
+Name=Code
+Comment=Code game launcher as the whole session (no desktop)
 Exec={session_script}
 TryExec={session_script}
 Type=XSession
@@ -183,7 +183,7 @@ Type=XSession
 
 
 def render_lightdm(user: str) -> str:
-    return f"""# Written by Atari > Settings > Atari-only mode. Remove with Settings > Back to Mint desktop.
+    return f"""# Written by Code > Settings > Code-only mode. Remove with Settings > Back to Mint desktop.
 [Seat:*]
 autologin-user={user}
 autologin-user-timeout=0
@@ -229,9 +229,9 @@ def _result_text(rc: int, ok_text: str, fail_text: str) -> tuple[bool, str]:
     return False, f"{fail_text} (code {rc}). Nothing else was changed."
 
 
-ON_TEXT = ("Atari-only mode is ON. Next time the computer starts (or after you log out) it goes straight into Atari. "
+ON_TEXT = ("Code-only mode is ON. Next time the computer starts (or after you log out) it goes straight into Code. "
            "To get the normal desktop back: Settings > Back to Mint desktop.")
-OFF_TEXT = ("Atari-only mode is OFF. The normal Mint login comes back after the next restart (or log out and in).")
+OFF_TEXT = ("Code-only mode is OFF. The normal Mint login comes back after the next restart (or log out and in).")
 
 
 def enable(layout: Layout = DEFAULT, run: Callable | None = None, out: Callable[[str], None] = lambda s: None,
@@ -245,23 +245,23 @@ def enable(layout: Layout = DEFAULT, run: Callable | None = None, out: Callable[
             return False, why
         user = user or getpass.getuser()
         rc = _pkexec(enable_script(user, layout, run_sh, desktop_exec), out, run)
-        ok, text = _result_text(rc, ON_TEXT, "Could not turn Atari-only mode on")
+        ok, text = _result_text(rc, ON_TEXT, "Could not turn Code-only mode on")
         if ok and not enabled(layout):
             return False, "The files were not written - nothing changed. Try again, or ask for help (Settings > Help > Copy log)."
         return ok, text
-    except Exception as exc:  # never take Atari down
-        return False, f"Could not turn Atari-only mode on: {exc}"
+    except Exception as exc:  # never take Code down
+        return False, f"Could not turn Code-only mode on: {exc}"
 
 
 def disable(layout: Layout = DEFAULT, run: Callable | None = None, out: Callable[[str], None] = lambda s: None) -> tuple[bool, str]:
     try:
         rc = _pkexec(disable_script(layout), out, run)
-        ok, text = _result_text(rc, OFF_TEXT, "Could not turn Atari-only mode off")
+        ok, text = _result_text(rc, OFF_TEXT, "Could not turn Code-only mode off")
         if ok and enabled(layout):
             return False, "The files are still there. In a Terminal run:  sudo rm /etc/lightdm/lightdm.conf.d/90-atari-kiosk.conf"
         return ok, text
     except Exception as exc:
-        return False, f"Could not turn Atari-only mode off: {exc}"
+        return False, f"Could not turn Code-only mode off: {exc}"
 
 
 def desktop_once_flag(home: Path | None = None) -> Path:
@@ -271,7 +271,7 @@ def desktop_once_flag(home: Path | None = None) -> Path:
 def open_desktop_once(home: Path | None = None, run: Callable = None, which: Callable = shutil.which,
                       env: dict | None = None) -> tuple[bool, str]:
     """No password needed: leave a flag file, then log out. The session program sees the flag and starts the Mint desktop
-    for that one login (the flag is deleted at once, so the next boot is Atari-only again)."""
+    for that one login (the flag is deleted at once, so the next boot is Code-only again)."""
     import subprocess
     run = run or subprocess.run
     env = env if env is not None else os.environ

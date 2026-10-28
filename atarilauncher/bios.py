@@ -1,5 +1,5 @@
 """BIOS / firmware helper: finds the files YOU already own on a USB stick or folder, checks them, and copies them
-to the places the emulators look. Atari never downloads, bundles or links to BIOS files, firmware, keys or games -
+to the places the emulators look. Code never downloads, bundles or links to BIOS files, firmware, keys or games -
 you must use files dumped from consoles you own.
 
 Pure Python (no Qt) so it can be tested. The stick is only ever read.
@@ -22,14 +22,14 @@ MAX_FILES = 60000
 MD5_LIMIT = 64 * 1024 * 1024
 SKIP_DIRS = {"system volume information", "$recycle.bin", "lost+found", "recycler", ".trashes", "found.000"}
 
-LEGAL = ("Only use BIOS files and keys dumped from consoles you own. Atari does not download or include them, "
+LEGAL = ("Only use BIOS files and keys dumped from consoles you own. Code does not download or include them, "
          "and does not link to places that do.")
 
 
 @dataclass(frozen=True)
 class Known:
     name: str                      # canonical file name
-    system: str                    # Atari system id
+    system: str                    # Code system id
     label: str
     md5: tuple = ()                # known good checksums (public lists, e.g. libretro's System.dat)
     strict: bool = True            # False: the file differs per console, so a different checksum is fine
@@ -157,7 +157,7 @@ def _pick(cands: list[Path]) -> list[Path]:
 def target_dirs(target: str, home: Path | None = None, rom_dir: Path | None = None,
                 which: Callable[[str], str | None] = shutil.which) -> list[Path]:
     """The folder(s) a file for this target goes to: the Flatpak's when it is installed, a native install's when
-    that exists, and (when neither exists yet) the Flatpak folder, because that is what Atari's installer installs."""
+    that exists, and (when neither exists yet) the Flatpak folder, because that is what Code's installer installs."""
     home = home or Path.home()
     if target == "romdir":
         return [rom_dir] if rom_dir else []

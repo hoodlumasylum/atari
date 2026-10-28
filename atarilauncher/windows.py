@@ -1,6 +1,6 @@
 """Windows games: add a .exe (or a .zip / .7z with one inside) and start it through umu / Proton / Wine.
 
-Each game gets its own Wine prefix under ~/.local/share/atari/prefixes/<name>/. Atari stores the list of Windows games in
+Each game gets its own Wine prefix under ~/.local/share/atari/prefixes/<name>/. Code stores the list of Windows games in
 ~/.local/share/atari/windows_games.json (your own file, written only when you add or remove a game).
 
 Runner order (the simplest that is robust): umu-launcher's ``umu-run`` -> a Proton found on this PC (ProtonUp-Qt's
@@ -106,7 +106,7 @@ def add_game(name: str, exe: str, cover: str = "") -> WinGame:
     gid, n = base, 2
     while gid in ids:
         gid, n = f"{base}-{n}", n + 1
-    if cover:  # copy the picture next to Atari's own covers so it survives the original being moved
+    if cover:  # copy the picture next to Code's own covers so it survives the original being moved
         try:
             dest = paths.user_covers_dir() / "windows" / (gid + Path(cover).suffix.lower())
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -121,7 +121,7 @@ def add_game(name: str, exe: str, cover: str = "") -> WinGame:
 
 
 def remove_game(gid: str) -> bool:
-    """Forget a game in Atari. Its files and Wine prefix are left alone."""
+    """Forget a game in Code. Its files and Wine prefix are left alone."""
     games = load_games()
     keep = [g for g in games if g.gid != gid and g.id != gid]
     if len(keep) == len(games):
@@ -226,7 +226,7 @@ def extract_archive(archive: Path, dest: Path, progress: Callable[[int, int], No
         raise WinError(f"That archive could not be opened ({exc}). Is the download complete?")
     seven = next((which(x) for x in ("7z", "7zz", "7za", "7zr") if which(x)), None)
     if not seven:
-        raise WinError("Atari needs the 7-Zip program to open this kind of archive. Use Settings > Emulators > "
+        raise WinError("Code needs the 7-Zip program to open this kind of archive. Use Settings > Emulators > "
                        "Install emulators and apps, or run:  sudo apt install p7zip-full")
     if progress:
         progress(0, 0)

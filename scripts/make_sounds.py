@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthesises Atari's UI sounds from scratch (sine waves, noise and envelopes - no samples, nothing from anyone else).
+"""Synthesises Code's UI sounds from scratch (sine waves, noise and envelopes - no samples, nothing from anyone else).
 
     python3 scripts/make_sounds.py            # writes atarilauncher/assets/sfx/*.wav
 
@@ -71,6 +71,23 @@ def ambient(dur=8.0, amp=0.5):
     return out, sr
 
 
+def intro(dur=3.6):
+    """The start-up sound: a soft rising chord that blooms, a little shimmer, then fades out. Original, ~3.6 s."""
+    n = int(dur * SR)
+    notes = ((261.63, 0.05), (329.63, 0.35), (392.0, 0.65), (523.25, 0.95))
+    parts = []
+    for f, t0 in notes:
+        parts.append(tone(f, dur - t0 - 0.2, amp=0.22, decay=1.1, harm=(1.0, 0.3, 0.1), start=t0))
+    parts.append(tone(1046.5, 1.8, amp=0.12, decay=2.2, harm=(1.0, 0.1), start=1.25))
+    parts.append(tone(1568.0, 1.4, amp=0.08, decay=2.6, harm=(1.0,), start=1.55))
+    low = tone(65.4, dur, amp=0.18, decay=0.55, harm=(1.0, 0.2))
+    out = mix(*parts, low)
+    out = out[:n] + [0.0] * max(0, n - len(out))
+    for i in range(int(0.5 * SR)):               # fade out
+        out[n - 1 - i] *= i / (0.5 * SR)
+    return [(out[i] + out[i + 1]) / 2 for i in range(0, n - 1, 2)]      # half the sample rate = half the size
+
+
 def write(name, samples, peak=0.85, sr=SR):
     m = max(1e-9, max(abs(s) for s in samples))
     k = min(1.0, peak / m) if name != "ambient" else peak / m
@@ -93,6 +110,7 @@ def main():
                        tone(165, 0.22, decay=7, harm=(1.0, 0.6, 0.4, 0.3), start=0.13)))
     write("start", mix(tone(523.25, 1.4, amp=0.3, decay=2.6), tone(659.25, 1.4, amp=0.3, decay=2.6, start=0.12),
                        tone(783.99, 1.4, amp=0.3, decay=2.6, start=0.24), tone(1046.5, 1.6, amp=0.3, decay=2.2, start=0.36)))
+    write("intro", intro(), peak=0.6, sr=SR // 2)
     pad, sr = ambient()
     write("ambient", pad, peak=0.6, sr=sr)
     for p in sorted(OUT.glob("*.wav")):

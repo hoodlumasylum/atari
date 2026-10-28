@@ -12,7 +12,7 @@ from pathlib import Path
 from PySide6.QtCore import Property, QObject, QProcess, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QKeyEvent
 
-from . import icons, inputfix, kiosk, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
+from . import downloads, golive, icons, inputfix, intro, kiosk, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
 from . import __version__
 from .config import Config, load_config, save_config
 from .import_model import ImportModel
@@ -32,6 +32,10 @@ ACTION_KEYS = {
     "favorite": Qt.Key_F, "menu": Qt.Key_F10, "options": Qt.Key_F10,
     "system": Qt.Key_Tab, "prev": Qt.Key_Q, "next": Qt.Key_E,
 }
+
+
+def _intro_log(msg: str) -> None:
+    launcher._log(msg)
 
 
 class Backend(QObject):
@@ -57,7 +61,9 @@ class Backend(QObject):
     coverArrived = Signal(str, str, str)   # gid, file, kind (from worker thread)
     coverProgressed = Signal(int, int, int)  # done, total, got
     coversFinished = Signal(object)         # covers.Report
-    kioskDone = Signal(bool, str)           # (worked, text) from the Atari-only mode worker thread
+    introChanged = Signal()
+    introEnded = Signal(str)               # why the intro ended (from the player thread)
+    kioskDone = Signal(bool, str)           # (worked, text) from the Code-only mode worker thread
     inputFixDone = Signal(bool, str)        # (worked, text) from the permissions-fix thread
     iconArrived = Signal(str, str, bool)    # gid, file, fit (from the icon worker thread)
     iconsDone = Signal()
@@ -179,16 +185,31 @@ class Backend(QObject):
         self._snd_proc = None
         self._snd_dead = False
         self._studio = None
+        self._wifi = None
         self._sound_sink = None          # tests put a function here to see the commands instead of playing them
         self._last_tick = 0.0
         self._start_timer = QTimer(self, singleShot=True, interval=700)
         self._start_timer.timeout.connect(lambda: self.playSound("start"))
-        if not self._demo:
+        # start-up intro (your own video, or Code's own short animation)
+        self._intro_plan = intro.Plan() if self._demo else intro.plan(self.cfg)
+        self._intro_mode = self._intro_plan.mode
+        self._intro_play = None
+        self._intro_timer = QTimer(self, singleShot=True)
+        self._intro_timer.timeout.connect(lambda: self._end_intro("finished"))
+        self.introEnded.connect(self._end_intro, Qt.QueuedConnection)
+        self._intro_active = bool(self._intro_mode)
+        self._intro_skip_early = False
+        if not self._demo and not self._intro_mode:      # with an intro, its own sound replaces the start chime
             self._start_timer.start()
             if self.cfg.music:
                 QTimer.singleShot(1200, self._sync_music)
+        if not self._demo and not os.environ.get("ATARI_NO_WIFI"):
+            QTimer.singleShot(2500, self._wifi_poll)         # the WiFi name next to the clock
         # pages (help / fix my game / add Windows game)
         self._fix_gid = ""
+        self._dl_items = []
+        self._dl_pick = None
+        self._dl_msg = ""
         self._reset_armed = False
         self._remove_armed = False
         self._win_cancel = threading.Event()
@@ -238,6 +259,8 @@ class Backend(QObject):
     # ----- plumbing --------------------------------------------------------
     def set_window(self, window) -> None:
         self._window = window
+        if self._intro_active:
+            QTimer.singleShot(0, self._intro_begin)
 
     def _prefill_first_run(self) -> None:
         for sc in self.cfg.systems.values():
@@ -261,6 +284,7 @@ class Backend(QObject):
         self._gamepad_proc = proc
 
     def stop_all_helpers(self) -> None:
+        self.stop_intro()
         self.stop_recording()
         self.stop_hotkey()
 
@@ -291,9 +315,12 @@ class Backend(QObject):
                 self.send_action(line)
 
     def send_action(self, action: str) -> None:
-        """Turn a gamepad action into a key press for the UI (only while Atari has focus)."""
+        """Turn a gamepad action into a key press for the UI (only while Code has focus)."""
         key = ACTION_KEYS.get(action)
         win = self._window
+        if self._intro_active and action != "none":      # any controller button skips the intro (the player has the focus)
+            self.skipIntro()
+            return
         if key is None or win is None or self._running:
             return
         if QGuiApplication.applicationState() != Qt.ApplicationActive and not os.environ.get("ATARI_TEST_INPUT"):
@@ -655,7 +682,7 @@ class Backend(QObject):
         self._inst_for_gid = for_gid
         items = self._inst_items()
         if not items:
-            self.show_toast("Atari does not know how to install that. See Help.", 6000)
+            self.show_toast("Code does not know how to install that. See Help.", 6000)
             return
         self._inst_what = what or (items[0][0].title if len(items) == 1 else f"{len(items)} programs")
         self._inst_state, self._inst_lines, self._inst_summary, self._inst_step, self._inst_ok = "ask", [], "", "", False
@@ -737,8 +764,8 @@ class Backend(QObject):
         if st == "ask":
             t = [x for x, _c in self._inst_items()]
             many = len(t) > 1
-            how = ("Atari downloads it for your user only (Flathub, official sites). A password window may pop up for a few of them."
-                   if many else "Atari downloads it for you (Flathub, or your system's software list - then a password window pops up).")
+            how = ("Code downloads it for your user only (Flathub, official sites). A password window may pop up for a few of them."
+                   if many else "Code downloads it for you (Flathub, or your system's software list - then a password window pops up).")
             rows = [self._info(f"{what[:1].upper() + what[1:]} {'are' if many else 'is'} not installed yet. {how} Needs internet."
                                + (f"  {len(t)} programs: this can take 20 minutes or more." if len(t) > 6 else ""))]
             for x in t[:6]:
@@ -767,12 +794,12 @@ class Backend(QObject):
 
     def _installmenu_rows(self) -> list:
         return [
-            self._info("Choose what to install. Atari only installs what is missing, for your user only, and never downloads games, BIOS files or keys. "
+            self._info("Choose what to install. Code only installs what is missing, for your user only, and never downloads games, BIOS files or keys. "
                        "You can run it again at any time."),
             {"kind": "item", "id": "inst_essentials", "title": "Install essentials only",
              "detail": "RetroArch with all its cores (PlayStation 1, Genesis, SNES ...), PCSX2, Dolphin, PPSSPP, melonDS, mGBA, Flycast. Quicker (about 10 minutes)."},
             {"kind": "item", "id": "inst_all", "title": "Install everything",
-             "detail": "Every emulator and app Atari can start (about 38 programs, several GB, 20+ minutes). Fine to leave running."},
+             "detail": "Every emulator and app Code can start (about 38 programs, several GB, 20+ minutes). Fine to leave running."},
             {"kind": "item", "id": "inst_terminal", "title": "Open it in a terminal instead",
              "detail": "Same installer with a text window (atari-install-everything --essentials / --all)."},
             {"kind": "item", "id": "back", "title": "Back"},
@@ -815,12 +842,189 @@ class Backend(QObject):
 
         threading.Thread(target=work, daemon=True, name="atari-input-fix").start()
 
+    @Slot()
+    def fixSober(self) -> None:
+        """Sober's own advice for its "application bundle (APK) required" screen: flatpak update + check the connection."""
+        if self._input_fixing:
+            self.show_toast("Already working on it - please wait.", 5000)
+            return
+        self._input_fixing = True
+        self.show_toast("Updating Sober and testing the connection - this can take a minute or two...", 8000)
+
+        def work():
+            try:
+                checks = sober.service_checks()
+                ok, out = sober.update_sober()
+                studio_fix.log("sober fix: update " + ("ok" if ok else "failed: " + out[-200:]) + " | "
+                               + " / ".join(c.text for c in checks))
+                if all(c.ok for c in checks):
+                    msg = ("Sober is up to date" if ok else "Sober could not be updated (is it installed? press Install on the Roblox tile)") \
+                        + " and the connection to its servers works. Press the Roblox tile again; if it still asks for an \"application bundle\", "
+                    msg += "Sober's download service is probably down right now - try again later."
+                else:
+                    msg = sober.explain(checks)
+            except Exception as exc:  # pragma: no cover - safety net
+                ok, msg = False, f"That hit a problem: {exc}"
+            self.inputFixDone.emit(ok, msg)
+
+        threading.Thread(target=work, daemon=True, name="atari-sober-fix").start()
+
     @Slot(bool, str)
     def _input_fix_finished(self, ok: bool, text: str) -> None:
         self._input_fixing = False
         self.show_toast(text, 12000)
 
-    # ----- Atari-only mode (boot straight into Atari) ----------------------------------
+    # ----- start-up intro ----------------------------------------------------------------
+    @Property(bool, notify=introChanged)
+    def introActive(self):
+        return self._intro_active
+
+    @Property(str, notify=introChanged)
+    def introMode(self):
+        return self._intro_mode if self._intro_active else ""
+
+    def _intro_begin(self) -> None:
+        if not self._intro_active:
+            return
+        if self._intro_mode == "default":
+            self.playSound("intro")
+            self._intro_timer.start(int(intro.DEFAULT_SECONDS * 1000))
+            return
+        video = self._intro_plan.file
+        kind, exe = intro.find_player()
+        if not exe or video is None:
+            _intro_log("no video player (mpv / ffplay / vlc) found - skipping the intro")
+            self._end_intro("failed")
+            return
+        muted = (not self.cfg.sound_effects) or bool(os.environ.get("ATARI_NO_SOUND"))
+        cmd = intro.player_command(kind, exe, video, muted, intro.write_input_conf())
+        _intro_log("intro: " + " ".join(cmd))
+
+        def work():
+            limit = intro.time_limit(intro.probe_seconds(video))
+            pb = intro.Playback(cmd, limit, lambda r: self.introEnded.emit(r), keys=exitwatch.X11Keys)
+            self._intro_play = pb
+            pb.start()
+            if self._intro_skip_early:
+                pb.skip()
+        threading.Thread(target=work, daemon=True, name="atari-intro-start").start()
+
+    @Slot()
+    def skipIntro(self) -> None:
+        """Any key, click or controller button: end the intro now."""
+        if not self._intro_active:
+            return
+        if self._intro_mode == "default":
+            self._end_intro("skipped")
+            return
+        self._intro_skip_early = True
+        pb = self._intro_play
+        if pb is not None:
+            pb.skip()
+
+    @Slot(str)
+    def _end_intro(self, reason: str = "finished") -> None:
+        if not self._intro_active:
+            return
+        self._intro_active = False
+        self._intro_timer.stop()
+        self._intro_skip_early = False
+        pb, self._intro_play = self._intro_play, None
+        if pb is not None and pb.active:
+            pb.skip()
+        _intro_log(f"intro ended: {reason}")
+        self.introChanged.emit()
+        if self._window is not None:                     # take the screen and the keyboard back from the player
+            QTimer.singleShot(0, self._raise_window)
+        if not self._demo and not self._running and not self._start_timer.isActive():
+            if self.cfg.music:
+                QTimer.singleShot(300, self._sync_music)
+
+    def _raise_window(self) -> None:
+        try:
+            self._window.raise_()
+            self._window.requestActivate()
+        except (RuntimeError, AttributeError):           # the window is already gone (closing)
+            pass
+
+    def stop_intro(self) -> None:
+        self._intro_timer.stop()
+        pb, self._intro_play = self._intro_play, None
+        if pb is not None and pb.active:
+            pb.stop()
+
+    @Slot()
+    def previewIntro(self) -> None:
+        """Settings > Play the intro now: your video if you chose one, else Code's own animation. Ignores the toggles."""
+        if self._intro_active:
+            return
+        f = intro.custom_file()
+        self._intro_plan = intro.Plan("custom", f) if f is not None else intro.default_plan()
+        self._intro_mode = self._intro_plan.mode
+        self._intro_active = True
+        self._intro_skip_early = False
+        self.introChanged.emit()
+        QTimer.singleShot(0, self._intro_begin)
+
+    @Slot()
+    def toggleIntro(self) -> None:
+        self.cfg.intro_enabled = not self.cfg.intro_enabled
+        self._save_prefs()
+
+    @Slot()
+    def toggleIntroDefault(self) -> None:
+        self.cfg.intro_default = not self.cfg.intro_default
+        self._save_prefs()
+
+    @Slot(result=str)
+    def introBrowseStart(self) -> str:
+        """The file picker for "Choose intro video" opens in Downloads, else Videos, else a USB stick, else Home."""
+        home = Path.home()
+        for sub_ in ("Downloads", "Videos"):
+            if (home / sub_).is_dir():
+                return str(home / sub_)
+        for p in self.listDir("")["dirs"]:
+            if p["name"].startswith("USB"):
+                return p["path"]
+        return str(home)
+
+    @Slot(str, result=str)
+    def introPicked(self, path: str) -> str:
+        ok, msg = intro.install(path)
+        if ok:
+            self.cfg.intro_enabled = True
+            self._save_prefs()
+        self.show_toast(msg, 7000 if ok else 9000)
+        self.playSound("select" if ok else "error")
+        return "ok" if ok else "error"
+
+    @Slot()
+    def removeIntro(self) -> None:
+        n = intro.remove()
+        self.show_toast("Intro video removed." if n else "There was no intro video to remove.", 5000)
+
+    def _intro_rows(self) -> list:
+        f = intro.custom_file()
+        rows = []
+        if f is not None:
+            rows.append({"kind": "introvideo", "title": "Intro video (your own)", "value": "ON" if self.cfg.intro_enabled else "OFF",
+                         "detail": f"Plays {f.name} full screen when Code starts. Any key, click or controller button skips it. "
+                                   "Sound follows the Sound effects switch."})
+        else:
+            rows.append({"kind": "introvideo", "title": "Intro video (your own)", "value": "None",
+                         "detail": "No video chosen yet. Press \"Choose intro video\" to pick an .mp4 / .webm / .mkv / .mov file."})
+        rows.append({"kind": "introchoose", "title": "Choose intro video", "value": "",
+                     "detail": "Pick a video from Downloads, Videos or a USB stick. Code keeps its own copy."})
+        if f is not None:
+            rows.append({"kind": "introremove", "title": "Remove intro video", "value": "",
+                         "detail": "Deletes Code's copy only (your original file stays where it is)."})
+        rows.append({"kind": "introdefault", "title": "Code's start-up video (default)", "value": "ON" if self.cfg.intro_default else "OFF",
+                     "detail": "The 10-second Code logo reveal that comes with Code. It plays only when you have no intro video of your own "
+                               "(and, with no video player installed, a short animation is shown instead)."})
+        rows.append({"kind": "intropreview", "title": "Play the intro now", "value": "", "detail": "Shows what happens at start-up."})
+        return rows
+
+    # ----- Code-only mode (boot straight into Code) ----------------------------------
     def _kiosk_rows(self) -> list:
         lay = self._kiosk_layout
         rows: list = []
@@ -829,21 +1033,21 @@ class Backend(QObject):
         if self._kiosk_msg:
             rows.append(self._info("Result:  " + self._kiosk_msg))
         if kiosk.enabled(lay):
-            rows += [self._info("Atari-only mode is ON: the computer starts straight into Atari, with no Linux Mint desktop."),
-                     {"kind": "done", "id": "kioskoff", "title": "Back to Mint desktop (turn Atari-only mode off)",
+            rows += [self._info("Code-only mode is ON: the computer starts straight into Code, with no Linux Mint desktop."),
+                     {"kind": "done", "id": "kioskoff", "title": "Back to Mint desktop (turn Code-only mode off)",
                       "detail": "Asks for your password once. The normal login and desktop come back after the next restart or log out."},
                      {"kind": "item", "id": "kioskonce", "title": "Open the Mint desktop once (log out now)",
-                      "detail": "No password. This login only - the next start is Atari-only again."},
+                      "detail": "No password. This login only - the next start is Code-only again."},
                      self._info(kiosk.RECOVERY)]
         else:
             checks = kiosk.preflight(lay)
             why = kiosk.blocked(checks)
-            rows += [self._info("Atari-only mode makes this computer start straight into Atari, like a games console: no Linux Mint desktop, "
+            rows += [self._info("Code-only mode makes this computer start straight into Code, like a games console: no Linux Mint desktop, "
                                 "no login screen. Your files and games are not touched."),
                      self._info("What changes (needs your password once): three small files named \"atari\" - the login screen's auto-login and a "
-                                "\"session\" that starts Atari. Turning it off removes exactly those files."),
+                                "\"session\" that starts Code. Turning it off removes exactly those files."),
                      self._info("Ways back, always: Settings > Back to Mint desktop; or at the login screen pick the Cinnamon session; "
-                                "or if Atari cannot start three times in a row, the Mint desktop starts by itself."),
+                                "or if Code cannot start three times in a row, the Mint desktop starts by itself."),
                      self._info(kiosk.RECOVERY)]
             for c in checks:
                 if not c.ok:
@@ -851,7 +1055,7 @@ class Backend(QObject):
             if why:
                 rows.append({"kind": "item", "id": "back", "title": "Back"})
                 return rows
-            rows.append({"kind": "done", "id": "kioskon", "title": "Yes, turn Atari-only mode ON",
+            rows.append({"kind": "done", "id": "kioskon", "title": "Yes, turn Code-only mode ON",
                          "detail": "A password window pops up. You can undo it any time."})
         rows += [self._info(t) for t in kiosk.FAST_BOOT_TIPS]
         rows.append({"kind": "item", "id": "back", "title": "No, keep my normal desktop" if not kiosk.enabled(lay) else "Back"})
@@ -871,7 +1075,7 @@ class Backend(QObject):
                     done, msg = (kiosk.enable(lay) if rid == "kioskon" else kiosk.disable(lay))
                 except Exception as exc:  # pragma: no cover - safety net
                     done, msg = False, f"The change hit a problem: {exc}"
-                studio_fix.log(f"atari-only mode {rid}: ok={done} {msg}")
+                studio_fix.log(f"code-only mode {rid}: ok={done} {msg}")
                 self.kioskDone.emit(done, msg)
             threading.Thread(target=work, daemon=True, name="atari-kiosk").start()
             return "refresh"
@@ -899,7 +1103,7 @@ class Backend(QObject):
         else:
             rows.append({"kind": "done", "id": "steaminstall", "title": "Install Steam"})
         rows.append({"kind": "item", "id": "steamrescan", "title": "Rescan Steam",
-                     "detail": "Use this after Steam installed a game, so it shows up in Atari."})
+                     "detail": "Use this after Steam installed a game, so it shows up in Code."})
         rows.append({"kind": "item", "id": "inputfix", "title": "Fix Steam controller / gamepad permissions",
                      "detail": "Use this if Steam says \"Missing permissions for input devices\". Installs Valve's controller rules (asks for your password once)."})
         rows.append(self._info("Where to keep Steam games: a Linux drive (ext4). Windows (NTFS) drives and USB sticks (exFAT / FAT) make many Proton games fail."))
@@ -1199,7 +1403,7 @@ class Backend(QObject):
 
     @Slot()
     def _on_session_started(self) -> None:
-        """The emulator process is up. Atari's own (full screen) window must not sit between the keyboard and the
+        """The emulator process is up. Code's own (full screen) window must not sit between the keyboard and the
         emulator, so after a moment it is minimised; it comes back when the game ends."""
         if getattr(self, "_running_is_rom", False) and not os.environ.get("ATARI_NO_MINIMIZE") and self._window is not None:
             self._hide_timer.start()
@@ -1233,7 +1437,7 @@ class Backend(QObject):
             if not win.isActive():
                 win.raise_()
                 win.requestActivate()
-        except RuntimeError:       # the window is already gone (Atari is closing)
+        except RuntimeError:       # the window is already gone (Code is closing)
             pass
 
     @Slot(str, str, float, str)
@@ -1275,14 +1479,14 @@ class Backend(QObject):
     # ----- emulators page --------------------------------------------------
     @Slot(result="QVariantList")
     def emulatorRows(self):
-        rows = [{"kind": "info", "title": "Emulators are separate programs. Atari finds them automatically "
+        rows = [{"kind": "info", "title": "Emulators are separate programs. Code finds them automatically "
                                           "(installed programs and Flatpaks).", "value": "", "detail": ""},
                 {"kind": "info", "title": "Press Enter on a console to switch between its emulators. "
-                                          "Atari never includes BIOS, firmware, keys or games - bring your own.",
+                                          "Code never includes BIOS, firmware, keys or games - bring your own.",
                  "value": "", "detail": ""},
                 {"kind": "install", "title": "Install emulators and apps",
                  "value": "",
-                 "detail": "Opens a window that installs every emulator and PC app Atari knows (safe to run again). "
+                 "detail": "Opens a window that installs every emulator and PC app Code knows (safe to run again). "
                            "Needs an internet connection and takes a while."},
                 {"kind": "bios", "title": "Add BIOS files",
                  "value": "",
@@ -1478,7 +1682,7 @@ class Backend(QObject):
                    " (the console is unclear):\n" + "\n".join(lines) + (f"\n  ...and {more} more." if more > 0 else "") + \
                    "\n  Press CHOOSE SYSTEM to tell me which console they are for."
         elif not n:
-            msg += " Atari looks for game files such as .iso, .zip, .cue, .nes and folders with a default.xbe (Xbox) or PS3_GAME (PS3)."
+            msg += " Code looks for game files such as .iso, .zip, .cue, .nes and folders with a default.xbe (Xbox) or PS3_GAME (PS3)."
         if self._imp_truncated:
             msg += " Only the first files are shown (very large folder)."
         return msg
@@ -1777,6 +1981,21 @@ class Backend(QObject):
         self._save_prefs()
 
     @Property(QObject, constant=True)
+    def wifi(self):
+        """The WiFi screen's controller (nmcli). Created on first use; tests may set `_wifi_run` to a mocked nmcli."""
+        if self._wifi is None:
+            from .wifi_ui import WifiController
+            self._wifi = WifiController(self, run=getattr(self, "_wifi_run", None))
+        return self._wifi
+
+    def _wifi_poll(self) -> None:
+        """The home screen's one-line WiFi status, refreshed now and every minute (never in demo / test runs)."""
+        if self._demo or os.environ.get("ATARI_NO_WIFI"):
+            return
+        self.wifi.updateSummary()
+        QTimer.singleShot(60000, self._wifi_poll)
+
+    @Property(QObject, constant=True)
     def studio(self):
         if self._studio is None:
             from .studio_ui import StudioController
@@ -1901,7 +2120,7 @@ class Backend(QObject):
         if err:
             self._set_update("error", err)
         elif rel:
-            self._set_update("available", f"Atari {rel.version} is available (you have {__version__}).")
+            self._set_update("available", f"Code {rel.version} is available (you have {__version__}).")
         else:
             self._set_update("uptodate", f"You have the newest version ({__version__}).")
 
@@ -1915,7 +2134,7 @@ class Backend(QObject):
             self._set_update("error", why)
             return
         if self._upd_release is not None:
-            self._set_update("available", f"Atari {self._upd_release.version} is available (you have {__version__}).")
+            self._set_update("available", f"Code {self._upd_release.version} is available (you have {__version__}).")
         else:
             self._start_check(manual=True)
 
@@ -1937,9 +2156,9 @@ class Backend(QObject):
         def worker():
             try:
                 updater.perform(rel, root, lambda st, tx, fr: self.updateEvent.emit(st, tx, fr), cancel)
-                self.updateEvent.emit("done", f"Atari {rel.version} is installed. Restart Atari to use it.", 1.0)
+                self.updateEvent.emit("done", f"Code {rel.version} is installed. Restart Code to use it.", 1.0)
             except updater.Cancelled:
-                self.updateEvent.emit("available", f"Cancelled. Atari {rel.version} is still available.", -1.0)
+                self.updateEvent.emit("available", f"Cancelled. Code {rel.version} is still available.", -1.0)
             except updater.UpdateError as exc:
                 self.updateEvent.emit("error", str(exc), -1.0)
             except Exception as exc:  # pragma: no cover - safety net
@@ -1960,14 +2179,14 @@ class Backend(QObject):
 
     @Slot()
     def restartAtari(self) -> None:
-        """Start the new Atari a moment after this one has quit."""
+        """Start the new Code a moment after this one has quit."""
         root = Path(os.environ.get("ATARI_UPDATE_ROOT") or updater.app_dir())
         cmd = updater.restart_command(root, sys.argv[1:])
         try:
             self._restart_spawn(cmd, start_new_session=True, stdin=subprocess.DEVNULL,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except OSError as exc:
-            self.show_toast(f"Could not restart: {exc}. Please start Atari again yourself.", 8000)
+            self.show_toast(f"Could not restart: {exc}. Please start Code again yourself.", 8000)
             return
         self.quit()
 
@@ -2162,7 +2381,7 @@ class Backend(QObject):
         rows.append({"kind": "coversauto", "title": "Download covers automatically after a scan",
                      "value": "ON" if self.cfg.covers_auto else "OFF",
                      "detail": "Only when the internet is reachable; runs quietly in the background."})
-        rows.append({"kind": "update", "title": "Update Atari",
+        rows.append({"kind": "update", "title": "Update Code",
                      "value": ("New: " + self._upd_release.version) if self._upd_release else "Version " + __version__,
                      "detail": ("A newer version is ready to install." if self._upd_release else
                                 "Checks for a newer version and installs it. Your games and settings are kept.")})
@@ -2189,15 +2408,19 @@ class Backend(QObject):
         rows.append({"kind": "steampage", "title": "Steam: install, rescan, drives",
                      "value": "Installed" if self.steam_installed() else "Not installed",
                      "detail": "Installs Steam for you, rescans your Steam games, and says where to keep them."})
-        rows.append({"kind": "kioskpage", "title": ("Back to Mint desktop (Atari-only mode is ON)" if kiosk.enabled(self._kiosk_layout)
-                                          else "Atari-only mode (start straight into Atari)"),
+        rows += self._intro_rows()
+        rows.append({"kind": "wifipage", "title": "WiFi", "value": self.wifi.summary or "",
+                     "detail": "Find a network, type its password with the on-screen keyboard, see if it connected, or forget a network. "
+                               "Works in Code-only mode too."})
+        rows.append({"kind": "kioskpage", "title": ("Back to Mint desktop (Code-only mode is ON)" if kiosk.enabled(self._kiosk_layout)
+                                          else "Code-only mode (start straight into Code)"),
                      "value": "ON" if kiosk.enabled(self._kiosk_layout) else "OFF",
-                     "detail": "Makes the computer boot into Atari with no Mint desktop. Asks you to confirm first, and there is always a way back."})
+                     "detail": "Makes the computer boot into Code with no Mint desktop. Asks you to confirm first, and there is always a way back."})
         rows.append({"kind": "bigpicture", "title": "Open Steam in Big Picture (full screen)",
                      "value": "ON" if self.cfg.steam_bigpicture else "OFF",
                      "detail": "The Steam tile opens Steam full screen with big buttons for a controller. Press Esc twice (or hold Guide and press B) "
-                               "to leave it and come back to Atari - Steam keeps running. OFF = Steam opens in a normal window."})
-        rows.append({"kind": "escexit", "title": "Esc twice returns to Atari (Netflix, YouTube, Kodi...)",
+                               "to leave it and come back to Code - Steam keeps running. OFF = Steam opens in a normal window."})
+        rows.append({"kind": "escexit", "title": "Esc twice returns to Code (Netflix, YouTube, Kodi...)",
                      "value": "ON" if self.cfg.esc_exit else "OFF",
                      "detail": "Press Esc twice quickly, or hold Esc for 1 second (or Ctrl+Esc; on a controller hold Guide and press B) "
                                "to close a streaming app and come back here. One Esc still leaves video full screen as usual."})
@@ -2282,7 +2505,7 @@ class Backend(QObject):
                     places += [(f"USB / drive: {p.name}", p) for p in sorted(base.iterdir()) if p.is_dir()]
                 except OSError:
                     pass
-            for label, sub_ in (("Downloads", "Downloads"), ("Documents", "Documents"), ("Desktop", "Desktop"), ("My games (Games/Atari)", "Games/Atari")):
+            for label, sub_ in (("Downloads", "Downloads"), ("Videos", "Videos"), ("Documents", "Documents"), ("Desktop", "Desktop"), ("My games (Games/Atari)", "Games/Atari")):
                 if (home / sub_).is_dir():
                     places.append((label, home / sub_))
             places.append(("Whole computer (/)", Path("/")))
@@ -2310,12 +2533,16 @@ class Backend(QObject):
                 "winchoose": "WHICH PROGRAM STARTS THE GAME?", "winwork": "OPENING THE ARCHIVE",
                 "install": "INSTALL", "installmenu": "INSTALL EMULATORS & APPS", "steam": "STEAM",
                 "recordings": "RECORDINGS", "coverpick": "PICK A COVER", "nocovers": "COVERS NOT FOUND",
-                "addgames": "ADD GAMES", "kiosk": "ATARI-ONLY MODE"}.get(name, name.upper())
+                "addgames": "ADD GAMES", "kiosk": "CODE-ONLY MODE", "downloads": "DOWNLOADS", "golive": "GO LIVE",
+                "dlsystem": "WHICH SYSTEM IS THIS FILE FOR?"}.get(name, name.upper())
 
     @Slot(str, result=str)
     def pageSub(self, name: str) -> str:
         return {"help": "Up/Down to choose, Enter / A to press.  Esc / B = back.",
-                "fix": "Atari checked everything it can.  Esc / B = back.",
+                "golive": "Enter / A to press.  Esc / B = back.",
+                "downloads": "Enter / A on a finished file adds it to your games.  Esc / B = back.",
+                "dlsystem": "Enter / A picks the system - the file moves into that games folder.  Esc / B = back.",
+                "fix": "Code checked everything it can.  Esc / B = back.",
                 "winform": "Check the details, then choose \"Add this game\".  Esc / B = cancel.",
                 "winchoose": "Pick the main program (the biggest .exe is usually it).  Esc / B = cancel.",
                 "winwork": "Please wait - big games take a minute.  Esc / B = cancel.",
@@ -2328,21 +2555,158 @@ class Backend(QObject):
                 "addgames": "Up/Down to choose, Enter / A or a click to press.  Esc / B = back.",
                 "kiosk": "Read this, then choose.  Esc / B = back - nothing changes until you press Yes."}.get(name, "")
 
+    # ----- Go Live: OBS + the Twitch / TikTok / YouTube dashboards -------------------------------
+    def _golive_rows(self) -> list:
+        ok, text = apps.app_status(self.cfg, apps.BY_ID["obs"])
+        rows = [self._info("Stream your games: OBS (free) sends your screen and sound to Twitch, TikTok or YouTube. Step 1: get OBS. "
+                           "Step 2: open your service's page and copy your stream key. Step 3: Open OBS, paste the key, Start Streaming."),
+                {"kind": "item", "id": "obsopen" if ok else "obsinstall",
+                 "title": "Open OBS with the Go Live scene" if ok else "Install OBS Studio",
+                 "detail": ("Starts OBS with a ready \"Code Go Live\" scene that captures your whole screen." if ok else
+                            "Not installed yet. One button, free, open source."), "value": "" if ok else "Install"}]
+        for gid, title in (("web:twitchlive", "Twitch: open the Creator Dashboard"), ("web:tiktoklive", "TikTok LIVE: open the web LIVE page"),
+                           ("web:youtubelive", "YouTube Live: open YouTube Studio")):
+            rows.append({"kind": "item", "id": "go:" + gid, "title": title, "detail": "Opens in the web browser window. Esc twice returns to Code."})
+        rows += [self._info(golive.TWITCH_TEXT), self._info(golive.YOUTUBE_TEXT), self._info("TikTok on Linux: " + golive.TIKTOK_TEXT),
+                 self._info(golive.SECRET_TEXT),
+                 self._info("Linux has no OBS \"Game Capture\": the scene captures the whole screen (on Wayland a system window asks which screen). "
+                            "To only record, not stream, press F9 for Code's own screen recorder."),
+                 {"kind": "item", "id": "recordings", "title": "My recordings", "detail": "Videos made with the screen recorder (F9)."},
+                 {"kind": "item", "id": "back", "title": "Back"}]
+        return rows
+
+    def _golive_activate(self, rid: str) -> str:
+        if rid == "obsinstall":
+            self.begin_install(["obs"], for_gid="app:obs", what="OBS Studio")
+            return ""
+        if rid == "obsopen":
+            ok, text = golive.start_obs(self.cfg)
+            self.show_toast(text, 12000)
+            return ""
+        if rid == "recordings":
+            return "page:recordings"
+        if rid.startswith("go:"):
+            g = next((x for x in self._all if x.gid == rid[3:]), None)
+            if g is None or g.missing:
+                self.show_toast(webapps.HELP_TEXT, 9000)
+                return ""
+            self._launch_game(g)
+            return "close"
+        return ""
+
+    # ----- Downloads: the web browser's files -> my games ---------------------------------
+    def _downloads_rows(self) -> list:
+        items = downloads.scan(self.cfg)
+        self._dl_items = items
+        ok, text = webapps.status(self.cfg, webapps.BY_ID["browser"])
+        tok, _t = apps.app_status(self.cfg, apps.BY_ID["transmission"])
+        rows = [self._info("Browse the web yourself, download a file you own or may use, then come back here. Files land in ~/Downloads. "
+                           "Code does not recommend or link any download site."),
+                {"kind": "item", "id": "dlbrowser", "title": "Open the web browser", "detail": text,
+                 "value": "" if ok else "No browser"},
+                {"kind": "item", "id": "dltorrent", "title": "Torrent client (Transmission)",
+                 "detail": ("Opens it - add your own .torrent file or magnet link there." if tok else
+                            "Not installed yet. Press to install it (one button, free, open source)."),
+                 "value": "" if tok else "Install"},
+                {"kind": "item", "id": "dlrefresh", "title": "Refresh the list", "detail": "Shows files that arrived since you opened this page."}]
+        if not items:
+            rows.append(self._info("Nothing in your Downloads folder yet."))
+        for i, it in enumerate(items):
+            if it.is_torrent:
+                rows.append({"kind": "item", "id": f"dl:{i}", "title": it.name, "value": "Torrent",
+                             "detail": "A .torrent file - press to open it with the torrent client (it saves to ~/Downloads)."})
+            elif it.partial:
+                rows.append({"kind": "item", "id": f"dl:{i}", "title": it.shown_name, "value": "Downloading...",
+                             "detail": f"{importer.human_size(it.size)} so far - press Refresh to see the progress. (The browser shows the speed.)"})
+            else:
+                guess = ""
+                if it.guess:
+                    guess = "Looks like: " + ", ".join(self.cfg.systems[s].name for s in it.guess[:2] if s in self.cfg.systems) + ".  "
+                kind = "Folder: " if it.is_dir else ""
+                rows.append({"kind": "item", "id": f"dl:{i}", "title": it.name, "value": importer.human_size(it.size),
+                             "detail": kind + guess + downloads.human_age(it.mtime) + " - press to add it to my games."})
+        if self._dl_msg:
+            rows.insert(1, self._info("Last result:  " + self._dl_msg))
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    def _downloads_activate(self, rid: str) -> str:
+        if rid == "dlbrowser":
+            g = next((x for x in self._all if x.gid == "web:browser"), None)
+            if g is None or g.missing:
+                self.show_toast(webapps.HELP_TEXT, 9000)
+                return ""
+            self._launch_game(g)
+            return "close"
+        if rid == "dltorrent":
+            g = next((x for x in self._all if x.gid == "app:transmission"), None)
+            if g is None or g.missing:
+                self.begin_install(["transmission"], for_gid="app:transmission", what="Transmission")
+                return ""
+            ok, text = downloads.open_torrent(self.cfg)
+            self.show_toast(text, 6000)
+            return ""
+        if rid == "dlrefresh":
+            return "refresh"
+        if rid.startswith("dl:"):
+            try:
+                it = self._dl_items[int(rid[3:])]
+            except (ValueError, IndexError):
+                return "refresh"
+            if it.is_torrent:
+                ok, text = downloads.open_torrent(self.cfg, it.path)
+                if not ok and "not installed" in text:
+                    self.begin_install(["transmission"], for_gid="app:transmission", what="Transmission")
+                    return ""
+                self.show_toast(text, 7000)
+                return ""
+            if it.partial:
+                self.show_toast("That is still downloading. Press Refresh in a moment.", 5000)
+                return "refresh"
+            self._dl_pick = it
+            return "page:dlsystem"
+        return ""
+
+    def _dlsystem_rows(self) -> list:
+        it = self._dl_pick
+        if it is None:
+            return [self._info("Pick a file first."), {"kind": "item", "id": "back", "title": "Back"}]
+        rows = [self._info(f"{it.name} ({importer.human_size(it.size)}) - which system is it for?  Only add files you own or may use.")]
+        likely = set(it.guess or [])
+        for sid, name in downloads.candidates(self.cfg, it):
+            rows.append({"kind": "item", "id": f"dlsys:{sid}", "title": name, "value": "Likely" if sid in likely else "",
+                         "detail": f"Moves the file to {importer.destination_for(self.cfg, sid)}"})
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    def _dlsystem_activate(self, rid: str) -> str:
+        if rid.startswith("dlsys:") and self._dl_pick is not None:
+            ok, text, _t = downloads.add_to_games(self.cfg, self._dl_pick.path, rid[6:])
+            self._dl_msg = text
+            self.show_toast(text, 9000)
+            if ok:
+                self._dl_pick = None
+                self.rescan(toast=False)
+            return "page:downloads"
+        return ""
+
     def _addgames_rows(self) -> list:
         try:
             drives = importer.detect_drives()
         except Exception:
             drives = []
         usb = (f"Found: {drives[0].label}" + (f" (+{len(drives) - 1} more)" if len(drives) > 1 else "")) if drives else "Plug the USB stick in first, then press this."
-        rows = [self._info("Step 1 of 2 - where are the games?  Pick one. Atari only reads from your stick or folder; nothing there is changed.")]
+        rows = [self._info("Step 1 of 2 - where are the games?  Pick one. Code only reads from your stick or folder; nothing there is changed.")]
         rows += [
             {"kind": "item", "id": "usb", "title": "From a USB stick", "detail": usb, "value": "USB" if drives else ""},
             {"kind": "item", "id": "folder", "title": "From a folder on this computer",
              "detail": "Starts at your USB sticks, Downloads and Home. Pick the folder that holds the games."},
             {"kind": "item", "id": "windows", "title": "A Windows game (.exe or .zip)",
-             "detail": "A PC game you downloaded yourself. Atari sets it up to run with Proton / Wine."},
+             "detail": "A PC game you downloaded yourself. Code sets it up to run with Proton / Wine."},
             {"kind": "item", "id": "bios", "title": "BIOS files (for PlayStation, Saturn, Dreamcast ...)",
              "detail": "Files from your own console; some emulators need them."},
+            {"kind": "item", "id": "downloads", "title": "Files I downloaded from the web (Downloads)",
+             "detail": "Move a finished download from ~/Downloads into your games, or open the web browser."},
         ]
         if self._add_result:
             rows.append(self._info("Last result:  " + self._add_result))
@@ -2354,6 +2718,12 @@ class Backend(QObject):
     def pageRows(self, name: str):
         if name == "addgames":
             return self._addgames_rows()
+        if name == "golive":
+            return self._golive_rows()
+        if name == "downloads":
+            return self._downloads_rows()
+        if name == "dlsystem":
+            return self._dlsystem_rows()
         if name == "help":
             return self._help_rows()
         if name == "fix":
@@ -2410,25 +2780,40 @@ class Backend(QObject):
             self._info("Q: Fortnite / Call of Duty / Warzone?  A: they do not work on Linux - their anti-cheat blocks it and the makers do not support it. "
                        "The Free Games tile lists free games that do work (checked on ProtonDB). Minecraft Java: Prism Launcher in PC Apps (needs your own licence)."),
             self._info("Q: Roblox says \"Invalid Bundle\" / I downloaded a .flatpak file.  A: " + sober.INVALID_BUNDLE_TEXT),
+            self._info("Q: Roblox asks for an \"application bundle (APK)\" / \"Install Roblox\".  A: " + sober.BUNDLE_HELP),
+            {"kind": "item", "id": "soberfix", "title": "Roblox asks for an application bundle? Update Sober and test the connection",
+             "detail": "Runs flatpak update for Sober and checks that this computer can reach Sober's server and Google Play. Needs internet."},
+            self._info("Q: Can I get games from the web?  A: Options > Downloads opens a web browser (it starts at a neutral search engine; "
+                       "Code recommends no sites) and lists what you downloaded. Press a finished file, choose its system, and it moves into "
+                       "~/Games/Atari/<system>. Only add games you own or may legally use. A torrent client (Transmission) installs with one "
+                       "button on the same screen; it is not set up with any torrents or sites."),
+            self._info("Q: How do I stream to Twitch / TikTok / YouTube?  A: Options > Go Live. OBS installs with one button and opens with a "
+                       "ready scene; you paste your own stream key into OBS. TikTok LIVE Studio is Windows-only, so on Linux TikTok works through "
+                       "OBS with the key from TikTok's web LIVE page (only for accounts TikTok allows)."),
             self._info("Q: A game does not start.  A: highlight it, press the Options button (F10 / Start), choose \"Fix my game\"."),
             self._info("Q: The game has no picture.  A: step 4 above downloads covers (needs internet). Names must look like the real game title."),
-            self._info("Q: A console says it needs a BIOS.  A: those are files from your own console. Atari cannot download them - use step 3 with a USB stick or folder."),
-            self._info("Q: Where are my games?  A: ~/Games/Atari/<console>/ . Your favourites and play time are kept when you update Atari."),
-            self._info("Q: How do I quit a game?  A: use the emulator's own exit (see Controls). Atari comes back by itself."),
+            self._info("Q: A console says it needs a BIOS.  A: those are files from your own console. Code cannot download them - use step 3 with a USB stick or folder."),
+            self._info("Q: Where are my games?  A: ~/Games/Atari/<console>/ . Your favourites and play time are kept when you update Code."),
+            self._info("Q: How do I quit a game?  A: use the emulator's own exit (see Controls). Code comes back by itself."),
             self._info("Q: How do I get back from Netflix / YouTube / Kodi?  A: press Esc twice quickly (or hold Esc for 1 second, or Ctrl+Esc). "
-                       "Atari closes the app and comes back. One Esc still leaves video full screen as normal. On a controller: hold Guide / Home and press B. "
+                       "Code closes the app and comes back. One Esc still leaves video full screen as normal. On a controller: hold Guide / Home and press B. "
                        "(Needs the normal Linux Mint X11 desktop; turn it off in Settings.)"),
-            self._info("Q: How do I make the computer start straight into Atari, like a console?  A: Settings > Atari-only mode. "
+            self._info("Q: Can I have my own start-up video?  A: Code comes with a 10-second intro. To use your own instead: Settings > Choose intro video (mp4, webm, mkv or mov). It plays before the home screen; "
+                       "any key, click or controller button skips it. Remove it any time in Settings. Needs mpv, ffplay or VLC to be installed."),
+            self._info("Q: How do I connect to WiFi?  A: press the WiFi button next to the clock (or Settings > WiFi). Pick your network, type the password with "
+                       "the on-screen keyboard (controller: D-pad + A, L1 = delete, R1 = switch letters / capitals / symbols), then CONNECT. "
+                       "It works in Code-only mode too. \"Forget\" removes a saved network."),
+            self._info("Q: How do I make the computer start straight into Code, like a console?  A: Settings > Code-only mode. "
                        "To get the normal desktop back: Settings > Back to Mint desktop (or pick the Cinnamon session on the login screen)."),
             {"kind": "item", "id": "inputfix", "title": "Steam says \"Missing permissions for input devices\"? Fix controller permissions",
-             "detail": "Installs Valve's controller rules (steam-devices) so Steam and Atari can use your gamepad. Asks for your password once."},
+             "detail": "Installs Valve's controller rules (steam-devices) so Steam and Code can use your gamepad. Asks for your password once."},
             {"kind": "item", "id": "studiofix", "title": "Studio does not work? Fix Studio",
              "detail": "Checks numpy, the recording tools and the microphone, and installs what is missing (needs internet)."},
             {"kind": "item", "id": "copylog", "title": "Copy log (to send to someone who is helping you)",
-             "detail": "Copies Atari's recent messages and your setup to the clipboard. It contains no passwords."},
+             "detail": "Copies Code's recent messages and your setup to the clipboard. It contains no passwords."},
             {"kind": "item", "id": "reset",
              "title": "Press again to reset my settings" if self._reset_armed else "Safe mode: reset my settings",
-             "detail": "Puts Atari's settings back to normal if something looks wrong. Your games, favourites and "
+             "detail": "Puts Code's settings back to normal if something looks wrong. Your games, favourites and "
                        "play time are kept, and the old settings are saved next to the new ones."},
             {"kind": "item", "id": "back", "title": "Back"},
         ]
@@ -2458,12 +2843,15 @@ class Backend(QObject):
         if g.platform == "steam" or g.gid == "app:steam":
             rows.append({"kind": "item", "id": "inputfix", "title": "Fix Steam controller / gamepad permissions",
                          "detail": "For \"Missing permissions for input devices\" in Steam."})
+        if g.gid.endswith(":roblox") and g.platform == apps.APPS:
+            rows.append({"kind": "item", "id": "soberfix", "title": "Update Sober and test the connection",
+                         "detail": "For Roblox asking for an \"application bundle (APK)\": updates Sober and checks Sober's server and Google Play can be reached."})
         rows.append({"kind": "item", "id": "copylog", "title": "Copy log"})
         if g.platform == windows.PLATFORM:
             rows.append({"kind": "item", "id": "remove",
-                         "title": "Press again to remove this game from Atari" if self._remove_armed
-                         else "Remove this game from Atari",
-                         "detail": "Only Atari's entry goes - the game's files stay on your disk."})
+                         "title": "Press again to remove this game from Code" if self._remove_armed
+                         else "Remove this game from Code",
+                         "detail": "Only Code's entry goes - the game's files stay on your disk."})
         rows.append({"kind": "item", "id": "back", "title": "Back"})
         return rows
 
@@ -2485,7 +2873,7 @@ class Backend(QObject):
             lines = Path(paths.log_file()).read_text(errors="replace").splitlines()[-150:]
         except OSError:
             pass
-        head = [f"Atari {__version__}  python {sys.version.split()[0]}  {os.environ.get('XDG_CURRENT_DESKTOP', '')}",
+        head = [f"Code {__version__}  python {sys.version.split()[0]}  {os.environ.get('XDG_CURRENT_DESKTOP', '')}",
                 diagnose.controller_text(), "Studio: " + studio_fix.summary(studio_fix.problems(studio_fix.numpy_ok()))
                 if hasattr(studio_fix, "numpy_ok") else diagnose.controller_text(), ""]
         slog = studio_fix.read_log(40)
@@ -2493,7 +2881,7 @@ class Backend(QObject):
         cb = QGuiApplication.clipboard()
         if cb is not None:
             cb.setText(text)
-        self.show_toast("Copied Atari's log to the clipboard - paste it into a message to whoever is helping you.", 7000)
+        self.show_toast("Copied Code's log to the clipboard - paste it into a message to whoever is helping you.", 7000)
         return text
 
     @Slot(result=str)
@@ -2529,9 +2917,15 @@ class Backend(QObject):
             return "back" if rid == "back" else ""
         if name == "help":
             return self._help_activate(rid)
+        if name == "golive":
+            return self._golive_activate(rid)
+        if name == "downloads":
+            return self._downloads_activate(rid)
+        if name == "dlsystem":
+            return self._dlsystem_activate(rid)
         if name == "addgames":
             return {"usb": "import:games", "folder": "browse:importfolder", "windows": "browse:winaddwizard",
-                    "bios": "import:bios", "finish": "close"}.get(rid, "")
+                    "bios": "import:bios", "downloads": "page:downloads", "finish": "close"}.get(rid, "")
         if name == "install":
             return self._install_activate(rid)
         if name == "recordings":
@@ -2568,6 +2962,9 @@ class Backend(QObject):
             if rid == "inputfix":
                 self.fixInputPermissions()
                 return ""
+            if rid == "soberfix":
+                self.fixSober()
+                return ""
             if rid == "emus":
                 self.installEmulators()
                 return ""
@@ -2583,7 +2980,7 @@ class Backend(QObject):
                 self._remove_armed = False
                 windows.remove_game(self._fix_gid)
                 self.rescan(toast=False)
-                self.show_toast("Removed from Atari. The game's files are still on your disk.")
+                self.show_toast("Removed from Code. The game's files are still on your disk.")
                 return "close"
         if name == "winform":
             if rid == "name":
@@ -2629,13 +3026,16 @@ class Backend(QObject):
         if rid == "inputfix":
             self.fixInputPermissions()
             return ""
+        if rid == "soberfix":
+            self.fixSober()
+            return ""
         if rid == "studiofix":
             st = self.studio
             if st.available and not studio_fix.problems(True):
                 self.show_toast("The Studio looks fine. If it still fails, press Copy log and send it to whoever is helping you.", 7000)
             else:
                 st.fix()
-                self.show_toast("Fixing the Studio - Atari adds what is missing. This can take a minute.", 7000)
+                self.show_toast("Fixing the Studio - Code adds what is missing. This can take a minute.", 7000)
             return ""
         if rid == "ck_emus":
             return "page:installmenu"
@@ -2677,7 +3077,7 @@ class Backend(QObject):
     def listFiles(self, path: str, kind: str):
         """Like listDir, plus the files of one kind: 'exe' (programs and archives) or 'image'."""
         data = dict(self.listDir(path))
-        exts = {"exe": (".exe",) + windows.ARCHIVE_EXT, "image": windows.IMAGE_EXT}.get(kind, ())
+        exts = {"exe": (".exe",) + windows.ARCHIVE_EXT, "image": windows.IMAGE_EXT, "video": intro.VIDEO_EXT}.get(kind, ())
         files = []
         if path and exts:
             try:
@@ -2748,7 +3148,7 @@ class Backend(QObject):
         cands = payload or []
         self._win_cands = cands
         if not cands:
-            self.show_toast("Atari could not find a Windows program (.exe) inside that archive. "
+            self.show_toast("Code could not find a Windows program (.exe) inside that archive. "
                             "Files were opened in " + text, 10000)
             self.pageRequested.emit("close")
         elif len(cands) == 1:
@@ -2770,7 +3170,7 @@ class Backend(QObject):
     def _winform_rows(self) -> list:
         ok, label = windows.runner_status(self.cfg)
         return [
-            self._info("Atari runs Windows games with " + (label if ok else "a helper that is not installed yet") + "."
+            self._info("Code runs Windows games with " + (label if ok else "a helper that is not installed yet") + "."
                        + ("" if ok else "  " + windows.UMU_HINT)),
             self._info("Program: " + self._win_exe),
             {"kind": "item", "id": "name", "title": "Name", "value": self._win_name or "(none)",

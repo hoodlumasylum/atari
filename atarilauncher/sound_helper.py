@@ -1,12 +1,12 @@
-"""Plays Atari's UI sounds. Runs as a separate process (python -m atarilauncher.sound_helper) so audio trouble can
+"""Plays Code's UI sounds. Runs as a separate process (python -m atarilauncher.sound_helper) so audio trouble can
 never freeze or crash the launcher and SDL's audio settings never leak into emulators.
 
-Atari writes one command per line to its input:   tick | select | back | fav | launch | error | start
+Code writes one command per line to its input:   tick | select | back | fav | launch | error | start | intro
                                                   file <path.wav> | stopfile        (the Studio's preview)
                                                   volume 0.6 | music on | music off | quit
 It answers with one status line first:            ready pygame | ready paplay | ready aplay | unavailable
 Uses pygame's mixer when pygame is installed (it comes with the gamepad support), otherwise an audio command-line
-player (paplay / pw-play / aplay). With neither, it says "unavailable" and Atari carries on silently.
+player (paplay / pw-play / aplay). With neither, it says "unavailable" and Code carries on silently.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 
 SFX = Path(__file__).resolve().parent / "assets" / "sfx"
-NAMES = ("tick", "select", "back", "fav", "launch", "error", "start")
+NAMES = ("tick", "select", "back", "fav", "launch", "error", "start", "intro")
 MUSIC_LEVEL = 0.35         # the ambient loop is always quieter than the effects
 MIN_GAP = 0.03             # seconds: a held-down key cannot machine-gun the speakers
 

@@ -1,8 +1,10 @@
-# Atari — a game launcher for your living-room PC
+![Code](docs/branding/code-banner.png)
 
-![Atari home screen](docs/screenshot.png)
+# Code — a game launcher for your living-room PC
 
-**Atari** is a full-screen, controller-friendly "console style" menu for a Linux gaming PC.
+![Code home screen](docs/screenshot.png)
+
+**Code** is a full-screen, controller-friendly "console style" menu for a Linux gaming PC.
 Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts.
 
 * **Steam** games (found automatically, even on several drives) with the artwork Steam already has on disk,
@@ -12,9 +14,11 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 * an **Add Games** button that copies games from a **USB stick** into your library,
 * **Favourites** and **Recent** lists, **search**, sorting, and play time.
 
-> **About the name.** "Atari" is just the name of this personal hobby project. It is **not** affiliated with,
-> endorsed by, or connected to Atari or any other company. There are **no company logos, character art or
-> trademarked artwork** in it: the wordmark is plain styled text, the console tiles are original vector glyphs,
+> **About the name.** "Code" is just the name of this personal hobby project (it was called "Atari" up to version 0.3.x - the old
+> `atari` command, `~/.config/atari`, `~/.local/share/atari` and the GitHub address still work, so nothing breaks when you update).
+> It is **not** affiliated with, endorsed by, or connected to any company - not Atari, not Microsoft's Visual Studio Code, not anyone else.
+> Console names such as "Atari 2600" appear only as the names of systems the emulators play. There are **no company logos, character art or
+> trademarked artwork** in it: the "Code" logo (`docs/branding/`) is original vector art drawn for this project, the console tiles are original vector glyphs,
 > the banner is a generated neon gradient, and covers are generated placeholders unless you provide your own.
 > **No games, ROMs, emulators, BIOS files, firmware or keys are included** — you need to own the games you play
 > and supply your own BIOS/firmware where an emulator needs it.
@@ -27,13 +31,50 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
+## What's new in 0.4.0
+
+- **Web browser + Downloads (new):** the *Web Browser* tile (Streaming & Social) opens a normal browser window with an address bar and back / forward buttons, starting at a neutral search engine; Esc twice or Guide + B returns to Code. Options > Downloads lists what you saved in `~/Downloads` (with a "still downloading" marker), and a finished file gets **Add to my games**: choose its system and it moves into `~/Games/Atari/<system>` (also reachable as `~/Games/Code/<system>`). It uses Chrome / Chromium / Brave / Firefox from your PC - no embedded engine, so pause / resume and speed are the browser's own. Code does not recommend, bookmark or link any download site, and bundles no games.
+- **Torrent client (new):** *Transmission* (open source) is a tile in PC Apps and installs with one button (also from Options > Downloads); `.torrent` files in Downloads open in it. No torrents, trackers or site lists are included; use it for files you own or may legally share.
+- **Go Live (new):** Options > Go Live installs **OBS Studio** with one button and opens it with a ready "Code Go Live" screen-capture scene (written once, never overwrites yours); you paste your own stream key into OBS - Code never sees or stores it. *Twitch*, *TikTok LIVE* and *YouTube Live* tiles open their web dashboards in the browser window (icons are fetched when Code runs; no logos are shipped). Linux has no OBS "Game Capture" (Windows-only): the scene captures the screen; F9 is still the built-in recorder. **TikTok LIVE Studio is Windows / Mac only**, so on Linux TikTok works through OBS with the server URL + key from TikTok's web LIVE page, and TikTok only gives those to accounts that qualify.
+
+### New name: Code
+The project is now called **Code** (it was "Atari"). New logo, window title, menu entry, Settings, Help, installer and updater messages.
+**Nothing breaks when you update:** the old `atari` command, `~/.config/atari`, `~/.local/share/atari`, `~/Games/Atari`, the `atari.desktop` menu / autostart entry,
+Code-only mode files and the GitHub address (`hoodlumasylum/atari`) all stay as they are, so an existing install updates in place with all
+settings, favourites and games. A new `code` command is added too - **unless** that name is already taken (Visual Studio Code uses it), in which case
+`atari` and `code-launcher` still start Code. Release files are still called `atari-<version>.tar.gz` so older copies can update.
+- **Branding:** `docs/branding/` has the logo, a banner and a **one-colour sticker version** (SVG + 4000 px PNG, black on transparent) for metal transfer stickers.
+  The logo and intro were made with AI tools - such art may not be copyrightable or trademarkable (details in `docs/branding/README.md`).
+
+### WiFi screen
+Settings > **WiFi** (or the WiFi button next to the clock on the home screen): a list of nearby networks with signal bars, *Connected* / *Saved* marks, an
+on-screen keyboard for the password (controller: D-pad + A, L1 delete, R1 switch abc / ABC / 123#+=, "/" show the password; keyboard and mouse / touch work too),
+*Join a hidden network...*, **Forget** (press twice) and a clear connected / "password not accepted" message. It uses NetworkManager's `nmcli` with no root password,
+stores the password inside the connection (no desktop applet needed), so it **works in Code-only mode**. No WiFi adapter, WiFi switched off or no NetworkManager
+each give a plain-English message (and *Turn WiFi on*). Note: `nmcli` receives the password as a command argument, visible to other programs on the same computer for a moment.
+
+
+### Start-up intro
+- **Your own intro video.** Put a video in **Settings > Choose intro video** (a big-button file picker that starts in Downloads, or Videos / a USB stick). Code keeps its own copy as `~/.local/share/atari/intro.mp4` (also `.webm`, `.mkv`, `.mov`; or just drop the file there yourself). It plays **full screen before the home screen**. **Any key, a mouse click or any controller button skips it.** Sound follows Settings > *Sound effects*. It plays through **mpv** (installed with Linux Mint's media apps), else **ffplay**, else **VLC**; if none is installed or playback fails, Code quietly skips the intro and starts normally. It can never keep Code waiting longer than the clip itself (plus a second or two).
+- **Settings:** *Intro video (your own)* ON/OFF (ON by default as soon as a file exists), *Choose intro video*, *Remove intro video* (deletes only Code's copy), *Code's start-up video (default)* ON/OFF, and *Play the intro now* to preview.
+- **A 10-second Code intro comes with the app** (`atarilauncher/assets/intro/code-intro.mp4`, the Code logo reveal with an orchestral sting; ~3.6 MB, 720p). It plays when you have no video of your own; your own video (above) replaces it. With no video player installed, a short original animation (3.6 s, wordmark over the flowing waves) plays instead. Switch it off in Settings.
+- **No third-party logos are shipped.** The shipped video and the logo are original artwork supplied by the project owner (made with AI tools - see *Branding* below).
+- **Code-only mode** (0.3.2) and the Esc-twice return from Netflix / Kodi / Steam keep working exactly as before; the intro is simply the first thing you see after login.
+- Screenshots (`--screenshot`) and `--selftest` never play an intro.
+
+### Roblox: "Install Roblox - application bundle (APK) required"
+That is **Sober's** screen (not Code's) for when Sober could not download Roblox by itself. Researched Oct 2026 in Sober's docs and issues (#2375, #2376, #2384): it is not that Roblox dropped x86_64. Sober downloads the app through its own update service and Google Play; when that fails twice it falls back to asking for a file. Seen causes: Sober's update service was broken for about a day in July 2026 (repaired by Sober's team on their server, no new version needed), a network / DNS / provider that blocks Google Play or `sober.vinegarhq.org`, or a very old Linux.
+- Code now **notices** this (from Sober's log) when you close Sober, tests the connection to Sober's server and Google Play, and - if they are reachable - runs `flatpak update org.vinegarhq.Sober` and starts Sober **once more** (it retries the download itself). If the connection is blocked it skips the useless retry.
+- If it still fails you get a plain-English message (blocked network -> try DNS 1.1.1.1 or a VPN, an adult can do it in Network settings; otherwise Sober's service is probably down - try later), also under **Help > Roblox asks for an application bundle** and **Fix my game** (button *Update Sober and test the connection*).
+- **Limit, said honestly:** if Sober's service is down, Code cannot fix it. Roblox publishes no Linux APK, and Code never downloads, bundles or scrapes one. Picking an APK by hand in Sober's window needs the exact version it names plus the x86_64 part from a source you trust - not recommended for kids.
+
 ## What's new in 0.3.2
 
-- **Original Xbox games (.iso) are found.** Add Games now looks *inside* a disc image to tell the console (Xbox, GameCube, Wii, PS2, PS1, PSP, Sega CD, Saturn), so `Shenmue II (USA).iso` in any folder just works. If it still cannot tell, it asks **"Which system is this?"** with big buttons (Xbox Classic, PlayStation 2 …) instead of skipping the file, and the result screen lists every skipped file with the reason and what was in the folder (e.g. "1 .iso, 1 .txt"). **CHOOSE SYSTEM** brings the question back. Unpacked Xbox game folders (with `default.xbe`) are found too; to start one Atari turns it into a disc image with the small tool `extract-xiso` (or you use a single `.iso`).
-- **Steam opens full screen in Big Picture** (`steam -gamepadui`, or the `steam://open/bigpicture` link when Steam is already open). Settings > *Open Steam in Big Picture (full screen)* turns it off (default ON). Back to Atari: press **Esc twice** (or hold Esc 1 s, Ctrl+Esc, or hold **Guide + B** on a controller): Atari leaves Big Picture and comes back - Steam keeps running. While a Steam game is on screen the keyboard gesture is ignored (the game owns Esc); the controller chord still works.
+- **Original Xbox games (.iso) are found.** Add Games now looks *inside* a disc image to tell the console (Xbox, GameCube, Wii, PS2, PS1, PSP, Sega CD, Saturn), so `Shenmue II (USA).iso` in any folder just works. If it still cannot tell, it asks **"Which system is this?"** with big buttons (Xbox Classic, PlayStation 2 …) instead of skipping the file, and the result screen lists every skipped file with the reason and what was in the folder (e.g. "1 .iso, 1 .txt"). **CHOOSE SYSTEM** brings the question back. Unpacked Xbox game folders (with `default.xbe`) are found too; to start one Code turns it into a disc image with the small tool `extract-xiso` (or you use a single `.iso`).
+- **Steam opens full screen in Big Picture** (`steam -gamepadui`, or the `steam://open/bigpicture` link when Steam is already open). Settings > *Open Steam in Big Picture (full screen)* turns it off (default ON). Back to Code: press **Esc twice** (or hold Esc 1 s, Ctrl+Esc, or hold **Guide + B** on a controller): Code leaves Big Picture and comes back - Steam keeps running. While a Steam game is on screen the keyboard gesture is ignored (the game owns Esc); the controller chord still works.
 - **Fix Steam controller / gamepad permissions** (Help, the Steam page and Fix my game): one press installs Valve's udev rules (`steam-devices`) so Steam stops saying "Missing permissions for input devices". One password window.
-- **Atari-only mode** (Settings): the computer starts straight into Atari with no Mint desktop. It writes three small files named "atari" (LightDM auto-login drop-in, an Atari session entry, a session script) after a clear confirm screen and one password window.
-  **Ways back:** Settings > *Back to Mint desktop* (removes the three files) - or Settings > *Open the Mint desktop once* (no password, this login only) - or at the login screen pick the **Cinnamon** session - or if Atari cannot start three times in a row the Mint desktop starts by itself - or press **Ctrl+Alt+F2**, log in and run
+- **Code-only mode** (Settings): the computer starts straight into Code with no Mint desktop. It writes three small files named "atari" (LightDM auto-login drop-in, an Code session entry, a session script) after a clear confirm screen and one password window.
+  **Ways back:** Settings > *Back to Mint desktop* (removes the three files) - or Settings > *Open the Mint desktop once* (no password, this login only) - or at the login screen pick the **Cinnamon** session - or if Code cannot start three times in a row the Mint desktop starts by itself - or press **Ctrl+Alt+F2**, log in and run
   `sudo rm /etc/lightdm/lightdm.conf.d/90-atari-kiosk.conf && sudo systemctl restart lightdm`.
   Optional fast-boot tips (nothing is changed for you): `systemd-analyze blame`, then disable services you do not need (cups, ModemManager, bluetooth, NetworkManager-wait-online).
   Needs LightDM (Linux Mint's default). Not tested on real hardware yet - see the release notes.
@@ -41,18 +82,18 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 ## What's new in 0.3.1
 
 ### Get back from Netflix, YouTube, Kodi … with the keyboard
-Web-app tiles (Netflix, YouTube, Disney+, Prime Video, Twitch, Instagram, Facebook, TikTok) and **Kodi** open full screen. To get back to Atari press:
+Web-app tiles (Netflix, YouTube, Disney+, Prime Video, Twitch, Instagram, Facebook, TikTok) and **Kodi** open full screen. To get back to Code press:
 
 | What | Keys |
 |---|---|
-| **Esc twice quickly** (within 0.6 s) | closes the app, Atari comes back |
+| **Esc twice quickly** (within 0.6 s) | closes the app, Code comes back |
 | **Hold Esc for 1 second** | same |
 | **Ctrl + Esc** | same, instantly |
 | **Controller: hold Guide / Home, press B** | same |
 
-**One single Esc still does what it always did** (leave video full screen). When the app or browser closes by itself, Atari is raised and focused again.
-A launch screen says *"Press Esc twice (or hold Esc for 1 second) to return to Atari"* for a moment before the app covers it, and the same text is in **Help**.
-Turn it off in **Settings → Esc returns to Atari**. How it works: a tiny watcher reads the keyboard state of the X11 session (no key grab, no root, no extra Python
+**One single Esc still does what it always did** (leave video full screen). When the app or browser closes by itself, Code is raised and focused again.
+A launch screen says *"Press Esc twice (or hold Esc for 1 second) to return to Code"* for a moment before the app covers it, and the same text is in **Help**.
+Turn it off in **Settings → Esc returns to Code**. How it works: a tiny watcher reads the keyboard state of the X11 session (no key grab, no root, no extra Python
 package), so it works on top of any full-screen window. A Chrome extension was rejected: Chrome 137+ ignores `--load-extension`, a page never sees the Esc that
 leaves video full screen, and it could not help Firefox, Kodi or the controller. *Wayland-only sessions:* the keyboard gestures need X11 (the Linux Mint default);
 the controller chord works everywhere.
@@ -65,8 +106,8 @@ end-of-life chatter hidden, final summary). The same code runs `atari-install-ev
 * **Steam**: a Steam tile with *Install Steam* (Flatpak `com.valvesoftware.Steam`, fallback `apt install steam-installer`), opens Steam for the first sign-in, finds Flatpak library paths,
   **Rescan Steam**, and a drive helper (ext4/btrfs/xfs good; NTFS/exFAT Windows drives and USB sticks warned about). "Install a Steam game" in **Free Games** opens `steam://install/<id>`.
 * **Roblox (Sober)** has no official downloadable bundle — only Flathub. Opening a downloaded `.flatpak` by hand in Linux Mint gives **"Invalid Bundle"**; press **Install** on the tile instead.
-  Atari checks the computer first (x86-64, kernel 5.11+, SSE4.1; Vulkan is optional and `mesa-vulkan-drivers` can be added), explains the first start (Sober downloads Roblox itself; you sign in) and **Help** has an *Invalid Bundle* answer.
-* **DuckStation's Flatpak is end-of-life** — Atari installs DuckStation's official AppImage from GitHub into `~/.local/share/atari/emulators`, checked against GitHub's SHA-256, and no longer uses the Flatpak.
+  Code checks the computer first (x86-64, kernel 5.11+, SSE4.1; Vulkan is optional and `mesa-vulkan-drivers` can be added), explains the first start (Sober downloads Roblox itself; you sign in) and **Help** has an *Invalid Bundle* answer.
+* **DuckStation's Flatpak is end-of-life** — Code installs DuckStation's official AppImage from GitHub into `~/.local/share/atari/emulators`, checked against GitHub's SHA-256, and no longer uses the Flatpak.
   Every other Flatpak id in the table was checked against Flathub (`scripts/audit_flatpaks.py` repeats the check: end-of-life flag and runtime); OpenArena's old id was fixed.
 
 ### Better covers
@@ -77,11 +118,11 @@ retries. "Not found" is remembered for a few days and then tried again.
 
 ### Real icons on app tiles (nothing third-party is bundled)
 Streaming & Social, PC Apps and Free Games tiles show each service's own icon, **downloaded to your computer on first use** and kept in `~/.local/share/atari/icons/`: the installed app's own icon first
-(Flatpak / Kodi), else the Flathub store icon, else the site's favicon / apple-touch-icon, and Steam's own art for Steam free games. Offline or nothing found: Atari's own coloured tile with the app's initials. *Settings → Download covers* re-checks.
+(Flatpak / Kodi), else the Flathub store icon, else the site's favicon / apple-touch-icon, and Steam's own art for Steam free games. Offline or nothing found: Code's own coloured tile with the app's initials. *Settings → Download covers* re-checks.
 
 ### Screen recorder
 **F9** (or controller **Guide + X**, the **Record screen** tile, or *Options → Record screen*) starts/stops recording the whole screen — it keeps going while a game or Netflix is full screen — with a red **REC** badge.
-MP4 files go to `~/Videos/Atari Recordings/Atari-<date>_<time>.mp4`. ffmpeg with x11grab + PulseAudio/PipeWire (libx264 ultrafast, or VAAPI via `[recording] encoder = "vaapi"`); on Wayland `wf-recorder`.
+MP4 files go to `~/Videos/Atari Recordings/Code-<date>_<time>.mp4`. ffmpeg with x11grab + PulseAudio/PipeWire (libx264 ultrafast, or VAAPI via `[recording] encoder = "vaapi"`); on Wayland `wf-recorder`.
 **Settings**: audio (none / game sound / microphone / both), quality, 30 or 60 fps, folder. ffmpeg is part of *install everything* and has an Install button. **Recordings** (a Tools tile and menu entry) lists them and plays with mpv.
 
 ### Studio first aid
@@ -95,7 +136,7 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
 
 ## What's new in 0.3.0
 
-* **Covers download themselves.** After a scan (and from **Settings → Download covers**) Atari fetches box art in the background,
+* **Covers download themselves.** After a scan (and from **Settings → Download covers**) Code fetches box art in the background,
   never blocking the screen ("Covers 12/80" shows progress, tiles update live). ROM games use the public
   [libretro thumbnails](https://thumbnails.libretro.com) server (`Named_Boxarts`, with smart name matching: `(USA)`, `(Rev 1)`, `[!]` etc.),
   Steam games use Steam's own local art first, then Steam's public CDN. Pictures are cached in `~/.local/share/atari/covers/`;
@@ -107,10 +148,10 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
   prints a summary, safe to run again. All Flatpak IDs were checked against Flathub.
 * **Add BIOS files** (next to **Add Games**, same USB picker). It finds *your own* BIOS / firmware files on a stick or folder by name (and known
   MD5 where there is one), shows a checklist and copies them to the right place for each emulator (RetroArch native/Flatpak, DuckStation,
-  PCSX2, Flycast, melonDS, mGBA, xemu, Mednafen, Ryujinx/Eden keys…). **Atari never downloads or includes BIOS files, firmware, keys or games** —
+  PCSX2, Flycast, melonDS, mGBA, xemu, Mednafen, Ryujinx/Eden keys…). **Code never downloads or includes BIOS files, firmware, keys or games** —
   only use files from consoles you own. PS3 firmware (`PS3UPDAT.PUP`) and Switch `prod.keys` get a short how-to. **Settings → Emulators** says in
   plain English what each console still needs ("PlayStation needs a BIOS file from your own console - use Add BIOS files").
-* **Keyboard works in emulators.** Atari now writes sane default keyboard bindings the first time it starts **Flycast** (arrows = D-pad, Z/X/C/V = A/B/X/Y,
+* **Keyboard works in emulators.** Code now writes sane default keyboard bindings the first time it starts **Flycast** (arrows = D-pad, Z/X/C/V = A/B/X/Y,
   Enter = Start, WASD = stick, Q/E = triggers) — only when Flycast has no keyboard mapping yet, never overwriting yours — and **steps aside while a game
   runs** (its full-screen window is minimised and restored, raised and focused when the game quits) so the emulator gets the keyboard.
   A new **Controls** screen (Options → Help & getting started → Controls, or Settings → Emulators) lists the keys for each emulator, and the main keys are shown briefly when a game starts.
@@ -119,21 +160,21 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
   (Flatpak or installed program), shows an install hint if missing, and its command can be overridden under `[emulators]` in the config file
   (e.g. `heroic = "flatpak run com.heroicgameslauncher.hgl"`). Games you installed in **Heroic** and **Lutris** also appear in your library
   (read from their own files, never changed) and start through those apps.
-* **Update Atari from inside Atari** (**Settings → Update Atari**, or the green badge on the top bar): checks GitHub Releases (at most once a day, silently;
+* **Update Code from inside Code** (**Settings → Update Code**, or the green badge on the top bar): checks GitHub Releases (at most once a day, silently;
   turn it off in Settings), shows the release notes, downloads the new version, **verifies its SHA256** against the release's `SHA256SUMS.txt`, installs it
   (your settings, favourites and history are never touched; the old files are put back if anything fails) and offers to restart. No terminal needed.
   *0.3.0 is the first version that has this, so install 0.3.0 by hand once (steps below); later versions can update themselves.*
 * **Add a Windows game** (Options → *Add Windows game*, or Help). Pick a `.exe`, or a `.zip` / `.7z` that has one inside; give it a name and (optionally) a cover
-  picture. Archives are unpacked to `~/Games/Atari/windows/<name>/` and Atari finds the main `.exe` for you (a pick-list if there are several).
+  picture. Archives are unpacked to `~/Games/Atari/windows/<name>/` and Code finds the main `.exe` for you (a pick-list if there are several).
   The game shows up under **Windows / PC**. It starts through, in this order: **umu-launcher** (`umu-run`), a **Proton** found on your PC (GE-Proton from
   ProtonUp-Qt, else Steam's own `steamapps/common/Proton*`), then **Wine**. Each game gets its own private Wine folder in
   `~/.local/share/atari/prefixes/<name>/`. The install-everything script installs umu-launcher (official GitHub release, SHA256-checked), Wine and ProtonUp-Qt
   (`net.davidotek.pupgui2`). The first start of a game downloads Proton once (a few minutes). Override the runner with `windows = "mycommand {exe}"` under `[emulators]`.
-  Works with keyboard and gamepad (the file picker, name keyboard and pick-list are all D-pad friendly). Atari downloads no games.
+  Works with keyboard and gamepad (the file picker, name keyboard and pick-list are all D-pad friendly). Code downloads no games.
   *Example — the free fan game **Dreams of Saturn** (a Shenmue fan game; a Unity `.exe` inside a `.zip`; it needs a gamepad):* download the `.zip` yourself from the
   author's page, then Options → Add Windows game → choose the `.zip` → it finds the `.exe` → Add this game. Plug in a controller first.
 * **Made for beginners.** *Options → Help & getting started* has a five-step checklist (1 install emulators, 2 add games from USB, 3 add BIOS files, 4 download covers, 5 Steam —
-  each one press), a short FAQ, **Copy log** (puts Atari's recent messages and setup on the clipboard to send to a helper) and **Safe mode: reset my settings**
+  each one press), a short FAQ, **Copy log** (puts Code's recent messages and setup on the clipboard to send to a helper) and **Safe mode: reset my settings**
   (press twice; the old settings are saved next to the new ones, and your games, favourites and play time stay). *Options → Fix my game* checks the highlighted game
   (game file there? emulator installed? BIOS present? controller found?) and says in plain English what to do. Errors are written to `~/.local/share/atari/launch.log`
   and shown with a hint; the Controls screen shows whether a controller was found.
@@ -143,7 +184,7 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
 * **Sounds.** Original, synthesised UI sounds (made by `scripts/make_sounds.py` from plain sine waves and noise — no samples, nothing from anyone else): a navigate tick,
   select, back, favourite sparkle, a launch whoosh, a soft error tone and a startup chime. Gamepad presses make the same sounds as keys. **Settings** has *Sound effects*
   (on), *Music* (a quiet ambient loop, **off** by default, silent while a game runs), *Volume* (20–100 %). Sounds are played by a small helper process using `pygame`'s mixer
-  (installed with the gamepad support) or, failing that, `paplay` / `pw-play` / `aplay`; if neither exists Atari is simply silent. Config: `[ui]` in `config.toml`.
+  (installed with the gamepad support) or, failing that, `paplay` / `pw-play` / `aplay`; if neither exists Code is simply silent. Config: `[ui]` in `config.toml`.
 * **Streaming & Social** (its own tile): **Kodi** (`tv.kodi.Kodi`) plus web-app tiles for **YouTube** (the TV layout, `youtube.com/tv`), **Netflix**, **Disney+**, **Prime Video**,
   **Twitch**, **Instagram**, **Facebook** and **TikTok**. Each opens in a full-screen "app" window of a browser found on your PC — Google Chrome, Chromium, Brave or
   ungoogled-Chromium (`--app=URL --start-fullscreen`), else Firefox (`--kiosk`) — with **its own profile folder** (`~/.local/share/atari/webapps/<name>`), so you **sign in once per
@@ -155,14 +196,14 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
   (Counter-Strike 2, Dota 2, Team Fortress 2, Path of Exile, Warframe, Marvel Rivals, THE FINALS, Brawlhalla — all ProtonDB gold, checked 2026-10-28) open Steam's free install page
   (`steam://install/<id>`) or start the game if you have it; open-source games (SuperTuxKart, 0 A.D., Xonotic, OpenArena, Luanti, Battle for Wesnoth, Warzone 2100, OpenTTD, Armagetron Advanced —
   all Flathub IDs verified) install through Flatpak on first Play. **Fortnite and Call of Duty / Warzone do NOT work on Linux** (their anti-cheat blocks it and Epic / Activision do not
-  support it); Atari shows an explanation instead of a fake launcher. Apex Legends, Destiny 2, Rainbow Six Siege and PUBG were also left out for the same reason. **Minecraft (Java)**
-  works through **Prism Launcher** in PC Apps and needs your own Minecraft licence (Atari includes nothing from Minecraft). Free Epic / GOG games: install **Heroic** (PC Apps); games
-  you claim there appear in Atari automatically. (Atari does not read Epic's weekly free list itself.)
+  support it); Code shows an explanation instead of a fake launcher. Apex Legends, Destiny 2, Rainbow Six Siege and PUBG were also left out for the same reason. **Minecraft (Java)**
+  works through **Prism Launcher** in PC Apps and needs your own Minecraft licence (Code includes nothing from Minecraft). Free Epic / GOG games: install **Heroic** (PC Apps); games
+  you claim there appear in Code automatically. (Code does not read Epic's weekly free list itself.)
 * **Hoodlum Asylum Studio** (Options → *Studio*, or the **Studio** tile): a small music studio in dark, gold and green, simpler than a full DAW, made for keyboard, gamepad and touch
   (big buttons; every screen also has on-screen ◀ ▶ ENTER BACK buttons). Screenshots: `docs/screenshot-studio-home.png`, `docs/screenshot-studio-beat.png`. Three big buttons:
   1. **Make a beat** — pick a style (**Trap, Drill, R&B, Afrobeats, Boom bap, Lo-fi, House**), then change speed (BPM), key, major/minor and a Chill↔Hard **vibe** slider, or press
-     **Surprise me**. Atari writes drums, 808 bass, chords and a tune and shows them in a **step-sequencer grid** with a moving playhead; **Play** previews it. All sounds are
-     synthesised by Atari itself with numpy (sine waves, noise, filters — no samples, nothing from anybody else).
+     **Surprise me**. Code writes drums, 808 bass, chords and a tune and shows them in a **step-sequencer grid** with a moving playhead; **Play** previews it. All sounds are
+     synthesised by Code itself with numpy (sine waves, noise, filters — no samples, nothing from anybody else).
   2. **Record your voice** — pick the microphone, optional 4-click **count-in**, record over the beat (it stops by itself at the end), keep **several takes**, play them back, trim the start/end
      (or **Auto-trim silence**; the count-in and the microphone's delay are cut off automatically so your voice lines up). Optional **headphone monitor** (hear yourself; use headphones).
   3. **Mix & share** — per-track **volume, pan, mute** and a one-press **effect** (*Vocal clean*, *Reverb*, *Echo*, *Vocal clean + reverb*), a **master loudness** (Quiet/Normal/Loud, with a limiter so it never clips),
@@ -185,7 +226,7 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
 
 ## What's new in 0.2.0
 
-* **New look**: banner with a red ATARI wordmark, tab row (All Games / Favourites / Recent / Systems / Settings), live clock, a scrollable
+* **New look**: banner with a red CODE wordmark, tab row (All Games / Favourites / Recent / Systems / Settings), live clock, a scrollable
   row of big console tiles, sidebar, cover grid, a detail panel with a big **PLAY** button, and a controller-hint bar.
 * **Add Games** (top bar, Settings, empty screen): detects USB sticks, finds games on them, lets you tick what to copy (with total size),
   copies with a progress bar, skips duplicates, and never changes the USB stick.
@@ -201,18 +242,18 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.3.2.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
+1. Download **`atari-0.4.0.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
 2. Open a **Terminal** and type:
 
    ```bash
    cd ~/Downloads
-   tar xzf atari-0.3.2.tar.gz
-   cd atari-0.3.2
+   tar xzf atari-0.4.0.tar.gz
+   cd atari-0.4.0
    ./install.sh
    ```
 
    It may ask for your password to install a few standard system libraries (it asks first, and skips this when there is no terminal).
-   It copies the app to `~/.local/share/atari-launcher`, creates a private Python environment there and adds **Atari** to your
+   It copies the app to `~/.local/share/atari-launcher`, creates a private Python environment there and adds **Code** to your
    application menu (under *Games*) and an `atari` command. **You can delete the downloaded folder afterwards.**
 
    * Want it to open by itself when you log in (like a console)? Use `./install.sh --autostart`.
@@ -224,7 +265,7 @@ To remove it later: `~/.local/share/atari-launcher/uninstall.sh` (your settings,
 
 ## 2. Start it
 
-* Open your application menu and click **Atari**, or
+* Open your application menu and click **Code**, or
 * in a terminal: `atari` (add `--windowed` for a normal window instead of full screen; `./run.sh --windowed` works from a source folder too).
 
 **Controls** (Xbox/PlayStation/Switch/8BitDo pads are all recognised by SDL):
@@ -250,19 +291,19 @@ The console tile row shows only systems that have games (plus Steam); choose **S
 ### From a USB stick (easiest)
 1. Plug in the stick, choose **Add Games** (top bar, or Settings, or the empty-library screen).
 2. Pick the drive (press **Refresh** if it isn't listed; **Browse folder…** lets you choose any folder instead, e.g. a card on another drive).
-3. Atari scans the drive (read-only) for games by file type and folder name, and lists them by console with sizes.
+3. Code scans the drive (read-only) for games by file type and folder name, and lists them by console with sizes.
    Tick the ones you want — *Select all* is there — and choose **Copy**.
 4. Files go to `~/Games/Atari/<console>/` (or the folder you configured for that console) with a progress bar; files that already
    exist are skipped, **Cancel** stops cleanly, and then the library refreshes. The USB stick is never modified, and NTFS/exFAT/FAT
    sticks and big files (multi-GB discs) are fine. PlayStation 3 game folders (`PS3_GAME`/`EBOOT.BIN`), `.iso`, `.pkg`, and Xbox `.iso`/`.xiso` are recognised.
 
 ### From folders
-On the **first start** Atari shows a setup screen (press **Esc**, or choose **DONE / CONTINUE**, to skip it and add games later). Later: **Options → Settings** (or the Settings tab). Pick a console, press **Enter**, choose the
-folder with its games and **Use this folder**. Atari searches sub-folders and tidies names (`Super_Game (USA) [!].sfc` → "Super Game").
+On the **first start** Code shows a setup screen (press **Esc**, or choose **DONE / CONTINUE**, to skip it and add games later). Later: **Options → Settings** (or the Settings tab). Pick a console, press **Enter**, choose the
+folder with its games and **Use this folder**. Code searches sub-folders and tidies names (`Super_Game (USA) [!].sfc` → "Super Game").
 Folders like `~/ROMs/snes`, `~/Games/Atari/snes` are pre-filled when they exist.
 
 ### Steam
-Nothing to do if Steam is installed normally: Atari looks in `~/.steam`, `~/.local/share/Steam`, the Flatpak and Snap locations and reads
+Nothing to do if Steam is installed normally: Code looks in `~/.steam`, `~/.local/share/Steam`, the Flatpak and Snap locations and reads
 **all** your Steam library folders, including drives under `/media`, `/mnt` or `/run/media`. It lists fully installed games (not tools such as Proton)
 and starts them with Steam itself (`steam steam://rungameid/<id>`). Steam must be installed and signed in.
 
@@ -274,14 +315,14 @@ and starts them with Steam itself (`steam steam://rungameid/<id>`). Steam must b
 * **Other games:** put a PNG or JPG named like the game (without extension) in `~/.local/share/atari/covers/`, e.g. `~/.local/share/atari/covers/Super Game.png`.
   (The older `~/.config/atari/covers/<console>/` folder still works.)
 * **Downloaded covers** (see *What's new in 0.3.0*) are saved under `~/.local/share/atari/covers/` too: `<console>/<game file name>.png` for ROMs and `steam/<appid>_cover.jpg` for Steam. Your own pictures always win and are never replaced.
-* Otherwise Atari draws a coloured placeholder cover. Nothing is downloaded unless you press **Download covers** or leave the automatic option on.
+* Otherwise Code draws a coloured placeholder cover. Nothing is downloaded unless you press **Download covers** or leave the automatic option on.
 * Optional details (genre, players, release, rating) can be given in `~/.local/share/atari/metadata.json`:
   `{"Super Game": {"genre": "Platformer", "players": "1-2", "release": "1993", "rating": 4.5}}`.
 
 ## 4. Emulators
 
-Atari doesn't contain emulators. Each console in the table lists emulators in order of preference — a program on your PATH **or** a Flatpak —
-and Atari uses the first one it finds. Consoles without an emulator still show, with an install hint. See **Settings → Emulators**
+Code doesn't contain emulators. Each console in the table lists emulators in order of preference — a program on your PATH **or** a Flatpak —
+and Code uses the first one it finds. Consoles without an emulator still show, with an install hint. See **Settings → Emulators**
 (press Enter on a console to cycle the emulator or see how to install it), or in a terminal:
 
 ```bash
@@ -300,7 +341,7 @@ atari-install-everything                     # everything: emulators, cores and 
 | Dreamcast | Flycast (`org.flycast.Flycast`) |
 | Xbox Classic | xemu (`app.xemu.xemu`) |
 | Arcade, DOS, ScummVM, C64, ZX Spectrum… | MAME, DOSBox, ScummVM, VICE, Fuse via native programs or Flatpak |
-| Switch | Configurable command only (set your emulator's command in Settings; no firmware or keys involved in Atari) |
+| Switch | Configurable command only (set your emulator's command in Settings; no firmware or keys involved in Code) |
 | PS Vita | Note only (Vita3K installs games inside its own window) |
 | Xbox 360 | Not supported on Linux |
 
@@ -308,10 +349,10 @@ atari-install-everything                     # everything: emulators, cores and 
 You must install RPCS3's **firmware** and supply your own games; PS3 emulation is heavy on integrated graphics.
 **Xbox Classic:** started as `xemu -dvd_path <iso>`. You supply your own BIOS/HDD image/games in xemu's settings.
 **You must supply your own BIOS, firmware, keys and games for any emulator that needs them** — **Add BIOS files** (Options menu, Settings, or Settings → Emulators)
-copies them from a USB stick for you, from consoles you own. Atari never downloads them.
+copies them from a USB stick for you, from consoles you own. Code never downloads them.
 
 ### Keyboard keys in emulators
-Atari steps aside while a game runs. **Help & getting started → Controls** (or Settings → Emulators) shows each emulator's keys. Flycast gets default keyboard bindings the first time (only if it has none).
+Code steps aside while a game runs. **Help & getting started → Controls** (or Settings → Emulators) shows each emulator's keys. Flycast gets default keyboard bindings the first time (only if it has none).
 RetroArch, DuckStation, PPSSPP, mGBA and PCSX2 use their own built-in keyboard defaults (listed on the Controls screen; change them inside the emulator).
 Dolphin, melonDS and Switch emulators need a one-time setup inside the emulator.
 
@@ -337,7 +378,7 @@ rpcs3 = "flatpak run net.rpcs3.RPCS3"
 ```
 
 Placeholders in `command`: `{rom}`, `{rom_dir}`, `{rom_name}`, and for RetroArch `{retroarch}`, `{core_path}`, `{core}`, `{cores_dir}`.
-Also available: `[steam] extra_libraries = [...]`, `[general] fullscreen = false`. Restart Atari (or *Options → Rescan*) after hand-editing.
+Also available: `[steam] extra_libraries = [...]`, `[general] fullscreen = false`. Restart Code (or *Options → Rescan*) after hand-editing.
 
 Play time, favourites and recents are in `~/.local/share/atari/state.json`. A launch log (useful if an emulator won't start) is in `~/.local/share/atari/launch.log`.
 
@@ -352,7 +393,7 @@ This is safe if you go slowly, but **partitioning can destroy data if something 
 2. **Pick a Linux.** The easiest for newcomers is **Linux Mint** (Cinnamon edition) — friendly installer, works with
    Windows already on the disk. Gaming-focused options are **Bazzite** and **Nobara** (Steam and graphics drivers ready out of the box),
    but their installers are less forgiving for *sharing a disk* with Windows: they are happiest on their **own separate drive**.
-   (Atari's installer is written for Mint/Ubuntu/Fedora-style systems; Bazzite/Nobara are *not tested* with it.)
+   (Code's installer is written for Mint/Ubuntu/Fedora-style systems; Bazzite/Nobara are *not tested* with it.)
 3. **Check for BitLocker/Device Encryption** (Windows 11 often turns it on automatically). Find your **recovery key**
    at <https://account.microsoft.com/devices/recoverykey> *before* touching partitions; Windows may ask for it afterwards.
 4. **Make room.** In Windows press `Win + X` → **Disk Management** → right-click your **C:** drive → **Shrink Volume**.
@@ -370,14 +411,14 @@ This is safe if you go slowly, but **partitioning can destroy data if something 
    (Ubuntu says "Install Ubuntu alongside Windows Boot Manager"). Drag the slider/choose the free space you made. Finish and restart.
    You will get a menu at every boot to choose Linux or Windows.
 9. **After installing**, run Software Update, install the graphics driver (Mint: *Driver Manager*), install **Steam**
-   (Software Manager) and sign in, then install Atari (section 1).
+   (Software Manager) and sign in, then install Code (section 1).
 
 ### Using your Windows Steam drive from Linux — read this
 You will be tempted to point Linux at the Steam library you already have on Windows' drive so you don't re-download games.
 **Honest warning:** it mostly doesn't work well.
 
 * Windows drives use **NTFS**. Linux can read and write it (just click the drive in the file manager to mount it — it appears under
-  `/media/<you>/` and Atari's folder browser lists it), and Atari **will list** Steam games found there.
+  `/media/<you>/` and Code's folder browser lists it), and Code **will list** Steam games found there.
 * But Windows games run on Linux through **Proton**, which needs a real Linux file system. On NTFS, Proton games often **fail to start,
   crash, or lose saves**. Steam's own support pages say Steam libraries on NTFS are unsupported. Native Linux games can have the same trouble.
 * If Windows is hibernating or "fast startup" is on, Linux can only open the drive **read-only** (or refuse), and updating games from
@@ -390,7 +431,7 @@ You will be tempted to point Linux at the Steam library you already have on Wind
 Then tell Steam about it: in **Steam → Settings → Storage**, open the drive drop-down → **Add Drive** (older Steam: *Settings → Downloads →
 Steam Library Folders → Add Library Folder*), pick the drive's folder, and choose it as the default for new installs. In *Disks*
 → the drive → ⚙ → **Edit Mount Options** → untick *User Session Defaults* and tick *Mount at system startup* so it's
-always there. Atari then finds every library Steam knows about automatically. Your Windows games stay on Windows; re-download
+always there. Code then finds every library Steam knows about automatically. Your Windows games stay on Windows; re-download
 what you want on Linux (save games sync through Steam Cloud for many titles).
 
 Other honest caveats: some games with kernel-level anti-cheat (many competitive multiplayer titles) don't run on Linux;
@@ -401,17 +442,17 @@ check [protondb.com](https://www.protondb.com) for each game; and big Windows up
 
 ## Caveats and limits (honest list)
 
-* Atari was **tested headlessly only** — with fake Steam libraries, fake ROMs and a fake USB mount — **not with a real controller, real USB stick,
+* Code was **tested headlessly only** — with fake Steam libraries, fake ROMs and a fake USB mount — **not with a real controller, real USB stick,
   or real emulators**. Emulator command lines and Flatpak IDs are written from the emulators' documentation and may need a tweak on your system
   (use the `command =` override).
 * The console tiles are original glyph art, not photos of consoles (by design: no company artwork).
 * Steam play-time is measured by watching for the game's process; if it can't detect the start, the game still launches but no time is recorded.
-* Atari does not manage Steam sign-in, downloads, Proton versions, or shader caches — Steam does.
-* Controller input only works while Atari is the focused window (so it never steals input from a game).
+* Code does not manage Steam sign-in, downloads, Proton versions, or shader caches — Steam does.
+* Controller input only works while Code is the focused window (so it never steals input from a game).
 * Wayland/X11 are both supported by Qt, but only headless (offscreen) testing was done. Full screen on some Wayland setups may need `F11`.
 * Animations are kept light (no GPU effects) for integrated graphics, but performance was not measured on real hardware.
 * Windows games: umu / Proton / Wine behaviour, anti-cheat/online games, and per-game quirks were **not tested on real hardware** (a stub runner was used in tests).
-  Many Windows games need extra Wine components; Bottles/Lutris are better for those (games installed in Lutris/Heroic appear in Atari).
+  Many Windows games need extra Wine components; Bottles/Lutris are better for those (games installed in Lutris/Heroic appear in Code).
 * The `.rar` and `.7z` formats need the `7z` program (`sudo apt install p7zip-full`, which the install-everything script also does).
 * The Studio: see its entry above — rule-based beats (no AI model yet), recording not tested on a real microphone, MP3 export needs ffmpeg or lame.
 * There is **no AppImage**; the tarball + `install.sh` is the supported way.

@@ -98,7 +98,7 @@ def fix(ps: list[Problem], out: Callable[[str], None], run: Callable | None = No
             if in_venv():
                 rc = run([python, "-m", "pip", "install", "--disable-pip-version-check", NUMPY_REQ], out, None)
             elif which("pkexec") and which("apt-get"):
-                out("Atari is not in its own Python environment, so numpy comes from your system. A password window will pop up...")
+                out("Code is not in its own Python environment, so numpy comes from your system. A password window will pop up...")
                 rc = run(["pkexec", "apt-get", "install", "-y", "python3-numpy"], out, None)
             else:
                 rc = 1
@@ -111,7 +111,7 @@ def fix(ps: list[Problem], out: Callable[[str], None], run: Callable | None = No
             log(f"fix audio-tools rc={rc}")
     if failed:
         return False, ("Could not add: " + ", ".join(failed) + ". Check the internet connection and press Fix Studio again, "
-                       "or run ./install.sh again in the Atari folder.")
+                       "or run ./install.sh again in the Code folder.")
     if done:
         return True, "Added " + " and ".join(done) + ". The Studio is ready."
     return True, "Nothing needed fixing."

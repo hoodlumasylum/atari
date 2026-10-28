@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check every Flatpak id Atari uses against Flathub: does it exist, is it end-of-life, is its runtime end-of-life?
+"""Check every Flatpak id Code uses against Flathub: does it exist, is it end-of-life, is its runtime end-of-life?
 Usage:  python3 scripts/audit_flatpaks.py          (needs internet; read-only; exit code 1 when something is wrong)"""
 import json
 import sys
@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from atarilauncher import apps, appinstall, freegames  # noqa: E402
 
 API = "https://flathub.org/api/v2"
-UA = {"User-Agent": "AtariLauncher-audit/0.3.2 (+https://github.com/hoodlumasylum/atari)"}
+UA = {"User-Agent": "AtariLauncher-audit/0.4.0 (+https://github.com/hoodlumasylum/atari)"}
 
 
 def get(path: str):

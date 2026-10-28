@@ -67,7 +67,7 @@ def test_settings_and_emulator_rows_for_030(app, tmp_path, monkeypatch):
         assert {"bios", "covers", "coversauto", "update", "updateauto", "emulators"} <= kinds
         rows = ui.backend.emulatorRows()
         ekinds = [r["kind"] for r in rows]
-        assert "install" in ekinds and "bios" in ekinds and "controls" in ekinds and ekinds.count("app") == 13
+        assert "install" in ekinds and "bios" in ekinds and "controls" in ekinds and ekinds.count("app") == 15
         ps1 = next(r for r in rows if r.get("id") == "ps1")
         assert "BIOS" in ps1["detail"] and "your own console" in ps1["detail"]
         assert "apps" in [t["key"] for t in ui.backend.tiles]       # the PC Apps tile is always there
@@ -199,7 +199,7 @@ def test_update_screen_end_to_end_with_fake_release_server(app, tmp_path, monkey
             assert (root / "atarilauncher" / "__init__.py").read_text().strip().endswith('"9.9.9"')
             assert (tmp_path / "conf" / "config.toml").read_text() == mine   # settings untouched
             assert not ui.backend.updateAvailable
-            ui.key(Qt.Key_Return)                                           # RESTART ATARI NOW
+            ui.key(Qt.Key_Return)                                           # RESTART CODE NOW
             assert spawned and spawned[0][-1] != "" and str(root / "run.sh") in spawned[0] and quits == [1]
             assert not ui.warnings, ui.warnings
         finally:
@@ -260,7 +260,7 @@ def test_silent_daily_check_shows_badge_and_respects_toggle(app, tmp_path, monke
 
 
 def test_minimise_for_game_and_restore(app, tmp_path, monkeypatch):
-    """While a ROM game runs Atari steps aside (so the emulator gets the keyboard) and comes back afterwards."""
+    """While a ROM game runs Code steps aside (so the emulator gets the keyboard) and comes back afterwards."""
     conf(tmp_path)
     ui = Ui(app, tmp_path, monkeypatch, config_exists=False)
     try:

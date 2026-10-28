@@ -1,4 +1,4 @@
-"""Atari-only mode: the files it writes, the safety net, the way back, and the confirm / result screens.
+"""Code-only mode: the files it writes, the safety net, the way back, and the confirm / result screens.
 Nothing here touches the real /etc: a Layout points the three files into a temporary folder, and "pkexec" is a stand-in
 that runs the generated script with the paths moved under that folder."""
 import os
@@ -17,7 +17,7 @@ from tests.test_ui_keys import Ui, app  # noqa: E402,F401
 
 @pytest.fixture
 def box(tmp_path):
-    """A fake machine root with LightDM, a Cinnamon session entry and Atari's run.sh."""
+    """A fake machine root with LightDM, a Cinnamon session entry and Code's run.sh."""
     root = tmp_path / "root"
     (root / "usr/share/xsessions").mkdir(parents=True)
     (root / "usr/share/xsessions/cinnamon.desktop").write_text("[Desktop Entry]\nName=Cinnamon\nExec=cinnamon-session-cinnamon\n")
@@ -99,7 +99,7 @@ def test_enable_writes_exactly_three_files_and_disable_removes_them(box):
     assert "autologin-user=hazel" in lm.read_text() and "autologin-session=atari" in lm.read_text()
     assert "autologin-user-timeout=0" in lm.read_text()
     x = xs.read_text()
-    assert "Exec=/usr/local/bin/atari-session" in x and "Type=XSession" in x and "Name=Atari" in x
+    assert "Exec=/usr/local/bin/atari-session" in x and "Type=XSession" in x and "Name=Code" in x
     s = sess.read_text()
     assert str(run_sh) in s and "exec cinnamon-session-cinnamon" in s                # the safety net uses Mint's own session
     assert "desktop-once" in s and "-lt 3" in s
@@ -131,7 +131,7 @@ def test_closed_password_window_and_failures_are_explained(box):
 
 
 def test_the_session_script_really_falls_back_to_the_desktop(box, tmp_path):
-    """Run the generated session script for real: a broken Atari three times in a row -> the Mint desktop starts."""
+    """Run the generated session script for real: a broken Code three times in a row -> the Mint desktop starts."""
     layout, run_sh, _ = box
     bad = tmp_path / "bad-run.sh"
     bad.write_text("#!/bin/sh\necho start >> %s/starts\nexit 1\n" % tmp_path)
@@ -164,7 +164,7 @@ def test_open_desktop_once_flag_makes_the_session_start_the_desktop_and_is_singl
     ok, text = kiosk.open_desktop_once(home, run=lambda cmd, **kw: calls.append(cmd), which=lambda n: "/usr/bin/" + n)
     assert ok and kiosk.desktop_once_flag(home).is_file() and calls == [["cinnamon-session-quit", "--logout", "--no-prompt"]]
     subprocess.run(["sh", str(script)], env=env, timeout=30)             # next login: desktop, once
-    subprocess.run(["sh", str(script)], env=env, timeout=40)             # login after that: Atari again (it ends quickly -> retries, then desktop)
+    subprocess.run(["sh", str(script)], env=env, timeout=40)             # login after that: Code again (it ends quickly -> retries, then desktop)
     first = (tmp_path / "starts").read_text().split()
     assert first[0] == "desktop" and "atari" in first[1:]
     assert not kiosk.desktop_once_flag(home).exists()
@@ -184,7 +184,7 @@ def test_settings_row_confirm_screen_and_result(app, tmp_path, monkeypatch, box)
         b = ui.backend
         b._kiosk_layout = layout
         row = [r for r in b.setupRows() if r.get("kind") == "kioskpage"][0]
-        assert row["value"] == "OFF" and "Atari-only mode" in row["title"]
+        assert row["value"] == "OFF" and "Code-only mode" in row["title"]
         monkeypatch.setattr(kiosk, "preflight", lambda lay=layout, **kw: checks(box))
         rows = b.pageRows("kiosk")
         text = " ".join(r.get("title", "") for r in rows)
@@ -198,7 +198,7 @@ def test_settings_row_confirm_screen_and_result(app, tmp_path, monkeypatch, box)
         assert b.pageActivate("kiosk", "kioskon") == "refresh"             # runs in the background, never blocks the screen
         assert wait_for(app, lambda: kiosk.enabled(layout), 10), b.toast
         assert wait_for(app, lambda: not b._kiosk_busy, 5)
-        assert "Atari-only mode is ON" in b.toast
+        assert "Code-only mode is ON" in b.toast
         rows = b.pageRows("kiosk")
         assert [r.get("id") for r in rows if r["kind"] != "info"] == ["kioskoff", "kioskonce", "back"]
         assert rows[0]["kind"] == "info" and rows[0]["title"].startswith("Result:")
@@ -207,7 +207,7 @@ def test_settings_row_confirm_screen_and_result(app, tmp_path, monkeypatch, box)
         assert b.pageActivate("kiosk", "kioskoff") == "refresh"            # the way back from Settings
         assert wait_for(app, lambda: not kiosk.enabled(layout), 10)
         assert wait_for(app, lambda: not b._kiosk_busy, 5)
-        assert "Atari-only mode is OFF" in b.toast
+        assert "Code-only mode is OFF" in b.toast
         assert not any(f.exists() for f in layout.files)
     finally:
         ui.close()

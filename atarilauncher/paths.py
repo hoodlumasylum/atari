@@ -1,4 +1,4 @@
-"""Where Atari keeps its files (overridable via env vars, handy for tests)."""
+"""Where Code keeps its files (overridable via env vars, handy for tests)."""
 from __future__ import annotations
 
 import os

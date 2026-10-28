@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Draws the two soft, tileable wave pictures behind Atari's main screen (original artwork, standard library only).
+"""Draws the two soft, tileable wave pictures behind Code's main screen (original artwork, standard library only).
 
     python3 scripts/make_waves.py      # writes atarilauncher/assets/wave1.png and wave2.png
 
-Both wrap around seamlessly: Atari slides two copies sideways, which costs the GPU almost nothing.
+Both wrap around seamlessly: Code slides two copies sideways, which costs the GPU almost nothing.
 """
 import math
 import struct

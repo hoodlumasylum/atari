@@ -27,7 +27,7 @@ def controller_text(sys_class: str = "/sys/class/input") -> str:
     if not names:
         return ("No game controller found. Plug one in (or turn it on over Bluetooth) and it shows up here - "
                 "the keyboard works the whole time.")
-    return "Controller found: " + ", ".join(names) + ". It works in Atari's menus, and inside most emulators."
+    return "Controller found: " + ", ".join(names) + ". It works in Code's menus, and inside most emulators."
 
 
 def check_game(cfg, game, sys_class: str = "/sys/class/input") -> list[dict]:
@@ -57,6 +57,8 @@ def check_game(cfg, game, sys_class: str = "/sys/class/input") -> list[dict]:
     elif game.gid.endswith(":roblox") and game.platform == apps.APPS:
         for c in sober.preflight():
             add(OK if c.ok else (BAD if c.fatal else NOTE), "Roblox (Sober): " + c.id, "" if c.ok else c.text)
+        if sober.bundle_state(0.0):
+            add(BAD, "Roblox download", "Sober's last start could not download Roblox and asked for an application bundle. " + sober.BUNDLE_HELP)
         add(NOTE, "Installing", "Press Install on the Roblox tile - it comes from Flathub only. " + sober.INVALID_BUNDLE_TEXT)
     elif game.platform in apps.NON_GAME or game.launch:
         add(NOTE, "This is a PC app or a store game.", "If nothing opens, install the app: Options > Emulators.")
@@ -87,7 +89,7 @@ def check_game(cfg, game, sys_class: str = "/sys/class/input") -> list[dict]:
 def summary(rows: list[dict]) -> str:
     bad = [r for r in rows if r["state"] == BAD]
     if not bad:
-        return "Everything Atari can check looks fine. If the game still misbehaves, try Options > Copy log and ask for help."
+        return "Everything Code can check looks fine. If the game still misbehaves, try Options > Copy log and ask for help."
     return "Found " + str(len(bad)) + (" problem" if len(bad) == 1 else " problems") + " - the fix is written under each."
 
 

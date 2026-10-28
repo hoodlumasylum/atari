@@ -1,7 +1,7 @@
 """Streaming & Social: web apps (YouTube, Netflix, Instagram, ...) shown as tiles and started in a full-screen "app" window
 of a browser on this PC, each with its own private profile folder so you sign in once per app.
 
-Atari uses no company logos: the tiles are plain text/colour tiles. Nothing is downloaded or bundled here.
+Code uses no company logos: the tiles are plain text/colour tiles. Nothing is downloaded or bundled here.
 Order of browsers: Google Chrome, Chromium, Brave, ungoogled-Chromium (as `--app=URL --start-fullscreen`), then Firefox
 (`--kiosk`). Netflix, Prime Video and Disney+ need Widevine DRM: Google Chrome has it built in, Firefox downloads it after you
 accept its prompt; on Linux those services stream at about 720p (Widevine "L3"), never 4K/HDR.
@@ -27,6 +27,7 @@ class WebApp:
     url: str
     drm: bool = False
     note: str = ""
+    browse: bool = False        # a normal browser window (address bar, back / forward) instead of a full-screen app window
 
     @property
     def gid(self) -> str:
@@ -36,6 +37,17 @@ class WebApp:
 DRM_NOTE = ("Needs Widevine DRM (Google Chrome has it; in Firefox accept its \"Play DRM content\" prompt). "
             "On Linux this streams at about 720p, not 4K.")
 WEBAPPS: list[WebApp] = [
+    WebApp("browser", "Web Browser", "https://duckduckgo.com/", browse=True,
+           note="A normal browser window with an address bar and back / forward buttons, starting at a neutral search engine. "
+                "Press Esc twice (or hold Guide + B on a controller) to return to Code. Files you download land in ~/Downloads - "
+                "Options > Downloads moves them into your games. Code does not recommend or link any download site."),
+    WebApp("twitchlive", "Twitch (go live)", "https://dashboard.twitch.tv/stream-manager", browse=True,
+           note="Twitch's Creator Dashboard in a browser window: your stream key is under Settings > Stream. Pair it with OBS (Options > Go Live)."),
+    WebApp("tiktoklive", "TikTok LIVE (go live)", "https://www.tiktok.com/live", browse=True,
+           note="TikTok's web LIVE page in a browser window. TikTok LIVE Studio is Windows-only, so on Linux you stream with OBS and "
+                "the server URL + stream key TikTok shows here (only for accounts that qualify)."),
+    WebApp("youtubelive", "YouTube Live (go live)", "https://studio.youtube.com", browse=True,
+           note="YouTube Studio in a browser window: Create > Go live > Stream shows your stream key. Pair it with OBS (Options > Go Live)."),
     WebApp("youtube", "YouTube", "https://www.youtube.com/tv",
            note="The TV layout of YouTube - big buttons, works with arrow keys and Enter. Sign in once."),
     WebApp("netflix", "Netflix", "https://www.netflix.com", True, DRM_NOTE),
@@ -90,12 +102,12 @@ def find_browser(cfg=None, home: Path | None = None, which: Callable = shutil.wh
 def build_command(cfg, app: WebApp, home: Path | None = None, which: Callable = shutil.which,
                   root: Path | None = None) -> tuple[list[str], str]:
     """(command, browser name). A command in config ([emulators] browser = "...") replaces the browser:
-    Atari adds --app=<url> --start-fullscreen --user-data-dir=<profile> to it. Returns ([], '') when no browser exists."""
+    Code adds --app=<url> --start-fullscreen --user-data-dir=<profile> to it. Returns ([], '') when no browser exists."""
     root = root or profile_root()
     prof = root / app.id
     custom = (cfg.emulator_commands.get("browser") or "").strip() if cfg is not None else ""
     if custom:
-        return shlex.split(custom) + chromium_flags(app, prof), "your browser"
+        return shlex.split(custom) + (browse_flags(app, prof) if app.browse else chromium_flags(app, prof)), "your browser"
     b, how = find_browser(cfg, home, which, app.drm)
     if b is None:
         return [], ""
@@ -103,9 +115,17 @@ def build_command(cfg, app: WebApp, home: Path | None = None, which: Callable = 
         base = ["flatpak", "run", f"--filesystem={root}", b.flatpak]
     else:
         base = [next(e for e in b.exes if which(e))]
-    flags = chromium_flags(app, prof) if b.kind == "chromium" else [
-        "--no-remote", "--profile", str(prof), "--kiosk", app.url]
+    if app.browse:
+        flags = (browse_flags(app, prof) if b.kind == "chromium" else ["--no-remote", "--profile", str(prof), app.url])
+    else:
+        flags = chromium_flags(app, prof) if b.kind == "chromium" else [
+            "--no-remote", "--profile", str(prof), "--kiosk", app.url]
     return base + flags, b.name
+
+
+def browse_flags(app: WebApp, prof: Path) -> list[str]:
+    """A normal window (toolbar visible), maximised, with its own profile so it never touches your everyday browser."""
+    return ["--new-window", "--start-maximized", f"--user-data-dir={prof}", "--no-first-run", "--no-default-browser-check", app.url]
 
 
 def chromium_flags(app: WebApp, prof: Path) -> list[str]:

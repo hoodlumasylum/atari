@@ -1,10 +1,10 @@
-"""PC apps and stores shown in Atari's "PC Apps / Stores" section, and games imported from Heroic and Lutris.
+"""PC apps and stores shown in Code's "PC Apps / Stores" section, and games imported from Heroic and Lutris.
 
 Every app is described by one AppDef (a Flathub id plus how to find a native install), so adding another is one line.
-Atari only *starts* these programs; you sign in to each store / service yourself, inside its own window.
+Code only *starts* these programs; you sign in to each store / service yourself, inside its own window.
 
 Roblox has no official Linux client. "Sober" (Flatpak org.vinegarhq.Sober, VinegarHQ) is an unofficial community runner
-that can break after a Roblox update. Wine / Vinegar do not work (Roblox blocks them), so Atari does not try them.
+that can break after a Roblox update. Wine / Vinegar do not work (Roblox blocks them), so Code does not try them.
 """
 from __future__ import annotations
 
@@ -46,15 +46,15 @@ class AppDef:
 
 APP_DEFS: list[AppDef] = [
     AppDef("steam", "Steam", "com.valvesoftware.Steam", ("steam",),
-           "Valve's game store. Press Install if it is missing; then sign in to your own Steam account. Installed games show up in Atari "
+           "Valve's game store. Press Install if it is missing; then sign in to your own Steam account. Installed games show up in Code "
            "(press Rescan Steam in Settings after installing one).", apt="steam-installer"),
     AppDef("roblox", "Roblox", "org.vinegarhq.Sober", ("sober",),
            "Runs through Sober, an unofficial community app (not made by Roblox). It can break after a Roblox "
            "update. The first start helps you install Roblox; sign in to your own Roblox account there."),
     AppDef("heroic", "Heroic Games Launcher", "com.heroicgameslauncher.hgl", ("heroic",),
-           "Epic, GOG and Amazon games. Sign in to your own accounts inside Heroic; installed games show up in Atari."),
+           "Epic, GOG and Amazon games. Sign in to your own accounts inside Heroic; installed games show up in Code."),
     AppDef("lutris", "Lutris", "net.lutris.Lutris", ("lutris",),
-           "Runs many Windows and retro games. Installed Lutris games show up in Atari."),
+           "Runs many Windows and retro games. Installed Lutris games show up in Code."),
     AppDef("bottles", "Bottles", "com.usebottles.bottles", ("bottles",),
            "Runs Windows programs and games."),
     AppDef("itch", "itch.io", "io.itch.itch", ("itch",),
@@ -67,6 +67,15 @@ APP_DEFS: list[AppDef] = [
            "Installs and updates Proton-GE / Wine versions, which Windows games run on."),
     AppDef("kodi", "Kodi (media centre)", "tv.kodi.Kodi", ("kodi",),
            "Plays your own videos, music and photos; add-ons are up to you.", apt="kodi", group="streaming"),
+    AppDef("transmission", "Transmission (torrent client)", "com.transmissionbt.Transmission",
+           ("transmission-gtk", "transmission-qt"),
+           "Open-source torrent downloader. Code does not preload any torrents, trackers or sites: you add your own .torrent file or "
+           "magnet link, and only for files you own or may legally share. Saves to ~/Downloads; Options > Downloads moves finished "
+           "files into your games.", apt="transmission-gtk"),
+    AppDef("obs", "OBS Studio (live streaming)", "com.obsproject.Studio", ("obs",),
+           "Free, open-source streaming and recording program for Twitch, YouTube Live, TikTok LIVE and others. Options > Go Live starts "
+           "it with a ready screen-capture scene; you add your own stream key. Linux has no 'Game Capture' - it captures the screen.",
+           apt="obs-studio"),
     AppDef("moonlight", "Moonlight (game streaming)", "com.moonlight_stream.Moonlight", ("moonlight", "moonlight-qt"),
            "Streams games from another PC running Sunshine or GeForce Experience."),
 ]
@@ -83,7 +92,7 @@ HELPERS: list[AppDef] = [
     AppDef("7zip", "7-Zip (opens .7z / .rar game archives)", "", ("7z", "7zz", "7za"), "Opens .7z and .rar archives.",
            apt="p7zip-full"),
     AppDef("umu", "umu-launcher (runs Windows games with Proton)", "", ("umu-run",),
-           "Atari's first choice for Windows games. Installed from its official GitHub release."),
+           "Code's first choice for Windows games. Installed from its official GitHub release."),
 ]
 
 
@@ -215,7 +224,7 @@ def lutris_dbs(home: Path) -> list[Path]:
 
 
 def lutris_games(home: Path | None = None) -> list[StoreGame]:
-    """Installed Lutris games from its pga.db (read only). Steam entries are skipped: Atari already lists Steam."""
+    """Installed Lutris games from its pga.db (read only). Steam entries are skipped: Code already lists Steam."""
     home = home or Path.home()
     out: list[StoreGame] = []
     seen: set[str] = set()

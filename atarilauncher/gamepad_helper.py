@@ -3,7 +3,7 @@
 It uses SDL2 (bundled with the `pygame` package) which understands practically every
 controller (Xbox, PlayStation, Switch Pro, 8BitDo...). It prints one word per line:
 up down left right accept back favorite options system search prev next quitapp record
-(`quitapp` = Guide/Home held + B: closes a running web app or Kodi and returns to Atari;
+(`quitapp` = Guide/Home held + B: closes a running web app or Kodi and returns to Code;
 `record` = Guide/Home held + X: start / stop the screen recorder)
 
 Running it in its own process keeps SDL's settings out of the emulators we launch,

@@ -38,7 +38,7 @@ def test_add_games_opens_a_wizard_with_three_big_buttons_and_back(app, tmp_path,
         open_menu_item(ui, "add")
         assert ui.mode == "page" and page(ui) == "addgames"
         rows = ui.backend.pageRows("addgames")
-        assert [r.get("id") for r in rows if r["kind"] != "info"] == ["usb", "folder", "windows", "bios", "finish", "back"]
+        assert [r.get("id") for r in rows if r["kind"] != "info"] == ["usb", "folder", "windows", "bios", "downloads", "finish", "back"]
         shown = on_screen(ui)
         for label in ("From a USB stick", "From a folder on this computer", "A Windows game (.exe or .zip)", "Back"):
             assert label in shown, shown

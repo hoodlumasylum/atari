@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1010 830" width="1010" height="830">
+  <title>Code - one-colour sticker (original redraw)</title>
+  <g fill="#000000">
+  <path transform="translate(300 345) rotate(-28)" d="M-24 0 L24 0 L24 -236 L0 -270 L-24 -236 Z"/>
+  <path transform="translate(710.0 345) rotate(28)" d="M-24 0 L24 0 L24 -236 L0 -270 L-24 -236 Z"/>
+  <path transform="translate(300 345) rotate(-46)" d="M-24 0 L24 0 L24 -256 L0 -290 L-24 -256 Z"/>
+  <path transform="translate(710.0 345) rotate(46)" d="M-24 0 L24 0 L24 -256 L0 -290 L-24 -256 Z"/>
+  <path transform="translate(300 345) rotate(-64)" d="M-24 0 L24 0 L24 -246 L0 -280 L-24 -246 Z"/>
+  <path transform="translate(710.0 345) rotate(64)" d="M-24 0 L24 0 L24 -246 L0 -280 L-24 -246 Z"/>
+  <path transform="translate(300 345) rotate(-82)" d="M-24 0 L24 0 L24 -211 L0 -245 L-24 -211 Z"/>
+  <path transform="translate(710.0 345) rotate(82)" d="M-24 0 L24 0 L24 -211 L0 -245 L-24 -211 Z"/>
+  <path transform="translate(300 345) rotate(-98)" d="M-24 0 L24 0 L24 -156 L0 -190 L-24 -156 Z"/>
+  <path transform="translate(710.0 345) rotate(98)" d="M-24 0 L24 0 L24 -156 L0 -190 L-24 -156 Z"/>
+  <path d="M425 292 L438 196 L478 246 L505 160 L532 246 L572 196 L585 292 Z"/>
+  <path d="M230 330 H110 L50 390 V530 L110 590 H230 V524 H130 L116 510 V410 L130 396 H230 Z"/>
+  <path fill-rule="evenodd" d="M560 330 H660 L740 400 V520 L670 590 H560 Z M626 396 V524 H650 L674 500 V420 L650 396 Z"/>
+  <path d="M780 330 H960 V396 H846 V428 H940 V490 H846 V524 H960 V590 H780 Z"/>
+  <path fill-rule="evenodd" d="M425 308 a78 92 0 1 0 0.01 0 Z M425 352 a36 48 0 1 1 -0.01 0 Z"/>
+  <rect x="345" y="480" width="160" height="54" rx="6"/>
+  <rect x="397" y="480" width="56" height="150" rx="6"/>
+  <path d="M330 640 L505 800 L680 640 L610 640 L505 735 L400 640 Z"/>
+  </g>
+</svg>
