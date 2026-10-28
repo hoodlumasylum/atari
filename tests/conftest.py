@@ -33,3 +33,18 @@ def fake_system(tmp_path):
     mounts = tmp_path / "mounts"
     mounts.write_text(fill((FIX / "mounts.txt").read_text()))
     return {"home": home, "mnt": mnt, "steam": steam, "ntfs_lib": ntfs_lib, "mounts": str(mounts)}
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _qt_app():
+    """One QGuiApplication (offscreen) for the whole run - the QML key/mouse tests need a GUI app, and Qt allows only one."""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    os.environ.setdefault("QT_QUICK_BACKEND", "software")
+    try:
+        from PySide6.QtGui import QGuiApplication
+    except ImportError:
+        yield None
+        return
+    app = QGuiApplication.instance() or QGuiApplication(sys.argv[:1])
+    yield app

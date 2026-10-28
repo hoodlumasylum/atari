@@ -90,7 +90,7 @@ def test_setup_flow_saves_config_and_scans(tmp_path, monkeypatch):
     b = be.Backend(cfg=cfg, store=Store(tmp_path / "s.json"), enable_gamepad=False)
     assert b.firstRun and b.emptyMessage().startswith("No games yet")
     rows = b.setupRows()
-    assert rows[0]["kind"] == "steam" and rows[-1]["kind"] == "done"
+    assert rows[0]["kind"] == "done" and rows[1]["kind"] == "steam" and rows[-1]["kind"] == "done"
     assert any(r.get("id") == "snes" for r in rows)
     # folder browser data
     listing = b.listDir(str(tmp_path / "ROMs"))
@@ -102,3 +102,24 @@ def test_setup_flow_saves_config_and_scans(tmp_path, monkeypatch):
     assert not b.firstRun and (tmp_path / "conf" / "config.toml").is_file()
     assert b.totalGames == 1 and b.model.rowCount() == 1
     assert config.load_config().systems["snes"].roms == [str(roms)]
+
+
+def test_dismissing_first_run_marks_it_complete_even_with_zero_games(tmp_path, monkeypatch):
+    monkeypatch.setenv("ATARI_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("ATARI_CONFIG_DIR", str(tmp_path / "conf"))
+    QCoreApplication.instance() or QCoreApplication([])
+    cfg = config.load_config()
+    cfg.steam_enabled = False
+    store = Store(tmp_path / "data" / "state.json")
+    b = be.Backend(cfg=cfg, store=store, enable_gamepad=False)
+    assert b.firstRun
+    b.finishSetup()
+    assert not b.firstRun and b.totalGames == 0
+    assert (tmp_path / "conf" / "config.toml").is_file()
+    assert Store(tmp_path / "data" / "state.json").get_pref("setup_done") is True
+    # next start: never first-run again, not even if the config file is gone
+    (tmp_path / "conf" / "config.toml").unlink()
+    cfg2 = config.load_config()
+    assert cfg2.first_run
+    b2 = be.Backend(cfg=cfg2, store=Store(tmp_path / "data" / "state.json"), enable_gamepad=False)
+    assert not b2.firstRun

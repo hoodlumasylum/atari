@@ -154,9 +154,14 @@ Window {
         else setupList.firstSelectable()
     }
     function openSetup() { refreshSetup(false); mode = "setup" }
+    // Esc / B / the DONE rows / the DONE button: leave the setup page for the main screen.
+    // On the very first run this also marks the welcome screen as seen, so it never shows again.
     function leaveSetup() {
-        if (backend.firstRun) return
-        backend.rescan(false, false); buildLists(); mode = "library"
+        if (backend.firstRun) backend.finishSetup()
+        else backend.rescan(false, false)
+        buildLists()
+        mode = "library"
+        area = grid.count > 0 ? "grid" : "tiles"
     }
     function refreshEmus(keep) {
         var idx = emuList.currentIndex
@@ -329,7 +334,7 @@ Window {
 
     function setupKey(e) {
         var k = e.key
-        if (k === Qt.Key_Escape) { leaveSetup(); return }
+        if (k === Qt.Key_Escape || k === Qt.Key_B) { leaveSetup(); return }
         if (k === Qt.Key_Up) setupList.move(-1)
         else if (k === Qt.Key_Down) setupList.move(1)
         else if (k === Qt.Key_Delete || k === Qt.Key_Backspace || k === Qt.Key_F) {
@@ -349,12 +354,21 @@ Window {
             var cur = r.detail && r.detail.indexOf("Not set") !== 0 ? r.detail.split(", ")[0] : backend.homeDir()
             openBrowser({ kind: "system", id: r.id }, cur)
         }
-        else if (r.kind === "done") { backend.finishSetup(); buildLists(); mode = "library"; area = grid.count > 0 ? "grid" : "tiles" }
+        else if (r.kind === "done") leaveSetup()
+    }
+
+    // the on-screen button next to the title of Settings / Folder picker / Emulators (same as Esc / B)
+    function overlayBack() {
+        if (mode === "setup") leaveSetup()
+        else if (mode === "browse") mode = browseTarget.kind === "import" ? "import" : "setup"
+        else if (mode === "emulators") {
+            if (importReturn === "setup") { refreshSetup(true); mode = "setup" } else mode = "library"
+        }
     }
 
     function emuKey(e) {
         var k = e.key
-        if (k === Qt.Key_Escape) { if (importReturn === "setup") { refreshSetup(true); mode = "setup" } else mode = "library"; return }
+        if (k === Qt.Key_Escape || k === Qt.Key_B) { if (importReturn === "setup") { refreshSetup(true); mode = "setup" } else mode = "library"; return }
         if (k === Qt.Key_Up) emuList.move(-1)
         else if (k === Qt.Key_Down) emuList.move(1)
         else if (isEnter(k) || k === Qt.Key_Space) emuActivate(emuList.currentIndex)
@@ -368,7 +382,7 @@ Window {
 
     function browseKey(e) {
         var k = e.key
-        if (k === Qt.Key_Escape) { mode = browseTarget.kind === "import" ? "import" : "setup"; return }
+        if (k === Qt.Key_Escape || k === Qt.Key_B) { mode = browseTarget.kind === "import" ? "import" : "setup"; return }
         if (k === Qt.Key_Up) browseList.move(-1)
         else if (k === Qt.Key_Down) browseList.move(1)
         else if (k === Qt.Key_Left || k === Qt.Key_Backspace) {
@@ -392,7 +406,7 @@ Window {
         }
     }
 
-    Item {
+    FocusScope {
         id: root
         anchors.fill: parent
         focus: true
@@ -948,11 +962,31 @@ Window {
                               ? "Pick the folder, then choose \"Use this folder\".  Left = up, Esc / B = cancel."
                               : win.mode === "emulators"
                               ? "Enter / A switches the emulator for a console.  Esc / B = back."
+                              : backend.firstRun
+                              ? "Up/Down to choose, Enter / A to change.  Choose DONE / CONTINUE (or press Esc / B) to go to your games."
                               : "Up/Down to choose, Enter / A to change.  Delete / X clears a folder.  Esc / B = back."
                         color: "#e6e8f2"
                         font.pixelSize: 21 * win.u
                     }
                 }
+            }
+            Rectangle {  // always-visible button for mouse / touch users (keyboard: Esc / B)
+                id: setupBack
+                z: 5
+                anchors.top: parent.top
+                anchors.topMargin: 34 * win.u
+                anchors.right: parent.right
+                anchors.rightMargin: 48 * win.u
+                width: 300 * win.u; height: 60 * win.u; radius: 10 * win.u
+                gradient: Gradient {
+                    GradientStop { position: 0; color: "#ee2a34" } GradientStop { position: 1; color: "#a8121b" } }
+                border.width: 2 * win.u; border.color: "white"
+                Text {
+                    anchors.centerIn: parent
+                    text: win.mode === "setup" ? "DONE / CONTINUE" : (win.mode === "browse" ? "CANCEL" : "BACK")
+                    color: "white"; font.pixelSize: 21 * win.u; font.bold: true; font.letterSpacing: 1 * win.u
+                }
+                MouseArea { anchors.fill: parent; onClicked: win.overlayBack() }
             }
             Rectangle { id: setupLine; anchors.top: setupHead.bottom; width: parent.width; height: 3 * win.u; color: Theme.red }
             Item {
@@ -1069,6 +1103,19 @@ Window {
         }
     }
 
+    // ---- keyboard focus: the key handler lives on `root`, so make sure `root` really owns the focus.
+    // (Real desktops activate the window after it is shown, switch away with Alt-Tab, etc.)
+    function ensureFocus() {
+        if (!root.activeFocus) root.forceActiveFocus()
+    }
+    onActiveChanged: if (active) ensureFocus()
+    onVisibleChanged: if (visible) ensureFocus()
+    onVisibilityChanged: ensureFocus()
+    onActiveFocusItemChanged: if (active && activeFocusItem !== root) ensureFocus()
+    Timer {   // safety net: if anything ever steals the focus, take it back
+        interval: 700; repeat: true; running: win.visible
+        onTriggered: if (win.active) win.ensureFocus()
+    }
     Connections {
         target: backend
         function onFiltersChanged() { win.buildLists() }
@@ -1081,6 +1128,7 @@ Window {
         if (backend.firstRun) refreshSetup(false)
         area = grid.count > 0 ? "grid" : "tiles"
         root.forceActiveFocus()
+        Qt.callLater(win.ensureFocus)
         refreshCur()
     }
 }

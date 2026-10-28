@@ -109,6 +109,18 @@ if ! QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software ATARI_NO_GAMEPAD=1 PYTH
     warn "The start-up test failed - see the messages above. (Missing system libraries are the usual cause; see the README.)"
     exit 1
 fi
+# the first-start screen must be leavable with Esc (a bug in 0.2.0): start with an empty private config, press Esc, expect config.toml
+ST_DIR="$(mktemp -d)"
+if QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software ATARI_NO_GAMEPAD=1 PYTHONPATH="$APP_DIR" \
+        HOME="$ST_DIR" ATARI_CONFIG_DIR="$ST_DIR/conf" ATARI_DATA_DIR="$ST_DIR/data" \
+        "$APP_DIR/.venv/bin/python" -m atarilauncher --windowed --selftest --screenshot-keys "wait:200,back,wait:300" >/dev/null \
+        && [ -f "$ST_DIR/conf/config.toml" ]; then
+    rm -rf "$ST_DIR"
+else
+    rm -rf "$ST_DIR"
+    warn "The first-start screen test failed - see the messages above."
+    exit 1
+fi
 echo "OK"
 
 # ---------------------------------------------------------------- app menu entry

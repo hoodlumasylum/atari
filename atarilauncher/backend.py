@@ -84,7 +84,8 @@ class Backend(QObject):
         self._running = False
         self._running_title = ""
         self._toast = ""
-        self._first_run = self.cfg.first_run and not demo
+        # the welcome/setup screen shows only once: not if a config exists, nor if it was already dismissed
+        self._first_run = bool(self.cfg.first_run and not self.store.get_pref("setup_done", False)) and not demo
         self._gamepad_proc: QProcess | None = None
         self._window = None
         self._toast_timer = QTimer(self, singleShot=True, interval=5000)
@@ -664,7 +665,7 @@ class Backend(QObject):
     # ----- setup screen ----------------------------------------------------
     @Slot(result="QVariantList")
     def setupRows(self):
-        rows = []
+        rows = [self._done_row()]  # a DONE / CONTINUE row at the top...
         scan = self._lib.steam_scan
         rows.append({"kind": "steam", "title": "Steam games",
                      "value": "ON" if self.cfg.steam_enabled else "OFF",
@@ -689,9 +690,14 @@ class Backend(QObject):
             rows.append({"kind": "system", "id": sc.id, "title": sc.name,
                          "value": (f"{n} game" + ("" if n == 1 else "s")) if sc.roms else "",
                          "detail": folder})
-        rows.append({"kind": "done", "title": "Save and start playing", "value": "",
-                     "detail": f"Settings are saved in {self.configPath}"})
+        rows.append(self._done_row())
         return rows
+
+    def _done_row(self) -> dict:
+        """...and at the bottom of the setup list; Enter on it (or Esc / B) goes to the main screen."""
+        return {"kind": "done", "title": "DONE / CONTINUE", "value": "",
+                "detail": ("Go to your games. You can come back here any time from Options > Settings."
+                           if self._first_run else "Save and go back to your games.")}
 
     def _setup_shown(self) -> set:
         """Consoles always listed in Settings (the popular ones); others appear after "Show all systems"."""
@@ -736,6 +742,7 @@ class Backend(QObject):
                 save_config(self.cfg)
             except OSError as exc:
                 self.show_toast(f"Could not save settings: {exc}", 8000)
+            self.store.set_pref("setup_done", True)  # second marker, in case the config could not be written
         self._first_run = False
         self.firstRunChanged.emit()
         self.rescan(initial=False)

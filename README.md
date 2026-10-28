@@ -27,6 +27,13 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
+## What's new in 0.2.1
+
+* **Fixed: could not leave the first-start setup screen.** Esc / B (and Enter on the new **DONE / CONTINUE** rows or the button in the top corner)
+  now take you to the main screen, even with no games yet (you get the friendly empty screen with the **Add Games** button).
+  The welcome screen only appears once; you can always reopen it from **Options → Settings**.
+* Keyboard focus is now grabbed reliably when the window opens, after Alt-Tab, and if anything steals it. Mouse / touch work on every row and button.
+
 ## What's new in 0.2.0
 
 * **New look**: banner with a red ATARI wordmark, tab row (All Games / Favourites / Recent / Systems / Settings), live clock, a scrollable
@@ -45,13 +52,13 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.2.0.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
+1. Download **`atari-0.2.1.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
 2. Open a **Terminal** and type:
 
    ```bash
    cd ~/Downloads
-   tar xzf atari-0.2.0.tar.gz
-   cd atari-0.2.0
+   tar xzf atari-0.2.1.tar.gz
+   cd atari-0.2.1
    ./install.sh
    ```
 
@@ -101,7 +108,7 @@ The console tile row shows only systems that have games (plus Steam); choose **S
    sticks and big files (multi-GB discs) are fine. PlayStation 3 game folders (`PS3_GAME`/`EBOOT.BIN`), `.iso`, `.pkg`, and Xbox `.iso`/`.xiso` are recognised.
 
 ### From folders
-On the **first start** Atari shows a setup screen. Later: **Options → Settings** (or the Settings tab). Pick a console, press **Enter**, choose the
+On the **first start** Atari shows a setup screen (press **Esc**, or choose **DONE / CONTINUE**, to skip it and add games later). Later: **Options → Settings** (or the Settings tab). Pick a console, press **Enter**, choose the
 folder with its games and **Use this folder**. Atari searches sub-folders and tidies names (`Super_Game (USA) [!].sfc` → "Super Game").
 Folders like `~/ROMs/snes`, `~/Games/Atari/snes` are pre-filled when they exist.
 
@@ -258,7 +265,7 @@ check [protondb.com](https://www.protondb.com) for each game; and big Windows up
 
 Covers the Steam parser, ROM scanner (incl. PS3 folders), the USB import (fake mounts, duplicates, cancel), config round-trips and migration,
 emulator detection and launch-command building (native + Flatpak), play-time tracking, search/favourites/sort logic, controller logic, and
-the real UI started headlessly (first run, empty, populated, Add Games end to end, Settings/Emulators pages). Screenshots:
+the real UI started headlessly (first run incl. Esc/B/Enter to leave setup, keyboard-focus loss, mouse clicks, empty, populated, Add Games end to end, Settings/Emulators pages). Screenshots:
 `QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software ./run.sh --demo --windowed --size 1920x1080 --screenshot docs/screenshot.png`
 (`scripts/make_demo_home.py` builds a fake home with ~20 games and a fake USB stick.)
 

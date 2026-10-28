@@ -59,6 +59,9 @@ def main(argv=None) -> int:
         return 1
     window = engine.rootObjects()[0]
     backend.set_window(window)
+    if not (args.selftest or args.screenshot):
+        # make sure the window is raised and owns the keyboard focus on real X11 / Wayland sessions
+        QTimer.singleShot(0, lambda: (window.raise_(), window.requestActivate()))
     if args.size:
         try:
             w, h = (int(x) for x in args.size.lower().split("x"))

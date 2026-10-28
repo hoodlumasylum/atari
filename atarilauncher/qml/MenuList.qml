@@ -42,13 +42,14 @@ Item {
             readonly property bool isInfo: modelData.kind === "info"
             readonly property bool sel: ListView.isCurrentItem && !isInfo
             readonly property bool two: !!modelData.detail
+            readonly property bool primary: modelData.kind === "done"   // the big red DONE / CONTINUE rows
             width: lv.width
             height: isInfo ? Math.max(34 * ml.u, infoText.implicitHeight + 12 * ml.u)
                            : (two ? 56 * ml.u + detailText.implicitHeight : 62 * ml.u)
             radius: 10 * ml.u
-            color: sel ? "#2a0b10" : (isInfo ? "transparent" : "#121420")
+            color: primary ? (sel ? "#d8222c" : "#a8121b") : (sel ? "#2a0b10" : (isInfo ? "transparent" : "#121420"))
             border.width: sel ? 3 * ml.u : (isInfo ? 0 : 1.5 * ml.u)
-            border.color: sel ? Theme.redBright : "#262a3c"
+            border.color: sel ? (primary ? "white" : Theme.redBright) : (primary ? "#ff5a62" : "#262a3c")
             Text {
                 id: infoText
                 visible: row.isInfo

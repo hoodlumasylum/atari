@@ -94,3 +94,15 @@ def test_settings_and_emulators_pages_open(tmp_path):
     r = run(tmp_path, home, "--selftest", keys="menu,wait,down,down,down,down,accept,wait,back,back,wait")
     assert r.returncode == 0, r.stderr
     assert "Traceback" not in r.stderr and "qml" not in r.stderr.lower()
+
+
+def test_first_run_escape_goes_to_main_screen_and_saves_config(tmp_path):
+    """The 0.2.0 bug: Esc / B on the welcome screen did nothing. Through the real UI (gamepad-style 'back')."""
+    home = tmp_path / "h3"
+    home.mkdir()
+    r = run(tmp_path, home, "--selftest", keys="wait:200,back,wait:300")
+    assert r.returncode == 0, r.stderr
+    assert "Traceback" not in r.stderr and "qml" not in r.stderr.lower()
+    assert (tmp_path / "conf" / "config.toml").is_file()
+    r = run(tmp_path, home, "--selftest", keys="wait:200,back,wait:200")   # second start: no setup screen any more
+    assert r.returncode == 0, r.stderr
