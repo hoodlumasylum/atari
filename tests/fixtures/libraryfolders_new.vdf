@@ -1,0 +1,28 @@
+"libraryfolders"
+{
+	"0"
+	{
+		"path"		"@HOME@/.local/share/Steam"
+		"label"		""
+		"contentid"		"1234567890"
+		"totalsize"		"0"
+		"apps"
+		{
+			"228980"		"123456"
+			"620"		"4096"
+		}
+	}
+	"1"
+	{
+		"path"		"@MNT@/WindowsSteam/SteamLibrary"
+		"label"		"Games drive"
+		"apps"
+		{
+			"400"		"1000"
+		}
+	}
+	"2"
+	{
+		"path"		"@MNT@/not-plugged-in/SteamLibrary"
+	}
+}
