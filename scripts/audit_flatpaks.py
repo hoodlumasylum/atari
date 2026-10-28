@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from atarilauncher import apps, appinstall, freegames  # noqa: E402
 
 API = "https://flathub.org/api/v2"
-UA = {"User-Agent": "AtariLauncher-audit/0.3.1 (+https://github.com/hoodlumasylum/atari)"}
+UA = {"User-Agent": "AtariLauncher-audit/0.3.2 (+https://github.com/hoodlumasylum/atari)"}
 
 
 def get(path: str):

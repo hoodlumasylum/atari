@@ -211,8 +211,9 @@ class Watch:
 
     def __init__(self, proc: subprocess.Popen, flatpak_id: str = "", keys: X11Keys | None = None,
                  detector: EscDetector | None = None, grace: float = GRACE, on_trigger: Callable[[str], None] | None = None,
-                 term: Callable = terminate_app):
+                 term: Callable = terminate_app, guard: Callable[[], bool] | None = None):
         self.proc, self.flatpak_id, self.grace = proc, flatpak_id, grace
+        self.guard = guard               # returns True while the keyboard gesture must be ignored (a game is running)
         self.keys = keys if keys is not None else X11Keys()
         self.detector = detector or EscDetector()
         self.on_trigger = on_trigger
@@ -250,6 +251,12 @@ class Watch:
                 except Exception:
                     self.keys.available = False
                     continue
+                if self.guard is not None:
+                    try:
+                        if self.guard():
+                            esc = ctrl = False       # a game is in front: its Esc key is its own
+                    except Exception:
+                        pass
                 what = self.detector.feed(time.monotonic(), esc, ctrl)
                 if what:
                     self.trigger(what)

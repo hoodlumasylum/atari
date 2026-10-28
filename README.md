@@ -27,6 +27,17 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
+## What's new in 0.3.2
+
+- **Original Xbox games (.iso) are found.** Add Games now looks *inside* a disc image to tell the console (Xbox, GameCube, Wii, PS2, PS1, PSP, Sega CD, Saturn), so `Shenmue II (USA).iso` in any folder just works. If it still cannot tell, it asks **"Which system is this?"** with big buttons (Xbox Classic, PlayStation 2 …) instead of skipping the file, and the result screen lists every skipped file with the reason and what was in the folder (e.g. "1 .iso, 1 .txt"). **CHOOSE SYSTEM** brings the question back. Unpacked Xbox game folders (with `default.xbe`) are found too; to start one Atari turns it into a disc image with the small tool `extract-xiso` (or you use a single `.iso`).
+- **Steam opens full screen in Big Picture** (`steam -gamepadui`, or the `steam://open/bigpicture` link when Steam is already open). Settings > *Open Steam in Big Picture (full screen)* turns it off (default ON). Back to Atari: press **Esc twice** (or hold Esc 1 s, Ctrl+Esc, or hold **Guide + B** on a controller): Atari leaves Big Picture and comes back - Steam keeps running. While a Steam game is on screen the keyboard gesture is ignored (the game owns Esc); the controller chord still works.
+- **Fix Steam controller / gamepad permissions** (Help, the Steam page and Fix my game): one press installs Valve's udev rules (`steam-devices`) so Steam stops saying "Missing permissions for input devices". One password window.
+- **Atari-only mode** (Settings): the computer starts straight into Atari with no Mint desktop. It writes three small files named "atari" (LightDM auto-login drop-in, an Atari session entry, a session script) after a clear confirm screen and one password window.
+  **Ways back:** Settings > *Back to Mint desktop* (removes the three files) - or Settings > *Open the Mint desktop once* (no password, this login only) - or at the login screen pick the **Cinnamon** session - or if Atari cannot start three times in a row the Mint desktop starts by itself - or press **Ctrl+Alt+F2**, log in and run
+  `sudo rm /etc/lightdm/lightdm.conf.d/90-atari-kiosk.conf && sudo systemctl restart lightdm`.
+  Optional fast-boot tips (nothing is changed for you): `systemd-analyze blame`, then disable services you do not need (cups, ModemManager, bluetooth, NetworkManager-wait-online).
+  Needs LightDM (Linux Mint's default). Not tested on real hardware yet - see the release notes.
+
 ## What's new in 0.3.1
 
 ### Get back from Netflix, YouTube, Kodi … with the keyboard
@@ -190,13 +201,13 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.3.1.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
+1. Download **`atari-0.3.2.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
 2. Open a **Terminal** and type:
 
    ```bash
    cd ~/Downloads
-   tar xzf atari-0.3.1.tar.gz
-   cd atari-0.3.1
+   tar xzf atari-0.3.2.tar.gz
+   cd atari-0.3.2
    ./install.sh
    ```
 

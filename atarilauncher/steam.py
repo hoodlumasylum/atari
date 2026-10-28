@@ -295,3 +295,34 @@ def find_header(root: Path | None, appid: str) -> str:
             if hits:
                 return hits[0]
     return ""
+
+
+# ------------------------------------------------------------------ Big Picture
+def _cmdlines(proc_root: str = "/proc"):
+    try:
+        entries = os.listdir(proc_root)
+    except OSError:
+        return
+    for e in entries:
+        if e.isdigit():
+            try:
+                with open(f"{proc_root}/{e}/cmdline", "rb") as fh:
+                    yield int(e), [a for a in fh.read().split(b"\0") if a]
+            except OSError:
+                continue
+
+
+def steam_running(proc_root: str = "/proc") -> bool:
+    """True while the Steam client itself is running (native, or Flatpak - its processes show on the host too)."""
+    for _pid, parts in _cmdlines(proc_root):
+        if any(os.path.basename(a.decode("utf-8", "replace")) in ("steam", "steamwebhelper") for a in parts[:2]):
+            return True
+    return False
+
+
+def steam_game_running(proc_root: str = "/proc") -> bool:
+    """True while a game started by Steam is running (its 'reaper' wrapper carries AppId=<id>)."""
+    for _pid, parts in _cmdlines(proc_root):
+        if any(os.path.basename(a) == b"reaper" for a in parts[:1]) and any(a.startswith(b"AppId=") for a in parts):
+            return True
+    return False

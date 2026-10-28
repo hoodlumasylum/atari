@@ -58,6 +58,17 @@ class ImportModel(QAbstractListModel):
         self.endResetModel()
         self.selectionChanged.emit()
 
+    def add_items(self, items: list) -> None:
+        """Append games (ticked) - used when the user has said which console some files are for."""
+        if not items:
+            return
+        first = len(self._items)
+        self.beginInsertRows(QModelIndex(), first, first + len(items) - 1)
+        self._items.extend(items)
+        self._checked.extend([True] * len(items))
+        self.endInsertRows()
+        self.selectionChanged.emit()
+
     @Slot(int)
     def toggle(self, row: int) -> None:
         if 0 <= row < len(self._items):

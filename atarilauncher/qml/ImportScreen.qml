@@ -44,16 +44,22 @@ Item {
                 backend.cancelImport()
                 if (!copying) refreshDrives()
             }
+        } else if (st === "choose") {
+            if (k === Qt.Key_Escape) { backend.chooseImportSystem(""); return }
+            if (k === Qt.Key_Up) chooseList.move(-1)
+            else if (k === Qt.Key_Down) chooseList.move(1)
+            else if (isEnter(k) || k === Qt.Key_Space) pickSystem(chooseList.currentIndex)
         } else if (st === "list") {
             if (k === Qt.Key_Escape) { backToDrives(); return }
             if (zone === "buttons") {
                 if (k === Qt.Key_Left) btn = Math.max(0, btn - 1)
-                else if (k === Qt.Key_Right) btn = Math.min(2, btn + 1)
+                else if (k === Qt.Key_Right) btn = Math.min(backend.importPendingCount > 0 ? 3 : 2, btn + 1)
                 else if (k === Qt.Key_Down && list.count > 0) zone = "list"
                 else if (k === Qt.Key_F) toggleAll()
                 else if (isEnter(k) || k === Qt.Key_Space) {
                     if (btn === 0) startCopy()
                     else if (btn === 1) toggleAll()
+                    else if (btn === 3) backend.askImportSystems()
                     else backToDrives()
                 }
             } else {
@@ -72,6 +78,16 @@ Item {
             else if (isEnter(k)) { if (btn === 0) closed(); else backToDrives() }
         }
     }
+    property var choiceRows: []
+    function refreshChoice() {
+        choiceRows = backend.importChoiceRows()
+        chooseList.model = choiceRows
+        chooseList.firstSelectable()
+    }
+    function pickSystem(i) {
+        var r = choiceRows[i]
+        if (r) backend.chooseImportSystem(r.sid)
+    }
     function activateRow(i) {
         var r = rows[i]
         if (!r) return
@@ -85,6 +101,7 @@ Item {
         target: backend
         function onImportChanged() {
             if (backend.importState === "list") imp.enterList()
+            if (backend.importState === "choose") imp.refreshChoice()
             if (backend.importState === "done") imp.btn = 0
         }
     }
@@ -122,6 +139,7 @@ Item {
                     : imp.st === "scanning" ? (imp.bios ? "Looking for BIOS files..." : "Looking for games...")
                     : imp.st === "list" ? (imp.bios ? "Tick the files to copy. Each goes to the right folder for its emulator."
                                                     : "Tick the games to copy. They go to ~/Games/Atari/<console> (or your folder for that console).")
+                    : imp.st === "choose" ? "Some files could be for more than one console. Tell me which one."
                     : imp.st === "copying" ? "Copying - please don't unplug the stick yet." : "All done."
             }
         }
@@ -215,13 +233,15 @@ Item {
                 model: [
                     { t: (imp.tick, "COPY ") + backend.importItems.selectedCount() + " (" + imp.summary + ")", primary: true },
                     { t: (imp.tick, backend.importItems.allSelected()) ? "SELECT NONE" : "SELECT ALL", primary: false },
-                    { t: "BACK", primary: false }
+                    { t: "BACK", primary: false },
+                    { t: "CHOOSE SYSTEM (" + (imp.tick, backend.importPendingCount) + ")", primary: false, ask: true }
                 ]
                 Rectangle {
                     required property var modelData
                     required property int index
                     readonly property bool sel: imp.zone === "buttons" && imp.btn === index
-                    width: (index === 0 ? 400 : 230) * imp.u
+                    visible: !modelData.ask || backend.importPendingCount > 0
+                    width: (index === 0 ? 400 : (index === 3 ? 330 : 230)) * imp.u
                     height: 56 * imp.u
                     radius: 10 * imp.u
                     opacity: index === 0 && (imp.tick, backend.importItems.selectedCount()) === 0 ? 0.45 : 1
@@ -230,14 +250,14 @@ Item {
                         GradientStop { position: 1; color: modelData.primary ? (sel ? "#c4161f" : "#a8121b") : "#141622" }
                     }
                     border.width: sel ? 3 * imp.u : 1.5 * imp.u
-                    border.color: sel ? "white" : (modelData.primary ? "transparent" : "#3a4260")
+                    border.color: sel ? "white" : (modelData.primary ? "transparent" : (modelData.ask ? Theme.yellow : "#3a4260"))
                     Text { anchors.centerIn: parent; text: modelData.t; color: "white"
                            font.pixelSize: 19 * imp.u; font.bold: true; font.letterSpacing: 1 * imp.u }
                     MouseArea {
                         anchors.fill: parent
                         onClicked: {
                             imp.zone = "buttons"; imp.btn = index
-                            if (index === 0) imp.startCopy(); else if (index === 1) imp.toggleAll(); else imp.backToDrives()
+                            if (index === 0) imp.startCopy(); else if (index === 1) imp.toggleAll(); else if (index === 3) backend.askImportSystems(); else imp.backToDrives()
                         }
                     }
                 }
@@ -321,6 +341,32 @@ Item {
                     onClicked: { imp.zone = "list"; list.currentIndex = item.index; backend.toggleImportItem(item.index); imp.updateSummary() }
                 }
             }
+        }
+    }
+
+    // ---- "Which system is this?"
+    Item {
+        anchors.top: headline.bottom
+        anchors.topMargin: 20 * imp.u
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 20 * imp.u
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: Math.min(parent.width - 100 * imp.u, 1400 * imp.u)
+        visible: imp.st === "choose"
+        Text { id: chTitle; width: parent.width; text: backend.importChoiceTitle; color: "white"
+               font.pixelSize: 40 * imp.u; font.bold: true }
+        Text { id: chFiles; anchors.top: chTitle.bottom; anchors.topMargin: 6 * imp.u; width: parent.width
+               text: backend.importChoiceFiles; color: Theme.yellow; font.pixelSize: 22 * imp.u; elide: Text.ElideMiddle
+               maximumLineCount: 7; wrapMode: Text.Wrap }
+        MenuList {
+            id: chooseList
+            u: imp.u
+            anchors.top: chFiles.bottom
+            anchors.topMargin: 14 * imp.u
+            anchors.bottom: parent.bottom
+            width: parent.width
+            model: []
+            onClicked: function (i) { imp.pickSystem(i) }
         }
     }
 

@@ -57,6 +57,7 @@ class Config:
     steamgriddb_key: str = ""      # optional free SteamGridDB API key for extra covers (Settings)
     cover_wikipedia: bool = True   # Wikipedia's article picture as a last-resort cover source
     esc_exit: bool = True          # Esc twice / hold Esc / Ctrl+Esc / Guide+B quits a web app or Kodi and returns to Atari
+    steam_bigpicture: bool = True  # the Steam tile opens Steam full screen in Big Picture (controller-friendly) mode
     reduce_animations: bool = False  # Settings > Reduce animations: no moving background, bobbing or fades
     first_run: bool = False
     path: Path | None = None
@@ -114,6 +115,7 @@ def load_config(path: Path | None = None) -> Config:
             cfg.volume = 0.6
         cfg.reduce_animations = bool(ui.get("reduce_animations", False))
         cfg.esc_exit = bool(ui.get("esc_exit", True))
+        cfg.steam_bigpicture = bool(ui.get("steam_bigpicture", True))
     rc = data.get("recording", {})
     if isinstance(rc, dict):
         cfg.rec_audio = rc.get("audio", "desktop") if rc.get("audio") in ("none", "desktop", "mic", "both") else "desktop"
@@ -199,6 +201,8 @@ def dump_config(cfg: Config) -> str:
         "reduce_animations = " + ("true" if cfg.reduce_animations else "false"),
         "# Esc twice (or hold Esc 1 s, Ctrl+Esc, gamepad Guide+B) closes Netflix / YouTube / Kodi and returns to Atari.",
         "esc_exit = " + ("true" if cfg.esc_exit else "false"),
+        "# The Steam tile opens Steam full screen in Big Picture mode (steam -gamepadui). false = normal window.",
+        "steam_bigpicture = " + ("true" if cfg.steam_bigpicture else "false"),
         "",
         "[retroarch]",
         '# Leave empty to auto-detect. Example: command = "flatpak run org.libretro.RetroArch"',

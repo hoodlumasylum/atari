@@ -83,6 +83,16 @@ def scan_folder(folder: Path, extensions, system: str, max_files: int = 20000) -
                 roms.append(Rom(game[0], system, game[1], mtime))
                 dirnames[:] = []
                 continue
+        if system == "xbox":
+            xbe = [f for f in filenames if f.lower() == "default.xbe"]
+            if xbe:  # an unpacked original-Xbox game folder is one game
+                try:
+                    mtime = Path(dirpath).stat().st_mtime
+                except OSError:
+                    mtime = 0.0
+                roms.append(Rom(Path(dirpath) / xbe[0], system, clean_title(Path(dirpath).name), mtime))
+                dirnames[:] = []
+                continue
         dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
         for fn in sorted(filenames):
             if fn.startswith("."):

@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from . import apps, controls, emulators, exitwatch, freegames, paths, webapps, windows
+from . import apps, controls, emulators, exitwatch, freegames, paths, webapps, windows, xbox
 from .config import Config, SystemConfig
 from .library import Game
 
@@ -71,6 +71,8 @@ def controls_hint(cfg: Config, game: Game) -> str:
     """One line of keyboard keys for the emulator that would run this game ('' for Steam / unknown)."""
     if game.platform == "steam":
         return ""
+    if game.gid == "app:steam" and getattr(cfg, "steam_bigpicture", True):
+        return exit_hint(cfg)
     if game.platform == webapps.STREAMING:            # Netflix, YouTube, ... and Kodi: how to get back to Atari
         return exit_hint(cfg)
     system = cfg.systems.get(game.platform)
@@ -200,7 +202,13 @@ def run_game(cfg: Config, game: Game, on_started: Callable[[], None],
     if is_pkg:  # a .pkg is an installer: RPCS3 only installs packages with its window open
         cmd = emulators.find_emu(cfg, "rpcs3")[0] + ["--installpkg", game.rom_path]
     else:
-        cmd = build_rom_command(cfg, system, game.rom_path)
+        rom = game.rom_path
+        if system.id == "xbox":  # xemu starts disc images only: an unpacked game folder becomes one first
+            try:
+                rom = xbox.disc_image_for(rom)
+            except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+                raise LaunchError(str(exc))
+        cmd = build_rom_command(cfg, system, rom)
     if not system.command.strip() and cmd and not shutil.which(cmd[0]):
         ready, _label, hint = emulators.status_line(cfg, system)
         if not ready:
@@ -250,6 +258,8 @@ def _run_app(cfg: Config, game: Game, on_started):
         raise LaunchError(apps.install_hint(app) if app else "That app is not available.")
     _check_executable(cmd, app.title)
     _log("launch: " + shlex.join(cmd))
+    if app.id == "steam" and not game.launch and getattr(cfg, "steam_bigpicture", True):
+        return _run_steam_bigpicture(cfg, game, cmd, on_started)
     if app.id == "steam" and not game.launch:      # Steam stays open on its own: start it and come straight back
         try:
             subprocess.Popen(cmd, env=clean_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -289,6 +299,92 @@ def _run_app(cfg: Config, game: Game, on_started):
                  "> Install emulators and apps." if app.id == "roblox" else "")
         return 0.0, (f"{app.title} closed right away (code {code}).{extra} Details: {paths.log_file()}")
     return elapsed, ""
+
+
+def bigpicture_command(cfg: Config, base: list[str], running: bool) -> list[str]:
+    """How to put Steam into full-screen Big Picture mode: a fresh start uses `-gamepadui`; a Steam that is
+    already open is told with the steam:// link (a second `steam` call would only hand the request over)."""
+    return base + (["steam://open/bigpicture"] if running else ["-gamepadui"])
+
+
+def _close_bigpicture(base: list[str]):
+    """The quit gesture for Steam: leave Big Picture (Steam itself keeps running, and so do your downloads / games)."""
+    def term(_proc, _flatpak_id="", _grace=0.0):
+        try:
+            subprocess.run(base + ["steam://close/bigpicture"], env=clean_env(), stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=15)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return term
+
+
+class _SteamProc:
+    """Stands in for "the Steam process" in the Esc watcher: alive while the Steam client runs (it may have been
+    started long before Atari, so it is not our child)."""
+    pid = 0
+
+    def __init__(self, running=None):
+        from . import steam as steam_mod
+        self._running = running or steam_mod.steam_running
+        self.seen = False
+
+    def poll(self):
+        alive = self._running()
+        if alive:
+            self.seen = True
+            return None
+        return 0 if self.seen else None
+
+    def send_signal(self, _sig):
+        pass
+
+
+def _run_steam_bigpicture(cfg: Config, game: Game, cmd: list[str], on_started):
+    """Steam tile: open Steam full screen in Big Picture, and come back to Atari with the Esc / Guide+B gesture."""
+    from . import steam as steam_mod
+    base = list(cmd)
+    cmd = bigpicture_command(cfg, base, steam_mod.steam_running())
+    watched = exitwatch.enabled(cfg)
+    if watched:
+        time.sleep(_hint_delay())
+    _log("launch (steam big picture): " + shlex.join(cmd))
+    started = time.time()
+    try:
+        subprocess.Popen(cmd, env=clean_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         stdin=subprocess.DEVNULL, start_new_session=True)
+    except OSError as exc:
+        raise LaunchError(f"Could not start Steam: {exc}")
+    on_started()
+    proc = _SteamProc()
+    deadline = time.time() + _steam_appear_timeout()
+    while proc.poll() is None and not proc.seen and time.time() < deadline:   # wait for the Steam window to exist
+        time.sleep(0.5)
+    if not proc.seen:
+        return 0.0, INFO + ("Steam is starting - sign in there. After Steam has installed a game, choose "
+                            "Settings > Steam > Rescan Steam so it shows up here.")
+    watch = None
+    if watched:
+        watch = exitwatch.Watch(proc, "", term=_close_bigpicture(base), grace=0.0, guard=steam_mod.steam_game_running)
+        _log("esc-to-return (steam): " + ("keyboard watcher on (X11)" if watch.keyboard_ok else
+                                          f"keyboard watcher unavailable ({watch.keys.why}); gamepad Guide+B only"))
+        watch.start()
+        exitwatch.notify(exitwatch.HINT_SHORT)
+    try:
+        while proc.poll() is None and not (watch is not None and watch.triggered):
+            time.sleep(0.5)
+    finally:
+        if watch is not None:
+            watch.stop()
+    if watch is not None and watch.triggered:
+        _log(f"esc-to-return: left Steam Big Picture ({watch.reason})")
+    return time.time() - started, ""
+
+
+def _steam_appear_timeout() -> float:
+    try:
+        return max(0.0, float(os.environ.get("ATARI_STEAM_WAIT", "90")))
+    except ValueError:
+        return 90.0
 
 
 INFO = "\u2139 "     # a message that is advice, not an error (no error sound, no "Fix my game" hint)

@@ -522,6 +522,8 @@ Window {
         else if (r.kind === "sgdbkey") openOsk("sgdbkey")
         else if (r.kind === "installmenu") backend.installEmulators()
         else if (r.kind === "steampage") openPage("steam")
+        else if (r.kind === "kioskpage") openPage("kiosk")
+        else if (r.kind === "bigpicture") { backend.toggleSteamBigPicture(); refreshSetup(true) }
         else if (r.kind === "escexit") { backend.toggleEscExit(); refreshSetup(true) }
         else if (r.kind === "anim") { backend.toggleAnimations(); refreshSetup(true) }
         else if (r.kind === "covers") { backend.downloadCoversNow(); refreshSetup(true) }

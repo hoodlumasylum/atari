@@ -12,7 +12,7 @@ from pathlib import Path
 from PySide6.QtCore import Property, QObject, QProcess, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QKeyEvent
 
-from . import icons, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
+from . import icons, inputfix, kiosk, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
 from . import __version__
 from .config import Config, load_config, save_config
 from .import_model import ImportModel
@@ -57,6 +57,8 @@ class Backend(QObject):
     coverArrived = Signal(str, str, str)   # gid, file, kind (from worker thread)
     coverProgressed = Signal(int, int, int)  # done, total, got
     coversFinished = Signal(object)         # covers.Report
+    kioskDone = Signal(bool, str)           # (worked, text) from the Atari-only mode worker thread
+    inputFixDone = Signal(bool, str)        # (worked, text) from the permissions-fix thread
     iconArrived = Signal(str, str, bool)    # gid, file, fit (from the icon worker thread)
     iconsDone = Signal()
     sessionStarted = Signal()               # the emulator process is up (from worker thread)
@@ -97,8 +99,21 @@ class Backend(QObject):
         self._imp_source = ""
         self._imp_cancel = threading.Event()
         self._imp_kind = "games"          # "games" | "bios" - the same USB picker serves both
+        self._imp_left: list = []          # files whose console is still unknown ("Which system is this?")
+        self._imp_groups: list = []
+        self._imp_group: list = []
+        self._imp_seen = ""
+        self._imp_truncated = False
+        self._imp_failed_scan = False
+        self._imp_nfiles = 0
         self._add_result = ""             # what the last Add Games run did, shown on the wizard page
         self.importScanned.connect(self._on_import_scanned, Qt.QueuedConnection)
+        self.inputFixDone.connect(self._input_fix_finished, Qt.QueuedConnection)
+        self._input_fixing = False
+        self.kioskDone.connect(self._kiosk_finished, Qt.QueuedConnection)
+        self._kiosk_busy = False
+        self._kiosk_msg = ""
+        self._kiosk_layout = kiosk.DEFAULT
         self.importProgressed.connect(self._on_import_progress, Qt.QueuedConnection)
         self.importFinished.connect(self._on_import_finished, Qt.QueuedConnection)
         self._lib = LibraryResult()
@@ -780,6 +795,99 @@ class Backend(QObject):
     def installSteam(self) -> None:
         self.begin_install(["steam"], for_gid="app:steam", what="Steam")
 
+    @Slot()
+    def fixInputPermissions(self) -> None:
+        """One press: install Valve's udev rules so Steam stops saying "Missing permissions for input devices"."""
+        if self._input_fixing:
+            self.show_toast("Already working on it - a password window may be waiting.", 5000)
+            return
+        self._input_fixing = True
+        self.show_toast("Fixing controller permissions - a password window will pop up...", 8000)
+
+        def work():
+            lines: list = []
+            try:
+                done, msg = inputfix.fix(lines.append)
+            except Exception as exc:  # pragma: no cover - safety net
+                done, msg = False, f"The fix hit a problem: {exc}"
+            studio_fix.log("input permissions fix: " + msg + " | " + " / ".join(lines[-4:]))
+            self.inputFixDone.emit(done, msg)
+
+        threading.Thread(target=work, daemon=True, name="atari-input-fix").start()
+
+    @Slot(bool, str)
+    def _input_fix_finished(self, ok: bool, text: str) -> None:
+        self._input_fixing = False
+        self.show_toast(text, 12000)
+
+    # ----- Atari-only mode (boot straight into Atari) ----------------------------------
+    def _kiosk_rows(self) -> list:
+        lay = self._kiosk_layout
+        rows: list = []
+        if self._kiosk_busy:
+            return [self._info("Working - a password window may be waiting for you..."), {"kind": "item", "id": "back", "title": "Back"}]
+        if self._kiosk_msg:
+            rows.append(self._info("Result:  " + self._kiosk_msg))
+        if kiosk.enabled(lay):
+            rows += [self._info("Atari-only mode is ON: the computer starts straight into Atari, with no Linux Mint desktop."),
+                     {"kind": "done", "id": "kioskoff", "title": "Back to Mint desktop (turn Atari-only mode off)",
+                      "detail": "Asks for your password once. The normal login and desktop come back after the next restart or log out."},
+                     {"kind": "item", "id": "kioskonce", "title": "Open the Mint desktop once (log out now)",
+                      "detail": "No password. This login only - the next start is Atari-only again."},
+                     self._info(kiosk.RECOVERY)]
+        else:
+            checks = kiosk.preflight(lay)
+            why = kiosk.blocked(checks)
+            rows += [self._info("Atari-only mode makes this computer start straight into Atari, like a games console: no Linux Mint desktop, "
+                                "no login screen. Your files and games are not touched."),
+                     self._info("What changes (needs your password once): three small files named \"atari\" - the login screen's auto-login and a "
+                                "\"session\" that starts Atari. Turning it off removes exactly those files."),
+                     self._info("Ways back, always: Settings > Back to Mint desktop; or at the login screen pick the Cinnamon session; "
+                                "or if Atari cannot start three times in a row, the Mint desktop starts by itself."),
+                     self._info(kiosk.RECOVERY)]
+            for c in checks:
+                if not c.ok:
+                    rows.append(self._info(("CANNOT CONTINUE: " if c.fatal else "Note: ") + c.text))
+            if why:
+                rows.append({"kind": "item", "id": "back", "title": "Back"})
+                return rows
+            rows.append({"kind": "done", "id": "kioskon", "title": "Yes, turn Atari-only mode ON",
+                         "detail": "A password window pops up. You can undo it any time."})
+        rows += [self._info(t) for t in kiosk.FAST_BOOT_TIPS]
+        rows.append({"kind": "item", "id": "back", "title": "No, keep my normal desktop" if not kiosk.enabled(lay) else "Back"})
+        return rows
+
+    def _kiosk_activate(self, rid: str) -> str:
+        if rid in ("kioskon", "kioskoff"):
+            if self._kiosk_busy:
+                return ""
+            self._kiosk_busy = True
+            self._kiosk_msg = ""
+            lay = self._kiosk_layout
+            self.show_toast("A password window will pop up...", 6000)
+
+            def work():
+                try:
+                    done, msg = (kiosk.enable(lay) if rid == "kioskon" else kiosk.disable(lay))
+                except Exception as exc:  # pragma: no cover - safety net
+                    done, msg = False, f"The change hit a problem: {exc}"
+                studio_fix.log(f"atari-only mode {rid}: ok={done} {msg}")
+                self.kioskDone.emit(done, msg)
+            threading.Thread(target=work, daemon=True, name="atari-kiosk").start()
+            return "refresh"
+        if rid == "kioskonce":
+            done, msg = kiosk.open_desktop_once()
+            self.show_toast(msg, 8000)
+            return ""
+        return ""
+
+    @Slot(bool, str)
+    def _kiosk_finished(self, ok: bool, text: str) -> None:
+        self._kiosk_busy = False
+        self._kiosk_msg = text
+        self.show_toast(text, 12000)
+        self.pageChanged.emit()
+
     def _steam_rows(self) -> list:
         from . import steam as steam_mod
         have = self.steam_installed()
@@ -792,6 +900,8 @@ class Backend(QObject):
             rows.append({"kind": "done", "id": "steaminstall", "title": "Install Steam"})
         rows.append({"kind": "item", "id": "steamrescan", "title": "Rescan Steam",
                      "detail": "Use this after Steam installed a game, so it shows up in Atari."})
+        rows.append({"kind": "item", "id": "inputfix", "title": "Fix Steam controller / gamepad permissions",
+                     "detail": "Use this if Steam says \"Missing permissions for input devices\". Installs Valve's controller rules (asks for your password once)."})
         rows.append(self._info("Where to keep Steam games: a Linux drive (ext4). Windows (NTFS) drives and USB sticks (exFAT / FAT) make many Proton games fail."))
         adv = steam_mod.drive_advice()
         for d in adv[:6]:
@@ -1278,6 +1388,7 @@ class Backend(QObject):
         self._imp_state = "drives"
         self._imp_msg = ""
         self._imp_source = ""
+        self._imp_left, self._imp_groups, self._imp_group = [], [], []
         self.import_model.set_items([])
         self.importChanged.emit()
 
@@ -1341,18 +1452,92 @@ class Backend(QObject):
             self.importChanged.emit()
             return
         self.import_model.set_items(res.items, names)
-        self._imp_state = "list"
-        extra = ""
-        if res.unclear > 0:
-            extra = (f" {res.unclear} other file{'s' if res.unclear != 1 else ''} (zip, iso...) were skipped because "
-                     "the console is unclear - put them in a folder named after the console, e.g. \"snes\".")
-        if res.truncated:
-            extra += " Only the first files are shown (very large folder)."
-        if res.unclear < 0:
-            extra = " Something went wrong while reading this folder."
-        self._imp_msg = (f"Found {len(res.items)} game{'s' if len(res.items) != 1 else ''} on {self._imp_source}."
-                         if res.items else f"No games found on {self._imp_source}.") + extra
+        self._imp_left = list(res.ambiguous)
+        self._imp_seen = res.seen_text()
+        self._imp_truncated = res.truncated
+        self._imp_failed_scan = res.unclear < 0
+        self._imp_nfiles = res.files_seen
+        self._imp_items_found = len(res.items)
+        self.askImportSystems()
+
+    def _list_message(self) -> str:
+        """What the checklist page says: how many games, what was seen, and every skipped file with its reason."""
+        n = self.import_model.rowCount()
+        src = self._imp_source
+        if self._imp_failed_scan:
+            return "Something went wrong while reading this folder."
+        msg = (f"Found {n} game{'s' if n != 1 else ''} on {src}." if n else f"No games added yet from {src}.")
+        if not n and not self._imp_left:
+            msg = f"No games found on {src}."
+        if not n or self._imp_left:
+            msg += f" I looked at {self._imp_nfiles} file{'s' if self._imp_nfiles != 1 else ''}: {self._imp_seen}."
+        if self._imp_left:
+            lines = [f"  - {k.name}: {k.reason}" for k in self._imp_left[:4]]
+            more = len(self._imp_left) - 4
+            msg += "  Skipped " + str(len(self._imp_left)) + " file" + ("s" if len(self._imp_left) != 1 else "") + \
+                   " (the console is unclear):\n" + "\n".join(lines) + (f"\n  ...and {more} more." if more > 0 else "") + \
+                   "\n  Press CHOOSE SYSTEM to tell me which console they are for."
+        elif not n:
+            msg += " Atari looks for game files such as .iso, .zip, .cue, .nes and folders with a default.xbe (Xbox) or PS3_GAME (PS3)."
+        if self._imp_truncated:
+            msg += " Only the first files are shown (very large folder)."
+        return msg
+
+    @Property(int, notify=importChanged)
+    def importPendingCount(self):
+        return len(self._imp_left)
+
+    @Slot()
+    def askImportSystems(self) -> None:
+        """Start (or restart) asking "Which system is this?" for the files whose console is unknown."""
+        groups: dict = {}
+        for k in self._imp_left:
+            ext = k.path.suffix.lower().lstrip(".")
+            groups.setdefault((ext, tuple(k.candidates)), []).append(k)
+        self._imp_groups = list(groups.values())
+        self._next_choice()
+
+    def _next_choice(self) -> None:
+        if self._imp_groups:
+            self._imp_group = self._imp_groups.pop(0)
+            self._imp_state = "choose"
+        else:
+            self._imp_group = []
+            self._imp_state = "list"
+            self._imp_msg = self._list_message()
         self.importChanged.emit()
+
+    @Property(str, notify=importChanged)
+    def importChoiceTitle(self):
+        n = len(self._imp_group)
+        return "Which system is this?" if n <= 1 else f"Which system are these {n} files?"
+
+    @Property(str, notify=importChanged)
+    def importChoiceFiles(self):
+        names = [k.name for k in self._imp_group[:5]]
+        more = len(self._imp_group) - len(names)
+        return "\n".join(names) + (f"\n...and {more} more" if more > 0 else "")
+
+    @Slot(result="QVariantList")
+    def importChoiceRows(self):
+        rows = []
+        cands = self._imp_group[0].candidates if self._imp_group else []
+        for sid in cands:
+            sc = self.cfg.systems.get(sid)
+            if sc is not None:
+                rows.append({"kind": "system", "title": sc.name, "detail": "", "value": "", "sid": sid})
+        rows.append({"kind": "skip", "title": "Not now - skip these files", "detail": "You can choose later with the "
+                     "CHOOSE SYSTEM button", "value": "", "sid": ""})
+        return rows
+
+    @Slot(str)
+    def chooseImportSystem(self, sid: str) -> None:
+        group, self._imp_group = self._imp_group, []
+        if sid and group and sid in self.cfg.systems:
+            self.import_model.add_items([k.to_item(sid) for k in group])
+            ids = {id(k) for k in group}
+            self._imp_left = [k for k in self._imp_left if id(k) not in ids]
+        self._next_choice()
 
     @Slot(int)
     def toggleImportItem(self, row: int) -> None:
@@ -1579,6 +1764,11 @@ class Backend(QObject):
     @Slot()
     def toggleEscExit(self) -> None:
         self.cfg.esc_exit = not self.cfg.esc_exit
+        self._save_prefs()
+
+    @Slot()
+    def toggleSteamBigPicture(self) -> None:
+        self.cfg.steam_bigpicture = not self.cfg.steam_bigpicture
         self._save_prefs()
 
     @Slot()
@@ -1999,6 +2189,14 @@ class Backend(QObject):
         rows.append({"kind": "steampage", "title": "Steam: install, rescan, drives",
                      "value": "Installed" if self.steam_installed() else "Not installed",
                      "detail": "Installs Steam for you, rescans your Steam games, and says where to keep them."})
+        rows.append({"kind": "kioskpage", "title": ("Back to Mint desktop (Atari-only mode is ON)" if kiosk.enabled(self._kiosk_layout)
+                                          else "Atari-only mode (start straight into Atari)"),
+                     "value": "ON" if kiosk.enabled(self._kiosk_layout) else "OFF",
+                     "detail": "Makes the computer boot into Atari with no Mint desktop. Asks you to confirm first, and there is always a way back."})
+        rows.append({"kind": "bigpicture", "title": "Open Steam in Big Picture (full screen)",
+                     "value": "ON" if self.cfg.steam_bigpicture else "OFF",
+                     "detail": "The Steam tile opens Steam full screen with big buttons for a controller. Press Esc twice (or hold Guide and press B) "
+                               "to leave it and come back to Atari - Steam keeps running. OFF = Steam opens in a normal window."})
         rows.append({"kind": "escexit", "title": "Esc twice returns to Atari (Netflix, YouTube, Kodi...)",
                      "value": "ON" if self.cfg.esc_exit else "OFF",
                      "detail": "Press Esc twice quickly, or hold Esc for 1 second (or Ctrl+Esc; on a controller hold Guide and press B) "
@@ -2112,7 +2310,7 @@ class Backend(QObject):
                 "winchoose": "WHICH PROGRAM STARTS THE GAME?", "winwork": "OPENING THE ARCHIVE",
                 "install": "INSTALL", "installmenu": "INSTALL EMULATORS & APPS", "steam": "STEAM",
                 "recordings": "RECORDINGS", "coverpick": "PICK A COVER", "nocovers": "COVERS NOT FOUND",
-                "addgames": "ADD GAMES"}.get(name, name.upper())
+                "addgames": "ADD GAMES", "kiosk": "ATARI-ONLY MODE"}.get(name, name.upper())
 
     @Slot(str, result=str)
     def pageSub(self, name: str) -> str:
@@ -2127,7 +2325,8 @@ class Backend(QObject):
                 "recordings": "Enter / A plays a recording.  Esc / B = back.",
                 "coverpick": "Enter / A uses the highlighted picture.  Esc / B = back.",
                 "nocovers": "Games that no cover was found for.  Esc / B = back.",
-                "addgames": "Up/Down to choose, Enter / A or a click to press.  Esc / B = back."}.get(name, "")
+                "addgames": "Up/Down to choose, Enter / A or a click to press.  Esc / B = back.",
+                "kiosk": "Read this, then choose.  Esc / B = back - nothing changes until you press Yes."}.get(name, "")
 
     def _addgames_rows(self) -> list:
         try:
@@ -2175,6 +2374,8 @@ class Backend(QObject):
             return self._installmenu_rows()
         if name == "steam":
             return self._steam_rows()
+        if name == "kiosk":
+            return self._kiosk_rows()
         if name == "winwork":
             return [{"kind": "info", "title": self._win_text or "Working..."},
                     {"kind": "item", "id": "cancel", "title": "Cancel"}]
@@ -2217,6 +2418,10 @@ class Backend(QObject):
             self._info("Q: How do I get back from Netflix / YouTube / Kodi?  A: press Esc twice quickly (or hold Esc for 1 second, or Ctrl+Esc). "
                        "Atari closes the app and comes back. One Esc still leaves video full screen as normal. On a controller: hold Guide / Home and press B. "
                        "(Needs the normal Linux Mint X11 desktop; turn it off in Settings.)"),
+            self._info("Q: How do I make the computer start straight into Atari, like a console?  A: Settings > Atari-only mode. "
+                       "To get the normal desktop back: Settings > Back to Mint desktop (or pick the Cinnamon session on the login screen)."),
+            {"kind": "item", "id": "inputfix", "title": "Steam says \"Missing permissions for input devices\"? Fix controller permissions",
+             "detail": "Installs Valve's controller rules (steam-devices) so Steam and Atari can use your gamepad. Asks for your password once."},
             {"kind": "item", "id": "studiofix", "title": "Studio does not work? Fix Studio",
              "detail": "Checks numpy, the recording tools and the microphone, and installs what is missing (needs internet)."},
             {"kind": "item", "id": "copylog", "title": "Copy log (to send to someone who is helping you)",
@@ -2250,6 +2455,9 @@ class Backend(QObject):
         if g.platform != "steam" and not g.launch and g.platform not in apps.NON_GAME:
             rows.append({"kind": "item", "id": "bios", "title": "Add BIOS files",
                          "detail": "From your own console, via USB stick or folder."})
+        if g.platform == "steam" or g.gid == "app:steam":
+            rows.append({"kind": "item", "id": "inputfix", "title": "Fix Steam controller / gamepad permissions",
+                         "detail": "For \"Missing permissions for input devices\" in Steam."})
         rows.append({"kind": "item", "id": "copylog", "title": "Copy log"})
         if g.platform == windows.PLATFORM:
             rows.append({"kind": "item", "id": "remove",
@@ -2340,6 +2548,8 @@ class Backend(QObject):
             elif rid == "inst_terminal":
                 self.installInTerminal()
             return ""
+        if name == "kiosk":
+            return self._kiosk_activate(rid)
         if name == "steam":
             if rid == "steaminstall":
                 self.installSteam()
@@ -2351,8 +2561,13 @@ class Backend(QObject):
             elif rid == "steamrescan":
                 self.rescanSteam()
                 return "refresh"
+            elif rid == "inputfix":
+                self.fixInputPermissions()
             return ""
         if name == "fix":
+            if rid == "inputfix":
+                self.fixInputPermissions()
+                return ""
             if rid == "emus":
                 self.installEmulators()
                 return ""
@@ -2411,6 +2626,9 @@ class Backend(QObject):
     def _help_activate(self, rid: str) -> str:
         if rid != "reset":
             self._reset_armed = False
+        if rid == "inputfix":
+            self.fixInputPermissions()
+            return ""
         if rid == "studiofix":
             st = self.studio
             if st.available and not studio_fix.problems(True):

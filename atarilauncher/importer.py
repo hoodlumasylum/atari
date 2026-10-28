@@ -20,6 +20,7 @@ from .config import Config
 # These file types are shared by several consoles (or are generic), so the folder name decides
 # (a "snes" or "PS1" folder on the stick). Without a clear folder name they are skipped.
 AMBIGUOUS_EXT = {"bin", "zip", "7z", "iso", "cue", "chd", "m3u", "gz"}
+DISC_EXT = {"iso", "xiso"}  # disc images we can look inside to tell the console
 SKIP_DIRS = {"system volume information", "$recycle.bin", "lost+found", "recycler", ".trashes", "found.000"}
 MAX_FILES = 20000
 CHUNK = 1024 * 1024
@@ -163,11 +164,117 @@ class ImportItem:
 
 
 @dataclass
+class Skipped:
+    """A game-like file we did not add (yet), and why. `candidates` non-empty = we can ask "Which system is this?"."""
+    path: Path
+    rel: str
+    reason: str
+    size: int = 0
+    candidates: list[str] = field(default_factory=list)
+    companions: list[Path] = field(default_factory=list)
+
+    @property
+    def name(self) -> str:
+        return self.path.name
+
+    def to_item(self, system: str) -> "ImportItem":
+        return ImportItem(self.path, self.rel, system, self.size, list(self.companions))
+
+
+@dataclass
 class ScanResult:
     items: list[ImportItem] = field(default_factory=list)
     unclear: int = 0  # ROM-like files (zip, iso...) whose console could not be told
     truncated: bool = False
     cancelled: bool = False
+    skipped: list[Skipped] = field(default_factory=list)  # everything game-like we did not add, with the reason
+    seen: dict = field(default_factory=dict)  # file type -> how many files of it were in the folder
+    files_seen: int = 0
+
+    @property
+    def ambiguous(self) -> list[Skipped]:
+        """Skipped files that the user can sort out by naming the system."""
+        return [k for k in self.skipped if k.candidates]
+
+    def seen_text(self) -> str:
+        """'1 .iso, 1 .txt' - what was in the folder, so an empty result is never a mystery."""
+        if not self.seen:
+            return "no files"
+        bits = [f"{n} .{e}" if e else f"{n} without a file type"
+                for e, n in sorted(self.seen.items(), key=lambda kv: (-kv[1], kv[0]))[:8]]
+        more = len(self.seen) - 8
+        return ", ".join(bits) + (f" and {more} other types" if more > 0 else "")
+
+
+# ------------------------------------------------------------------ looking inside disc images
+XBOX_MAGIC = b"MICROSOFT*XBOX*MEDIA"
+# where the Xbox "XDVDFS" volume starts inside the image: plain .iso, and the 3 layouts of full disc dumps
+XBOX_OFFSETS = (0x0, 0x18300000, 0x0FD90000, 0x02090000)
+
+
+def _read_at(fh, offset: int, n: int) -> bytes:
+    try:
+        fh.seek(offset)
+        return fh.read(n)
+    except (OSError, ValueError):
+        return b""
+
+
+def sniff_disc(path: Path) -> str:
+    """Tell which console a disc image is for by LOOKING INSIDE it (never by trusting the name).
+    Returns a system id ("xbox", "gamecube", "wii", "ps2", "ps1", "psp", "segacd", "saturn") or "" when unsure."""
+    try:
+        with open(path, "rb") as fh:
+            for off in XBOX_OFFSETS:  # Xbox: "MICROSOFT*XBOX*MEDIA" at sector 32 of the volume
+                if _read_at(fh, off + 0x10000, 20) == XBOX_MAGIC:
+                    return "xbox"
+            head = _read_at(fh, 0, 0x30)
+            if len(head) >= 0x20:
+                if head[0x1C:0x20] == bytes.fromhex("C2339F3D"):
+                    return "gamecube"
+                if head[0x18:0x1C] == bytes.fromhex("5D1C9EA3"):
+                    return "wii"
+            if head.startswith(b"SEGADISCSYSTEM"):
+                return "segacd"
+            if head.startswith(b"SEGA SEGASATURN"):
+                return "saturn"
+            return _sniff_iso9660(fh)
+    except OSError:
+        return ""
+
+
+def _sniff_iso9660(fh) -> str:
+    pvd = _read_at(fh, 0x8000, 2048)
+    if len(pvd) < 190 or pvd[1:6] != b"CD001":
+        return ""
+    lba = int.from_bytes(pvd[158:162], "little")
+    size = int.from_bytes(pvd[166:170], "little")
+    if not 0 < size <= 1024 * 1024:
+        return ""
+    names: dict[str, tuple[int, int]] = {}
+    data = _read_at(fh, lba * 2048, size)
+    i = 0
+    while i < len(data):
+        ln = data[i]
+        if ln == 0:  # records never straddle a sector: skip to the next one
+            i = (i // 2048 + 1) * 2048
+            continue
+        rec = data[i:i + ln]
+        if len(rec) >= 34:
+            nlen = rec[32]
+            nm = rec[33:33 + nlen].decode("ascii", "replace").split(";")[0].upper()
+            names[nm] = (int.from_bytes(rec[2:6], "little"), int.from_bytes(rec[10:14], "little"))
+        i += ln
+    if "PSP_GAME" in names or "UMD_DATA.BIN" in names:
+        return "psp"
+    if "SYSTEM.CNF" in names:
+        lba2, size2 = names["SYSTEM.CNF"]
+        text = _read_at(fh, lba2 * 2048, min(size2, 2048)).decode("ascii", "replace").upper()
+        if "BOOT2" in text:
+            return "ps2"
+        if re.search(r"\bBOOT\s*=", text):
+            return "ps1"
+    return ""
 
 
 def _norm(s: str) -> str:
@@ -239,14 +346,18 @@ def scan_for_roms(root: str | Path, cfg: Config, cancel: threading.Event | None 
     ext_table = _extension_table(cfg)
     hints = _hint_table(cfg)
     found: list[tuple[Path, str]] = []  # (path, ext)
-    folder_games: list[Path] = []
+    folder_games: list[tuple[Path, str]] = []
     seen_files = 0
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=lambda e: None):
         if cancel is not None and cancel.is_set():
             res.cancelled = True
             return res
         if "ps3" in cfg.systems and roms._ps3_game_in(dirpath, dirnames, filenames):
-            folder_games.append(Path(dirpath))  # a PS3 game folder is one game: do not look inside
+            folder_games.append((Path(dirpath), "ps3"))  # a PS3 game folder is one game: do not look inside
+            dirnames[:] = []
+            continue
+        if "xbox" in cfg.systems and any(f.lower() == "default.xbe" for f in filenames):
+            folder_games.append((Path(dirpath), "xbox"))  # an unpacked original-Xbox game (default.xbe)
             dirnames[:] = []
             continue
         dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d.lower() not in SKIP_DIRS)
@@ -255,6 +366,8 @@ def scan_for_roms(root: str | Path, cfg: Config, cancel: threading.Event | None 
             if fn.startswith("."):  # also macOS "._junk" files
                 continue
             ext = fn.rsplit(".", 1)[-1].lower() if "." in fn else ""
+            res.files_seen += 1
+            res.seen[ext] = res.seen.get(ext, 0) + 1
             if ext in ext_table:
                 found.append((Path(dirpath) / fn, ext))
                 if len(found) >= MAX_FILES:
@@ -291,25 +404,32 @@ def scan_for_roms(root: str | Path, cfg: Config, cancel: threading.Event | None 
             continue
         cands = ext_table.get(ext, [])
         system = ""
-        if ext in AMBIGUOUS_EXT or len(cands) != 1:
+        if ext in DISC_EXT:  # look inside the image first: that is the only reliable way
+            sniffed = sniff_disc(path)
+            if sniffed in cands:
+                system = sniffed
+        if not system and (ext in AMBIGUOUS_EXT or len(cands) != 1):
             hinted = hint_for(path)
             if hinted and (hinted in cands or ext in AMBIGUOUS_EXT):
                 system = hinted
             if not system and len(cands) == 1 and ext not in AMBIGUOUS_EXT:
                 system = cands[0]
-        else:
+        elif not system:
             system = cands[0]
-        if not system:
-            res.unclear += 1
-            continue
         comp = sheet_companions.get(path, [])
         try:
             size = path.stat().st_size + sum(c.stat().st_size for c in comp)
             rel = str(path.relative_to(root))
         except (OSError, ValueError):
             continue
+        if not system:
+            res.unclear += 1
+            res.skipped.append(Skipped(path, rel, "Could not tell which console this is for (." + ext + " files are "
+                                       "used by several). Choose the system, or put it in a folder named after "
+                                       "the console.", size, list(cands), comp))
+            continue
         res.items.append(ImportItem(path, rel, system, size, comp))
-    for folder in folder_games:
+    for folder, fsys in folder_games:
         files: list[Path] = []
         for dp, _dn, fns in os.walk(folder):
             files += [Path(dp) / f for f in fns]
@@ -318,7 +438,7 @@ def scan_for_roms(root: str | Path, cfg: Config, cancel: threading.Event | None 
             rel = str(folder.relative_to(root)) if folder != root else folder.name
         except (OSError, ValueError):
             continue
-        res.items.append(ImportItem(folder, rel, "ps3", size, files, True))
+        res.items.append(ImportItem(folder, rel, fsys, size, files, True))
     order = {sid: i for i, sid in enumerate(cfg.systems)}
     res.items.sort(key=lambda it: (order.get(it.system, 999), it.name.lower()))
     return res
