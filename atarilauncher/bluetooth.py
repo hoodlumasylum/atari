@@ -273,7 +273,7 @@ def reconnect_conf(main_text: str, input_text: str) -> tuple[str, str]:
     from .inifile import set_values
     main_text = set_values(main_text, "General", {"FastConnectable": "true", "JustWorksRepairing": "always"}, "=")
     return (set_values(main_text, "Policy", {"AutoEnable": "true", "ReconnectAttempts": "7"}, "="),
-            set_values(input_text, "General", {"ClassicBondedOnly": "false"}, "="))
+            set_values(input_text, "General", {"ClassicBondedOnly": "false", "IdleTimeout": "0"}, "="))
 
 
 def reconnect_ok(main_text: str, input_text: str) -> bool:
@@ -403,6 +403,8 @@ def auto_reconnect(runner: Callable | None = None, which: Callable = shutil.whic
 
 # ---- 0.5.4: Bluetooth at boot, a pairing agent that is always there, plain boot status ------------------------------------------
 BOOT_UNIT = "/etc/systemd/system/codeaque-bluetooth-on.service"
+MODULES_CONF = "/etc/modules-load.d/codeaque-bluetooth.conf"
+MODULES_TEXT = "# CodeAque: kernel parts a Bluetooth PlayStation pad needs\nuhid\nhidp\nhid_playstation\n"
 BOOT_UNIT_TEXT = """[Unit]
 Description=CodeAque: switch Bluetooth on at every start so paired controllers can reconnect
 After=bluetooth.service
@@ -411,7 +413,9 @@ Wants=bluetooth.service
 [Service]
 Type=oneshot
 ExecStartPre=-/usr/sbin/rfkill unblock bluetooth
-ExecStart=/bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do bluetoothctl power on 2>/dev/null | grep -q succeeded && exit 0; sleep 2; done; exit 0'
+ExecStartPre=-/sbin/modprobe -a uhid hidp hid_playstation
+ExecStart=/bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do bluetoothctl power on 2>/dev/null | grep -q succeeded && break; sleep 2; done; exit 0'
+ExecStartPost=-/bin/sh -c 'btmgmt connectable on >/dev/null 2>&1; btmgmt bondable on >/dev/null 2>&1; btmgmt pairable on >/dev/null 2>&1; exit 0'
 
 [Install]
 WantedBy=bluetooth.target multi-user.target
@@ -432,7 +436,7 @@ def boot_status(runner: Callable | None = None, which: Callable = shutil.which, 
     from pathlib import Path as _P
     return {"enabled": sc("is-enabled", "bluetooth") in ("enabled", "static", "alias", "enabled-runtime"),
             "active": sc("is-active", "bluetooth") == "active",
-            "helper": _P(unit).is_file(),
+            "helper": _P(unit).is_file() and "connectable on" in (_P(unit).read_text(errors="replace") if _P(unit).is_file() else ""),
             "blueman": bool(which("blueman-applet"))}
 
 
@@ -456,6 +460,10 @@ def boot_fix_lines(unit: str = BOOT_UNIT, install_blueman: bool = True) -> list[
            "systemctl enable bluetooth.service >/dev/null 2>&1 || true",
            "rfkill unblock bluetooth 2>/dev/null || true",
            f"printf %s {q(BOOT_UNIT_TEXT)} > {q(unit)}",
+           f"printf %s {q(MODULES_TEXT)} > {q(MODULES_CONF)}",
+           "modprobe -a uhid hidp hid_playstation 2>/dev/null || true",
+           "btmgmt connectable on >/dev/null 2>&1 || true",
+           "btmgmt bondable on >/dev/null 2>&1 || true",
            "systemctl daemon-reload || true",
            f"systemctl enable {q(__import__('pathlib').Path(unit).name)} >/dev/null 2>&1 || true"]
     if install_blueman:
@@ -474,6 +482,8 @@ class Agent:
         self.extra: set = set()
         self.proc = None
         self.answers: list[tuple[str, str]] = []
+        self.last_mac = ""
+        self.on_seen: Callable[[str], None] | None = None   # a known pad showed up (PS pressed) -> quick connect tries
 
     def start(self) -> bool:
         if self.proc is not None and self.proc.poll() is None:
@@ -491,12 +501,22 @@ class Agent:
 
     def handle(self, line: str) -> str | None:
         """'yes' / 'no' for a (yes/no) prompt, None for anything else."""
-        if "(yes/no)" not in line:
-            return None
+        known = {a.upper() for a in self._allowed()} | {a.upper() for a in self.extra}
         m = re.search(r"([0-9A-F]{2}(?::[0-9A-F]{2}){5})", line.upper())
-        ok = bool(m) and (m.group(1) in {a.upper() for a in self._allowed()} or m.group(1) in {a.upper() for a in self.extra})
-        ans = "yes" if ok else "no"
-        self.answers.append((m.group(1) if m else "", ans))
+        if "(yes/no)" not in line:
+            if m and not line.lstrip().startswith("[agent]"):
+                self.last_mac = m.group(1)
+                if m.group(1) in known and self.on_seen and ("Connected:" in line or "[NEW]" in line or "[CHG]" in line):
+                    try:
+                        self.on_seen(m.group(1))
+                    except Exception:
+                        pass
+            return None
+        # bluetoothctl's agent prompts ("Authorize service <uuid> (yes/no)", "Confirm passkey ...") often carry no address:
+        # then the device is the one bluetoothctl reported just before
+        mac = m.group(1) if m else self.last_mac
+        ans = "yes" if mac and mac in known else "no"
+        self.answers.append((mac, ans))
         return ans
 
     def _read(self):
@@ -512,3 +532,59 @@ class Agent:
 
 
 PRESS_PS = "Press the PS button on the pad to connect it."
+
+
+def loaded_modules(path: str = "/proc/modules") -> set:
+    try:
+        return {l.split()[0] for l in open(path) if l.strip()}
+    except OSError:
+        return set()
+
+
+def diagnostics(mac: str = "", runner: Callable | None = None, journal: Callable | None = None, modules: set | None = None) -> list[str]:
+    """Plain lines to photograph and send: this pad's paired / trusted / bonded / connected, the adapter state, the kernel parts a
+    PlayStation pad needs, and the last 20 lines of the Bluetooth service log. Never raises; needs no password."""
+    out = ["DIAGNOSTICS (take a photo of this page and send it)"]
+    try:
+        devs = [d for d in devices(runner) if d.is_pad and d.paired]
+        if mac:
+            devs = [d for d in devs if d.mac == mac] or devs
+        if not devs:
+            out.append("No paired controller.")
+        yn = lambda b: "?" if b is None else ("yes" if b else "NO")
+        for d in devs:
+            out.append(f"{d.name} {d.mac}: paired {yn(d.paired)}, trusted {yn(d.trusted)}, bonded {yn(d.bonded)}, connected {yn(d.connected)}")
+        _rc, a = _run(["show"], runner, 10)
+        keep = [l.strip() for l in a.splitlines() if re.match(r"\s*(Controller|Powered|Discoverable|Pairable|Connectable|PowerState)\b", l)]
+        out.append("Adapter: " + "; ".join(keep) if keep else "Adapter: no answer from bluetoothctl show")
+        mods = loaded_modules() if modules is None else modules
+        out.append("Kernel parts: " + ", ".join(f"{m} {'yes' if m in mods else 'NO'}" for m in ("bluetooth", "hidp", "uhid", "hid_playstation")))
+    except Exception as exc:  # pragma: no cover
+        out.append(f"(could not read Bluetooth: {exc})")
+    try:
+        if journal is not None:
+            text = journal()
+        else:
+            p = subprocess.run(["journalctl", "-b", "-u", "bluetooth", "-n", "20", "--no-pager", "-o", "short"],
+                               capture_output=True, text=True, timeout=15, stdin=subprocess.DEVNULL)
+            text = (p.stdout or "") + (p.stderr or "")
+        lines = [l for l in text.splitlines() if l.strip()][-20:]
+        out.append("Bluetooth service log (last 20 lines):" if lines else "Bluetooth service log: empty or not readable by this user.")
+        out += ["  " + l[-160:] for l in lines]
+    except (OSError, subprocess.SubprocessError):
+        out.append("Bluetooth service log: journalctl not available.")
+    return out
+
+
+def quick_connect(mac: str, seconds: float = 10.0, runner: Callable | None = None, sleep: Callable = None) -> bool:
+    """Right after the pad's PS button: ask it to connect again and again for ~10 s (the DS4 only listens briefly)."""
+    import time as _t
+    sleep = sleep or _t.sleep
+    end = _t.monotonic() + seconds
+    while True:
+        _rc, out = _run(["connect", mac], runner, 5)
+        if "Connection successful" in out or "AlreadyConnected" in out:
+            return True
+        if _t.monotonic() >= end:
+            return False
+        sleep(0.7)

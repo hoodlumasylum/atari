@@ -31,6 +31,38 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
+## What's new in 0.5.5
+
+**Updating:** in-app update (Settings) as usual. About 15 seconds after CodeAque starts, it asks for your password once to apply the new Bluetooth fixes. Then **restart the computer once**.
+
+### What changed
+* **The pairing helper could say "no" to your own pad.** When the DS4 connects, Bluetooth may ask "Authorize service ... (yes/no)" without naming the pad. CodeAque 0.5.4's helper then answered **no**. Now it uses the pad Bluetooth reported just before that question, so it says yes to your paired pad and still no to strangers. This is the most likely reason pressing PS did nothing.
+* **Quick connect after PS:** as soon as the helper sees your paired pad wake up, CodeAque asks it to connect again and again for about 10 seconds. While a pad is waiting, the background check also runs every 3 seconds instead of every 8.
+* **The computer stays reachable for the pad:** at boot and in the fix, the adapter is made connectable and bondable (`btmgmt connectable on`, `bondable on`).
+* **Kernel parts a PS4 pad needs** (`uhid`, `hidp`, `hid_playstation`) are loaded now and at every start (`/etc/modules-load.d/codeaque-bluetooth.conf`).
+* **The pad is not dropped for being idle:** `IdleTimeout=0` in `/etc/bluetooth/input.conf`.
+* The fix runs by itself once in 0.5.5 (password once). Old files are kept as `*.codeaque.bak`.
+* **Home banner fits the screen now** (it was cut off on the right): "Wireless Controller: press PS to connect  [REMOVE AND RE-PAIR (R)]".
+
+### Send diagnostics (new)
+* **Settings > Controllers > Send diagnostics** (also on the Bluetooth pairing page). It shows:
+  - for your pad: paired / trusted / bonded (key saved) / connected
+  - the adapter: powered, pairable, discoverable
+  - the kernel parts: bluetooth, hidp, uhid, hid_playstation, each yes or NO
+  - the last 20 lines of the Bluetooth service log from this start
+* Take a photo and send it. If the pad still does not connect, this shows which step fails.
+
+### What to try
+1. Update, enter the password when asked, then **restart the computer**.
+2. On the home screen, press **PS** once and wait about 10 seconds.
+3. If it still does not connect: open Settings > Controllers > **Send diagnostics** right after pressing PS, and photograph it.
+4. As a last resort, press **REMOVE AND RE-PAIR** (hold SHARE + PS until the light double-blinks first), restart, and try PS again.
+
+### Not tested on real hardware
+- Not tried on the Dell or with the real DS4. Tested with pretend Bluetooth tools and an offscreen screen.
+- The agent fix is my best guess at the cause, not proven. If the log shows a different error (for example a missing key, which can happen if Windows paired the pad since), the diagnostics will show it.
+- The Bluetooth log only shows if this user may read the system log. On Mint, admin users normally can; otherwise it says "not readable".
+
 ## What's new in 0.5.4
 
 **Updating:** in-app update (Settings) as usual. About 15 seconds after CodeAque starts, it asks for your password once to apply the new Bluetooth fixes.
@@ -250,7 +282,7 @@ Plan for a future CodeAque Live USB: [docs/live-usb-plan.md](docs/live-usb-plan.
 - **If the in-app updater cannot be trusted on your connection, one command does the same by hand** (resumes if it drops, checks the SHA256 against the release's own list, keeps your settings and games):
 
   ```bash
-  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.5.4.tar.gz https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.4/atari-0.5.4.tar.gz && curl -fsSL https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.4/SHA256SUMS.txt | grep ' atari-0.5.4.tar.gz$' | sha256sum -c - && tar xzf atari-0.5.4.tar.gz && cd atari-0.5.4 && ./install.sh --yes
+  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.5.5.tar.gz https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.5/atari-0.5.5.tar.gz && curl -fsSL https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.5/SHA256SUMS.txt | grep ' atari-0.5.5.tar.gz$' | sha256sum -c - && tar xzf atari-0.5.5.tar.gz && cd atari-0.5.5 && ./install.sh --yes
   ```
 
 ## What's new in 0.4.1
@@ -472,13 +504,13 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.5.4.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/codeaque/releases/latest).
+1. Download **`atari-0.5.5.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/codeaque/releases/latest).
 2. Open a **Terminal** and type:
 
    ```bash
    cd ~/Downloads
-   tar xzf atari-0.5.4.tar.gz
-   cd atari-0.5.4
+   tar xzf atari-0.5.5.tar.gz
+   cd atari-0.5.5
    ./install.sh
    ```
 

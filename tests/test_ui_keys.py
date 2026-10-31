@@ -250,7 +250,13 @@ def test_home_banner_remove_and_repair(app, tmp_path, monkeypatch):
         monkeypatch.setattr(ui.backend, "_bt_activate", lambda rid: called.append(rid) or "refresh")
         ui.backend._on_pads_waiting([{"mac": "AA:BB:CC:DD:EE:01", "name": "Wireless Controller"}])
         pump(app, 200)
+        ui.win.resize(1366, 768)
+        pump(app, 300)
         ban = ui.win.findChild(QQuickItem, "padWaitBanner")
+        import os
+        if os.environ.get("SHOT"):
+            ui.win.grabWindow().save(os.environ["SHOT"])
+        assert ban.property("x") >= 0 and ban.property("x") + ban.property("width") <= 1366
         assert ui.mode == "library" and ban is not None and ban.property("visible")
         rows = ui.backend._controllers_rows()
         assert any(r.get("id") == "btrepair:AA:BB:CC:DD:EE:01" for r in rows)

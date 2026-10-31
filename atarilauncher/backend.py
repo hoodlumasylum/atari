@@ -390,6 +390,8 @@ class Backend(QObject):
             # a pairing agent that stays registered (CodeAque-only mode has no desktop agent to accept a pad's reconnect)
             try:
                 self._bt_agent = bluetooth.Agent(allowed=lambda: {d.mac for d in self._bt_paired if d.is_pad and d.paired})
+                self._bt_agent.on_seen = self._bt_pad_seen
+                self._bt_quick: dict = {}
                 if bluetooth.available():
                     self._bt_agent.start()
                     kiosk.log_event("bluetooth: pairing agent started")
@@ -2576,6 +2578,9 @@ class Backend(QObject):
         rows.append({"kind": "item", "id": "btcheck", "title": "Controller check",
                      "detail": "Shows for each paired pad: paired, trusted, bonded (key saved), connected - and the Bluetooth settings that "
                                "decide whether it reconnects by itself."})
+        rows.append({"kind": "item", "id": "btdiag", "title": "Send diagnostics",
+                     "detail": "Shows this pad's paired / trusted / bonded / connected, the Bluetooth adapter, the kernel parts a "
+                               "PlayStation pad needs and the last 20 lines of the Bluetooth log - take a photo and send it."})
         rows.append({"kind": "item", "id": "btreconnect", "title": "Fix controller reconnect",
                      "detail": "For a pad that has to be paired again every time: marks paired pads Trusted, switches Bluetooth on at every "
                                "start (AutoEnable=true) and lets bonded PlayStation pads reconnect (input.conf ClassicBondedOnly=false). "
@@ -2654,9 +2659,27 @@ class Backend(QObject):
                 self._btauto_busy = False
         threading.Thread(target=work, daemon=True, name="atari-btauto").start()
 
+    def _bt_pad_seen(self, mac: str) -> None:
+        """The pairing helper saw a paired pad stir (PS pressed): try to connect it for ~10 seconds (once per 15 s per pad)."""
+        if not any(w["mac"].upper() == mac for w in self._pads_waiting):
+            return
+        now = time.monotonic()
+        if now - self._bt_quick.get(mac, -99.0) < 15.0:
+            return
+        self._bt_quick[mac] = now
+
+        def work():
+            ok = bluetooth.quick_connect(mac, 10.0)
+            kiosk.log_event(f"bluetooth: quick connect after PS {mac}: {ok}")
+        threading.Thread(target=work, daemon=True, name="atari-btquick").start()
+
     @Slot("QVariantList")
     def _on_pads_waiting(self, rows) -> None:
         rows = list(rows)
+        try:
+            self._btauto_timer.setInterval(3000 if rows else 8000)   # a pad is waiting: look more often
+        except (AttributeError, RuntimeError):
+            pass
         if rows != self._pads_waiting:
             self._pads_waiting = rows
             self.padsWaitingChanged.emit()
@@ -2743,6 +2766,13 @@ class Backend(QObject):
                 self._bt_found = bluetooth.devices()
                 kiosk.log_event(f"bluetooth re-pair {mac}: {ok} {self._bt_msg}")
             self._bt_job("Removing and pairing again...", rep)
+            return "refresh"
+        if rid == "btdiag":
+            def dg():
+                mac = self._pads_waiting[0]["mac"] if self._pads_waiting else ""
+                self._bt_check = bluetooth.diagnostics(mac)
+                kiosk.log_event("bluetooth diagnostics: " + " | ".join(self._bt_check))
+            self._bt_job("Collecting diagnostics...", dg)
             return "refresh"
         if rid == "btcheck":
             def chk():
@@ -2925,6 +2955,10 @@ class Backend(QObject):
         elif self._bt_msg:
             rows.append(self._info("Bluetooth:  " + self._bt_msg))
         rows += self._repair_rows()
+        if getattr(self, "_bt_check", None):
+            rows += [self._info(t) for t in self._bt_check]
+        rows.append({"kind": "item", "id": "btdiag", "title": "Send diagnostics (Bluetooth controller)",
+                     "detail": "Paired / trusted / bonded / connected for your pad plus the last 20 Bluetooth log lines - take a photo."})
         if not found:
             rows.append(self._info("No gamepad found. Plug it in (or pair it in Bluetooth settings), wait a few seconds, then press Refresh."))
             rows.append(self._info("A pad that is found by Linux but not usable? Settings > Fix Steam controller / gamepad permissions."))
@@ -2985,7 +3019,7 @@ class Backend(QObject):
         return rows
 
     def _controllers_activate(self, rid: str) -> str:
-        if rid.startswith("btrepair:"):
+        if rid.startswith("btrepair:") or rid == "btdiag":
             return self._bt_activate(rid)
         if rid == "ctallemus":
             from . import padconfig

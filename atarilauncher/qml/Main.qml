@@ -747,6 +747,7 @@ Window {
             anchors.topMargin: 4 * win.u
             anchors.horizontalCenter: parent.horizontalCenter
             width: Math.min(parent.width - 40 * win.u, pwRow.implicitWidth + 40 * win.u)
+            clip: true
             height: 64 * win.u
             radius: 14 * win.u
             color: "#e01b2a4a"
@@ -759,7 +760,9 @@ Window {
                 Icon { name: "pad"; size: 30 * win.u; color: "white"; anchors.verticalCenter: parent.verticalCenter }
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: backend.padsWaiting.length ? (backend.padsWaiting[0].name + ": press the PS button to connect") : ""
+                    width: Math.min(implicitWidth, padWaitBanner.parent.width - 40 * win.u - 120 * win.u - rpText.implicitWidth - 30 * win.u * 2)
+                    elide: Text.ElideRight
+                    text: backend.padsWaiting.length ? (backend.padsWaiting[0].name + ": press PS to connect") : ""
                     color: "white"; font.pixelSize: 22 * win.u; font.bold: true
                 }
                 Rectangle {
