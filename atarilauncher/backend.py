@@ -13,7 +13,7 @@ from pathlib import Path
 from PySide6.QtCore import Property, QObject, QProcess, Qt, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QKeyEvent, QWindow
 
-from . import usbdrive, padstyle, protondb, brightness, worldgames, bootscreen, create, steam, simtycoon, themes, biosfind, findgames, bluetooth, padbattery, pads, screentv, xemuconfig, branding, donate, gamedelete, gamesroot, power, rootauth, files, steamfix, downloads, golive, icons, inputfix, intro, kiosk, quietboot, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
+from . import xbox, usbdrive, padstyle, protondb, brightness, worldgames, bootscreen, create, steam, simtycoon, themes, biosfind, findgames, bluetooth, padbattery, pads, screentv, xemuconfig, branding, donate, gamedelete, gamesroot, power, rootauth, files, steamfix, downloads, golive, icons, inputfix, intro, kiosk, quietboot, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
 from . import __version__
 from .config import Config, load_config, save_config
 from .import_model import ImportModel
@@ -355,6 +355,7 @@ class Backend(QObject):
         self._bt_msg = ""
         self._bt_found: list = []
         self._pads_waiting: list = []
+        self._xfix_busy, self._xfix_msg = False, ""
         self._bt_paired: list = []
         self._bt_agent = None
         self._bt_searched = False
@@ -2801,7 +2802,11 @@ class Backend(QObject):
                 self._bt_check = bluetooth.diagnostics(mac)
                 if not mac:
                     mac = next((d.mac for d in self._bt_paired if d.is_pad and d.paired), "")
-                self._bt_check += self._bt_key_check(mac) + [bluetooth.DUALBOOT_SHORT]
+                ag = self._bt_agent
+                self._bt_check += self._bt_key_check(mac) + [
+                    "Pairing helper: " + ("running" if ag is not None and ag.proc is not None and ag.proc.poll() is None else "NOT running")
+                    + ("; its answers: " + ", ".join(f"{m or '?'}={a}" for m, a in ag.answers[-6:]) if ag is not None and ag.answers
+                       else "; it was not asked anything")] + [bluetooth.DUALBOOT_SHORT]
                 kiosk.log_event("bluetooth diagnostics: " + " | ".join(self._bt_check))
             self._bt_job("Collecting diagnostics...", dg)
             return "refresh"
@@ -3648,6 +3653,21 @@ class Backend(QObject):
         """Modern Games: ProtonDB / anti-cheat badge on every Steam game, in the background (cached a week)."""
         if self._demo or os.environ.get("ATARI_NO_BADGES"):
             return
+        xb = [g for g in self._all if g.platform == "xbox" and g.rom_path and Path(g.rom_path).suffix.lower() in (".iso", ".gdi", ".cdi")]
+        if xb:
+            def xwork():
+                try:
+                    for g in xb:
+                        k = xbox.game_kind(g.rom_path)
+                        if k != "xiso":
+                            g.badge = "Fix game file" if k == "redump" else "Not an Xbox disc"
+                            t = xbox.problem_text(k)
+                            if t and t not in g.note:
+                                g.note = (g.note + " " if g.note else "") + t
+                    self._badgesReady.emit()
+                except Exception as exc:  # pragma: no cover
+                    kiosk.log_event(f"xbox badges: {exc}")
+            threading.Thread(target=xwork, daemon=True, name="atari-xboxbadges").start()
         games = [g for g in self._all if g.platform == "steam" and g.steam_appid]
         if not games:
             return
@@ -6291,6 +6311,19 @@ class Backend(QObject):
             rows.append({"kind": "item", "id": "noop", "title": c["title"], "tone": tone,
                          "value": {"ok": "OK", "bad": "Fix needed", "note": "Note"}[c["state"]],
                          "detail": c["advice"]})
+        if g.platform == "xbox" and g.rom_path:
+            k = xbox.game_kind(g.rom_path)
+            if self._xfix_msg:
+                rows.append(self._info(("Working:  " if self._xfix_busy else "Result:  ") + self._xfix_msg))
+            if k == "redump" and not self._xfix_busy:
+                rows.append({"kind": "done", "id": "xboxfixfile", "title": "Fix game file",
+                             "detail": "This .iso is a full disc dump, so xemu stops at the Xbox logo. One tap makes a trimmed XISO copy "
+                                       "next to it with the free tool extract-xiso (downloaded once if needed). The original file is "
+                                       "never changed or deleted; CodeAque then starts the copy."})
+            elif k == "xiso":
+                rows.append(self._info("Xbox game file: OK (an XISO, the kind xemu starts)."))
+            elif xbox.problem_text(k):
+                rows.append(self._info("Xbox game file: " + xbox.problem_text(k)))
         if any(c["state"] == "bad" for c in checks):
             rows.append({"kind": "item", "id": "emus", "title": "Install emulators and apps",
                          "detail": "Opens a window that installs what is missing (needs internet)."})
@@ -6484,6 +6517,30 @@ class Backend(QObject):
                 self.fixInputPermissions()
             return ""
         if name == "fix":
+            if rid == "xboxfixfile":
+                g = self._fix_game()
+                if g is None or self._xfix_busy:
+                    return ""
+                self._xfix_busy, self._xfix_msg = True, "Starting..."
+                rom = g.rom_path
+
+                def work():
+                    def say(t):
+                        self._xfix_msg = t
+                        self._bgDone.emit()
+                    try:
+                        ok, msg, new = xbox.fix_game_file(rom, say=say)
+                        self._xfix_msg = msg
+                        kiosk.log_event(f"xbox fix game file {rom}: {ok} {msg}")
+                        if ok:
+                            QTimer.singleShot(0, lambda: self.rescan(toast=False))
+                    except Exception as exc:  # pragma: no cover
+                        self._xfix_msg = f"Something went wrong: {exc}"
+                    finally:
+                        self._xfix_busy = False
+                        self._bgDone.emit()
+                threading.Thread(target=work, daemon=True, name="atari-xboxfix").start()
+                return "refresh"
             if rid == "inputfix":
                 self.fixInputPermissions()
                 return ""

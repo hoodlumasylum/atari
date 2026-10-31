@@ -115,6 +115,8 @@ def scan_system(folders, extensions, system: str) -> list[Rom]:
     for f in folders:
         for r in scan_folder(Path(f), extensions, system):
             key = os.path.realpath(r.path)
+            if system == "xbox" and r.path.suffix.lower() == ".iso" and r.path.with_suffix(".xiso").is_file():
+                continue        # CodeAque made a fixed copy next to it ("Fix game file"): show the game once, as the copy
             if key not in seen:
                 seen.add(key)
                 out.append(r)

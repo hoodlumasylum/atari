@@ -746,23 +746,36 @@ Window {
             anchors.top: top.bottom
             anchors.topMargin: 4 * win.u
             anchors.horizontalCenter: parent.horizontalCenter
-            width: Math.min(parent.width - 40 * win.u, pwRow.implicitWidth + 40 * win.u)
+            width: Math.min(parent.width - 40 * win.u, Math.max(pwRow.implicitWidth, pwHint.implicitWidth) + 40 * win.u)
             clip: true
-            height: 64 * win.u
+            height: 96 * win.u
             radius: 14 * win.u
             color: "#e01b2a4a"
             border.color: "#6fa8ff"
             border.width: 2 * win.u
+            Text {
+                id: pwHint
+                objectName: "padWaitHint"
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 8 * win.u
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: Math.min(implicitWidth, padWaitBanner.width - 24 * win.u)
+                elide: Text.ElideRight
+                text: "Used this pad on Windows or a PS4? It remembers only one - hold SHARE + PS to bring it back here. Xbox pads: press the Xbox button."
+                color: "#cfe0ff"; font.pixelSize: 16 * win.u
+            }
             Row {
                 id: pwRow
-                anchors.centerIn: parent
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.top: parent.top
+                anchors.topMargin: 9 * win.u
                 spacing: 18 * win.u
                 Icon { name: "pad"; size: 30 * win.u; color: "white"; anchors.verticalCenter: parent.verticalCenter }
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
                     width: Math.min(implicitWidth, padWaitBanner.parent.width - 40 * win.u - 120 * win.u - rpText.implicitWidth - 30 * win.u * 2)
                     elide: Text.ElideRight
-                    text: backend.padsWaiting.length ? (backend.padsWaiting[0].name + ": press PS to connect") : ""
+                    text: backend.padsWaiting.length ? ("Pad not connected: press PS (some non-Sony pads need SHARE + PS each time)") : ""
                     color: "white"; font.pixelSize: 22 * win.u; font.bold: true
                 }
                 Rectangle {

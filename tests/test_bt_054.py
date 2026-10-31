@@ -52,9 +52,9 @@ def test_diagnostics_and_quick_connect():
     orig = bt._run
     bt._run = run
     try:
-        lines = bt.diagnostics("AA:BB:CC:DD:EE:01", journal=lambda: "l1\nl2\n", modules={"bluetooth", "hidp"})
+        lines = bt.diagnostics("AA:BB:CC:DD:EE:01", journal=lambda: "l1 hid\nl2 input\n", modules={"bluetooth", "hidp"})
         t = "\n".join(lines)
-        assert "trusted yes, bonded yes, connected NO" in t and "Powered: yes" in t and "uhid NO" in t and "  l2" in t
+        assert "trusted yes, bonded yes, connected NO" in t and "Powered: yes" in t and "uhid NO" in t and "  l2 input" in t
         assert bt.quick_connect("AA:BB:CC:DD:EE:01", 10, sleep=lambda s: None)
     finally:
         bt._run = orig
@@ -72,3 +72,25 @@ def test_link_key_check_script(tmp_path):
     (d / "info").write_text("[General]\nName=x\n")
     out = subprocess.run(["sh", "-c", b.link_key_script("AA:BB:CC:DD:EE:01", str(tmp_path))], capture_output=True, text=True).stdout
     assert b.parse_link_key(out)["saved"] is False
+
+
+def test_journal_filter_drops_audio_spam():
+    log = "\n".join(["Endpoint registered: sender=:1.50 path=/MediaEndpoint/A2DPSink/sbc"] * 30 +
+                     ["profiles/input/server.c:connect_event_cb() Refusing input device connect: Operation already in progress (114)",
+                      "src/device.c:device_bonding_complete() status 0x00"])
+    got = b.journal_filter(log, "7A:1D:8E:D4:33:D5")
+    assert len(got) == 2 and "Refusing input" in got[0]
+
+
+def test_agent_accepts_hid_authorize_without_address():
+    a = b.Agent(allowed=lambda: {"7A:1D:8E:D4:33:D5"})
+    assert a.handle("[agent] Authorize service 00001124-0000-1000-8000-00805f9b34fb (yes/no):") == "yes"
+    assert b.Agent(allowed=lambda: set()).handle("[agent] Authorize service 00001124-0000 (yes/no):") == "no"
+
+
+def test_mgmt_summary():
+    t = "hci0:\tPrimary controller\n\taddr CC:15:31:8B:78:69 version 10\n\tcurrent settings: powered bondable ssp br/edr le secure-conn\n"
+    out = b.mgmt_summary(t)
+    assert "CC:15:31:8B:78:69" in out[0] and "NOT connectable" in out[1]
+    assert len(b.mgmt_summary(t.replace("powered", "powered connectable"))) == 1
+    assert "Restart=always" in b.BOOT_UNIT_TEXT and "btmgmt connectable on" in b.BOOT_UNIT_TEXT

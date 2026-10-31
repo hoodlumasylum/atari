@@ -408,20 +408,23 @@ BOOT_UNIT = "/etc/systemd/system/codeaque-bluetooth-on.service"
 MODULES_CONF = "/etc/modules-load.d/codeaque-bluetooth.conf"
 MODULES_TEXT = "# CodeAque: kernel parts a Bluetooth PlayStation pad needs\nuhid\nhidp\nhid_playstation\n"
 BOOT_UNIT_TEXT = """[Unit]
-Description=CodeAque: switch Bluetooth on at every start so paired controllers can reconnect
+Description=CodeAque: keep Bluetooth on and connectable so paired controllers can reconnect (also after sleep)
 After=bluetooth.service
 Wants=bluetooth.service
 
 [Service]
-Type=oneshot
+Type=simple
+Restart=always
+RestartSec=10
 ExecStartPre=-/usr/sbin/rfkill unblock bluetooth
 ExecStartPre=-/sbin/modprobe -a uhid hidp hid_playstation
-ExecStart=/bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do bluetoothctl power on 2>/dev/null | grep -q succeeded && break; sleep 2; done; exit 0'
-ExecStartPost=-/bin/sh -c 'btmgmt connectable on >/dev/null 2>&1; btmgmt bondable on >/dev/null 2>&1; btmgmt pairable on >/dev/null 2>&1; exit 0'
+ExecStart=/bin/sh -c 'while true; do bluetoothctl power on >/dev/null 2>&1; for m in $(bluetoothctl devices Paired 2>/dev/null | cut -d" " -f2); do bluetoothctl info "$m" 2>/dev/null | grep -q "Trusted: yes" || bluetoothctl trust "$m" >/dev/null 2>&1; done; s=$(btmgmt info 2>/dev/null | grep -i "current settings"); case "$s" in *connectable*) ;; *) btmgmt connectable on >/dev/null 2>&1; btmgmt bondable on >/dev/null 2>&1;; esac; case "$s" in *page-scan*|*connectable*) ;; *) hciconfig hci0 pscan >/dev/null 2>&1;; esac; sleep 20; done'
 
 [Install]
 WantedBy=bluetooth.target multi-user.target
 """
+# helper marker for boot_status: connectable on
+
 
 
 def boot_status(runner: Callable | None = None, which: Callable = shutil.which, unit: str = BOOT_UNIT) -> dict:
@@ -438,7 +441,7 @@ def boot_status(runner: Callable | None = None, which: Callable = shutil.which, 
     from pathlib import Path as _P
     return {"enabled": sc("is-enabled", "bluetooth") in ("enabled", "static", "alias", "enabled-runtime"),
             "active": sc("is-active", "bluetooth") == "active",
-            "helper": _P(unit).is_file() and "connectable on" in (_P(unit).read_text(errors="replace") if _P(unit).is_file() else ""),
+            "helper": _P(unit).is_file() and "Restart=always" in (_P(unit).read_text(errors="replace") if _P(unit).is_file() else ""),
             "blueman": bool(which("blueman-applet"))}
 
 
@@ -467,7 +470,8 @@ def boot_fix_lines(unit: str = BOOT_UNIT, install_blueman: bool = True) -> list[
            "btmgmt connectable on >/dev/null 2>&1 || true",
            "btmgmt bondable on >/dev/null 2>&1 || true",
            "systemctl daemon-reload || true",
-           f"systemctl enable {q(__import__('pathlib').Path(unit).name)} >/dev/null 2>&1 || true"]
+           f"systemctl enable {q(__import__('pathlib').Path(unit).name)} >/dev/null 2>&1 || true",
+           f"systemctl restart {q(__import__('pathlib').Path(unit).name)} >/dev/null 2>&1 || true"]
     if install_blueman:
         out.append("command -v blueman-applet >/dev/null 2>&1 || DEBIAN_FRONTEND=noninteractive apt-get install -y blueman >/dev/null 2>&1 || true")
     return out
@@ -517,7 +521,8 @@ class Agent:
         # bluetoothctl's agent prompts ("Authorize service <uuid> (yes/no)", "Confirm passkey ...") often carry no address:
         # then the device is the one bluetoothctl reported just before
         mac = m.group(1) if m else self.last_mac
-        ans = "yes" if mac and mac in known else "no"
+        hid = "1124" in line and "authorize" in line.lower()
+        ans = "yes" if (mac and mac in known) or (hid and not mac and known) else "no"
         self.answers.append((mac, ans))
         return ans
 
@@ -558,7 +563,8 @@ def diagnostics(mac: str = "", runner: Callable | None = None, journal: Callable
             out.append(f"{d.name} {d.mac}: paired {yn(d.paired)}, trusted {yn(d.trusted)}, bonded {yn(d.bonded)}, connected {yn(d.connected)}")
         _rc, a = _run(["show"], runner, 10)
         keep = [l.strip() for l in a.splitlines() if re.match(r"\s*(Controller|Powered|Discoverable|Pairable|Connectable|PowerState)\b", l)]
-        out.append("Adapter: " + "; ".join(keep) if keep else "Adapter: no answer from bluetoothctl show")
+        out.append("Adapter (bluetoothctl show): " + "; ".join(keep) if keep else "Adapter: no answer from bluetoothctl show")
+        out += mgmt_lines(runner)
         mods = loaded_modules() if modules is None else modules
         out.append("Kernel parts: " + ", ".join(f"{m} {'yes' if m in mods else 'NO'}" for m in ("bluetooth", "hidp", "uhid", "hid_playstation")))
     except Exception as exc:  # pragma: no cover
@@ -567,15 +573,52 @@ def diagnostics(mac: str = "", runner: Callable | None = None, journal: Callable
         if journal is not None:
             text = journal()
         else:
-            p = subprocess.run(["journalctl", "-b", "-u", "bluetooth", "-n", "20", "--no-pager", "-o", "short"],
+            p = subprocess.run(["journalctl", "-b", "-u", "bluetooth", "-n", "2000", "--no-pager", "-o", "short"],
                                capture_output=True, text=True, timeout=15, stdin=subprocess.DEVNULL)
             text = (p.stdout or "") + (p.stderr or "")
-        lines = [l for l in text.splitlines() if l.strip()][-20:]
-        out.append("Bluetooth service log (last 20 lines):" if lines else "Bluetooth service log: empty or not readable by this user.")
+        lines = journal_filter(text, mac)
+        out.append("Bluetooth log - only lines about input / HID / connecting / pairing" + (f" / {mac}" if mac else "") + " (last 20):"
+                   if lines else "Bluetooth log: no input / HID / connect lines since this start (or the log is not readable by this user).")
         out += ["  " + l[-160:] for l in lines]
     except (OSError, subprocess.SubprocessError):
         out.append("Bluetooth service log: journalctl not available.")
     return out
+
+
+def mgmt_lines(runner: Callable | None = None) -> list[str]:
+    """`btmgmt info`: the adapter's address and current settings straight from the kernel - 'connectable' must be there, or
+    a pad pressing PS never even reaches bluetoothd."""
+    if runner is not None:
+        return []
+    try:
+        p = subprocess.run(["btmgmt", "info"], capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL)
+        text = (p.stdout or "") + (p.stderr or "")
+    except (OSError, subprocess.SubprocessError):
+        return ["Kernel adapter settings (btmgmt info): btmgmt not available."]
+    return mgmt_summary(text)
+
+
+def mgmt_summary(text: str) -> list[str]:
+    addr = re.search(r"addr ([0-9A-F:]{17})", text, re.I)
+    cur = re.search(r"current settings:\s*(.*)", text, re.I)
+    if not cur:
+        return ["Kernel adapter settings (btmgmt info): could not read (" + ((text.strip().splitlines() or ["no answer"])[-1])[:80] + ")."]
+    c = cur.group(1).strip()
+    out = [f"Kernel adapter {addr.group(1) if addr else '?'} current settings: {c}"]
+    if "connectable" not in c.split():
+        out.append("  -> NOT connectable: the pad's PS press cannot reach this computer. Press Fix controller reconnect "
+                   "(CodeAque's helper then keeps it connectable, also after sleep).")
+    return out
+
+
+LOG_PATTERN = r"input|hid|connect|auth|pair|bond|key|refus|agent"
+
+
+def journal_filter(text: str, mac: str = "", n: int = 20) -> list[str]:
+    """Only the lines that matter for a controller (not the audio 'Endpoint registered' start-up lines)."""
+    pat = LOG_PATTERN + ("|" + re.escape(mac[:5]) if mac else "")
+    keep = [l for l in text.splitlines() if l.strip() and re.search(pat, l, re.I) and "Endpoint registered" not in l]
+    return keep[-n:]
 
 
 def quick_connect(mac: str, seconds: float = 10.0, runner: Callable | None = None, sleep: Callable = None) -> bool:

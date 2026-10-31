@@ -31,6 +31,39 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
+## What's new in 0.5.7
+
+**Updating:** in-app update (Settings) as usual. About 15 seconds after it starts, CodeAque asks for your password once to update its Bluetooth helper.
+
+### Xbox: one-tap "Fix game file"
+* **Why a game can stop at the Xbox logo:** xemu only starts **XISO** images. A full disc dump (Redump-style) has the game further into the file, and xemu stops at the logo.
+* CodeAque checks every Xbox game file by itself:
+  - XISO: the Xbox disc header (`MICROSOFT*XBOX*MEDIA`) at 0x10000
+  - full disc dump: the same header at 0x18300000 + 0x10000
+* The tile shows a hint:
+  - **"Fix game file"** for a full disc dump
+  - **"Not an Xbox disc"** for a Dreamcast game (Shenmue 1 is a Dreamcast game: move it to the Dreamcast folder), a disc of another console, or a damaged or half-copied file
+* **Options > Fix my game > Fix game file:** one tap makes a trimmed XISO **copy** next to the original (`<name>.xiso`). Progress shows on the page, then **Done**. The library then shows the game once, as the copy, and starts it.
+* **The original is never changed or deleted.** Found while testing: extract-xiso renames the file it converts to `.old`. So CodeAque never hands it your file, only a link to it in a private folder, and checks your file is unchanged afterwards. The same protection is now used for the automatic conversion at launch. In older versions that conversion could have renamed your original to `<name>.iso.old`. If you find such a file, rename it back.
+* The free tool **extract-xiso** (open source, XboxDev) is downloaded once if needed: the official Linux build, pinned and checked by SHA-256. No games, BIOS or keys are downloaded.
+
+### Controllers
+* **Home banner:** "Pad not connected: press PS (some non-Sony pads need SHARE + PS each time)", with **REMOVE AND RE-PAIR (R)**. Below it: "Used this pad on Windows or a PS4? It remembers only one - hold SHARE + PS to bring it back here. Xbox pads: press the Xbox button."
+* Third-party PS4-style pads often have to be paired again each time (SHARE + PS). That is how many of them work, not a CodeAque fault.
+* **Kept connectable, also after sleep:** CodeAque's Bluetooth helper now runs all the time and checks every 20 seconds. It keeps the adapter on, **connectable** and bondable (`btmgmt`), keeps paired pads **Trusted**, and turns page scan back on if it is off. It also covers waking from sleep.
+* **Send diagnostics** now shows:
+  - `btmgmt info`: the adapter address and its current settings, with a warning if it is not connectable
+  - `bluetoothctl show`: Powered, Pairable, Discoverable
+  - the saved key fingerprint, and whether the pairing helper is running and what it answered
+  - **only the useful Bluetooth log lines** (input, HID, connect, auth, pairing, key, refused, the pad's address) instead of the start-up audio lines
+* The pairing helper now also accepts the HID "Authorize service" request when Bluetooth does not name the device. It still says no when no pad is paired here.
+* **Xbox Series / One Bluetooth pads:** paired from CodeAque's pairing page (hold the small pair button on top until the Xbox logo flashes fast). Linux's built-in support is used, so xpadneo is not needed. They reconnect with the Xbox button and get the Xbox button hints and the same automatic emulator setup as other pads.
+
+### Not tested on real hardware
+- Fix game file: the conversion was really run here with the real extract-xiso on a made-up disc dump. It was not tried on Shenmue II or on the Dell. If the game still stops at the logo after fixing, the file itself may be damaged.
+- Bluetooth helper and diagnostics: tested with pretend tools only.
+- No Xbox Bluetooth pad was available to test.
+
 ## What's new in 0.5.6
 
 **Updating:** in-app update (Settings) as usual, then restart the computer once.
@@ -302,7 +335,7 @@ Plan for a future CodeAque Live USB: [docs/live-usb-plan.md](docs/live-usb-plan.
 - **If the in-app updater cannot be trusted on your connection, one command does the same by hand** (resumes if it drops, checks the SHA256 against the release's own list, keeps your settings and games):
 
   ```bash
-  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.5.6.tar.gz https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.6/atari-0.5.6.tar.gz && curl -fsSL https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.6/SHA256SUMS.txt | grep ' atari-0.5.6.tar.gz$' | sha256sum -c - && tar xzf atari-0.5.6.tar.gz && cd atari-0.5.6 && ./install.sh --yes
+  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.5.7.tar.gz https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.7/atari-0.5.7.tar.gz && curl -fsSL https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.7/SHA256SUMS.txt | grep ' atari-0.5.7.tar.gz$' | sha256sum -c - && tar xzf atari-0.5.7.tar.gz && cd atari-0.5.7 && ./install.sh --yes
   ```
 
 ## What's new in 0.4.1
@@ -524,13 +557,13 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.5.6.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/codeaque/releases/latest).
+1. Download **`atari-0.5.7.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/codeaque/releases/latest).
 2. Open a **Terminal** and type:
 
    ```bash
    cd ~/Downloads
-   tar xzf atari-0.5.6.tar.gz
-   cd atari-0.5.6
+   tar xzf atari-0.5.7.tar.gz
+   cd atari-0.5.7
    ./install.sh
    ```
 
