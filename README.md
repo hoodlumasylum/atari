@@ -31,6 +31,29 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
+## What's new in 0.5.4
+
+**Updating:** in-app update (Settings) as usual. About 15 seconds after CodeAque starts, it asks for your password once to apply the new Bluetooth fixes.
+
+### Where the Remove and re-pair button is now
+* **Home screen:** whenever a controller is paired but not connected, a blue banner appears under the top bar: **"Wireless Controller: press the PS button to connect"** with a big red **REMOVE AND RE-PAIR (R)** button. Click it or press **R** on the keyboard. The pad pill at the top right also says **"Pad: press PS to connect"**.
+* **Settings > Controllers** and **the Bluetooth pairing page**: the same **REMOVE AND RE-PAIR** row is the first thing on the page.
+* *Why you could not find it in 0.5.3:* the button only appeared after you pressed Search on the pairing page. Now it shows for any paired pad that is not connected, with no searching first.
+* How to use it: hold **SHARE + PS** on the pad until the light double-blinks, then press the button. It removes the old pairing, pairs, trusts and connects the pad, then checks that the pairing key was saved.
+
+### Why the pad did not come back after a restart (what was found and changed)
+* **In CodeAque mode there was nothing to say yes to the pad.** That full-screen session has no desktop and so no Bluetooth helper (blueman) running. When a DS4 reconnects, Bluetooth can ask someone to approve it, and with nobody there it was refused. **CodeAque now runs its own pairing helper the whole time it is open.** It only says yes to controllers already paired on this computer, or the one being re-paired, and says no to everything else.
+* **Bluetooth is switched on at every start, even before CodeAque opens.** Fix controller reconnect now also turns the Bluetooth service on at startup, unblocks the radio, and adds a small system helper (`codeaque-bluetooth-on.service`) that switches the adapter on at boot. It also sets `JustWorksRepairing=always`, which lets a DS4 pair again without a code.
+* **The Bluetooth icon in the Mint panel:** the same fix installs blueman (the Mint panel's Bluetooth icon) if it is missing (needs internet). In CodeAque mode there is no panel, so you do everything inside CodeAque instead.
+* **The fix runs by itself once** in 0.5.4 when anything above is missing (password once, typed in CodeAque's own box). After that it does not ask again.
+* **Controller check** now also shows whether the Bluetooth service starts at boot, whether it is running, whether the boot helper is there, and whether blueman is installed.
+* **A DS4 normally has to be woken with the PS button:** a switched-off PS4 pad cannot be called by the computer. Press PS once after the restart. The banner tells you this.
+
+### Not tested on real hardware
+- Not tried on the Dell or with the real DS4 in CodeAque mode. Tested with pretend Bluetooth tools and an offscreen screen.
+- My main suspect is the missing pairing helper in CodeAque mode, but I could not prove it from here. If the pad still does not come back after pressing PS, press Controller check and send me what it says.
+- Installing blueman needs internet; if it fails, nothing else is affected.
+
 ## What's new in 0.5.3
 
 
@@ -227,7 +250,7 @@ Plan for a future CodeAque Live USB: [docs/live-usb-plan.md](docs/live-usb-plan.
 - **If the in-app updater cannot be trusted on your connection, one command does the same by hand** (resumes if it drops, checks the SHA256 against the release's own list, keeps your settings and games):
 
   ```bash
-  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.5.3.tar.gz https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.3/atari-0.5.3.tar.gz && curl -fsSL https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.3/SHA256SUMS.txt | grep ' atari-0.5.3.tar.gz$' | sha256sum -c - && tar xzf atari-0.5.3.tar.gz && cd atari-0.5.3 && ./install.sh --yes
+  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.5.4.tar.gz https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.4/atari-0.5.4.tar.gz && curl -fsSL https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.4/SHA256SUMS.txt | grep ' atari-0.5.4.tar.gz$' | sha256sum -c - && tar xzf atari-0.5.4.tar.gz && cd atari-0.5.4 && ./install.sh --yes
   ```
 
 ## What's new in 0.4.1
@@ -449,13 +472,13 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.5.3.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/codeaque/releases/latest).
+1. Download **`atari-0.5.4.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/codeaque/releases/latest).
 2. Open a **Terminal** and type:
 
    ```bash
    cd ~/Downloads
-   tar xzf atari-0.5.3.tar.gz
-   cd atari-0.5.3
+   tar xzf atari-0.5.4.tar.gz
+   cd atari-0.5.4
    ./install.sh
    ```
 

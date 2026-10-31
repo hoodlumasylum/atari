@@ -98,6 +98,8 @@ class Backend(QObject):
     _raiseMe = Signal()                         # a background job wants CodeAque back in front (GUI thread)
     _bgDone = Signal()                          # a background job (Bluetooth, batteries) finished: refresh on the GUI thread
     _batteryRead = Signal("QVariantList")
+    padsWaitingChanged = Signal()
+    _padsWaitingRead = Signal("QVariantList")
     studioRequested = Signal()                  # the Studio tile / menu entry: the screen opens the Studio
     pageRequested = Signal(str)                 # a worker wants the screen to show this page ('close' = go to the library)
     winEvent = Signal(str, str, object)         # Windows game archive progress (from the worker thread)
@@ -352,11 +354,15 @@ class Backend(QObject):
         self._bt_busy = ""
         self._bt_msg = ""
         self._bt_found: list = []
+        self._pads_waiting: list = []
+        self._bt_paired: list = []
+        self._bt_agent = None
         self._bt_searched = False
         self._seen_pages: dict[str, float] = {}
         self._bgDone.connect(self._on_bg_done, Qt.QueuedConnection)
         self._raiseMe.connect(self._raise_window_if_idle, Qt.QueuedConnection)
         self._batteryRead.connect(self._on_battery_read, Qt.QueuedConnection)
+        self._padsWaitingRead.connect(self._on_pads_waiting, Qt.QueuedConnection)
         self._last_pad_name = ""
         self._badgesReady.connect(lambda: self.model.badges_updated(), Qt.QueuedConnection)
         self._pad_batt: list = []
@@ -380,6 +386,15 @@ class Backend(QObject):
             self._btauto_timer = QTimer(self, interval=8000)
             self._btauto_timer.timeout.connect(self._bt_auto_tick)
             self._btauto_timer.start()
+            QTimer.singleShot(1500, self._bt_auto_tick)
+            # a pairing agent that stays registered (CodeAque-only mode has no desktop agent to accept a pad's reconnect)
+            try:
+                self._bt_agent = bluetooth.Agent(allowed=lambda: {d.mac for d in self._bt_paired if d.is_pad and d.paired})
+                if bluetooth.available():
+                    self._bt_agent.start()
+                    kiosk.log_event("bluetooth: pairing agent started")
+            except Exception:
+                self._bt_agent = None
             QTimer.singleShot(15000, self._bt_auto_fix_once)
         if not demo and not os.environ.get("ATARI_NO_BOOTPROMPT"):
             QTimer.singleShot(9000, self._boot_reapply_prompt)
@@ -2554,6 +2569,7 @@ class Backend(QObject):
             rows.append(self._info("The Bluetooth tools (BlueZ) are not installed on this computer. In a Terminal:  sudo apt install bluez   then restart."))
             rows.append({"kind": "item", "id": "back", "title": "Back"})
             return rows
+        rows += self._repair_rows()
         rows += [self._info(t) for t in bluetooth.PAIRING_STEPS]
         if getattr(self, "_bt_check", None):
             rows += [self._info("Check:  " + t) for t in self._bt_check]
@@ -2578,17 +2594,28 @@ class Backend(QObject):
             rows.append({"kind": "item", "id": "btdev:" + d.mac, "title": ("" if d.is_pad else "(not a controller?)  ") + d.name,
                          "value": state, "detail": f"{act}.  {d.mac}{extra}"})
         for d in pads_:
-            if d.paired and not d.connected:
-                rows.append({"kind": "done", "id": "btrepair:" + d.mac, "title": f"Remove and re-pair {d.name}",
-                             "detail": "For a pad that shows Paired but won't connect: removes the old pairing, searches, pairs, "
-                                       "trusts and connects it again in one go. Hold SHARE + PS on the pad until the light "
-                                       "double-blinks, then press this."})
             if d.paired:
                 rows.append({"kind": "item", "id": "btforget:" + d.mac, "title": f"Forget {d.name}",
                              "detail": "Removes the pairing (do this if it will not reconnect, then pair it again)."})
         rows.append(self._info("Not tested with real Bluetooth pads on your computer: if a pad pairs but does nothing, pair it once in the desktop's "
                                "Bluetooth settings, then it shows here as Paired."))
         rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    def _repair_rows(self) -> list:
+        """Big Remove and re-pair rows for every paired pad that is not connected - shown at the TOP of the Bluetooth and
+        Controllers pages, with no search needed first (0.5.3 only showed it after a search)."""
+        rows = []
+        seen = set()
+        for w in self._pads_waiting:
+            if w["mac"] in seen:
+                continue
+            seen.add(w["mac"])
+            rows.append(self._info(f"{w['name']} is paired but not connected. {bluetooth.PRESS_PS}"))
+            if not self._bt_busy:
+                rows.append({"kind": "done", "id": "btrepair:" + w["mac"], "title": f"REMOVE AND RE-PAIR {w['name']}",
+                             "detail": "If pressing PS does not bring it back: hold SHARE + PS until the light double-blinks, then "
+                                       "press this. It removes the old pairing, pairs, trusts and connects it again in one go."})
         return rows
 
     def _bt_job(self, what: str, fn) -> None:
@@ -2616,11 +2643,36 @@ class Backend(QObject):
                 got = bluetooth.auto_reconnect()
                 if got:
                     kiosk.log_event(f"bluetooth: reconnected {got}")
+                if self._bt_agent is not None:
+                    self._bt_agent.start()          # restarts it if bluetoothd was restarted
+                devs = bluetooth.devices()
+                self._bt_paired = devs
+                self._padsWaitingRead.emit([{"mac": d.mac, "name": d.name} for d in devs if d.is_pad and d.paired and not d.connected])
             except Exception:
                 pass
             finally:
                 self._btauto_busy = False
         threading.Thread(target=work, daemon=True, name="atari-btauto").start()
+
+    @Slot("QVariantList")
+    def _on_pads_waiting(self, rows) -> None:
+        rows = list(rows)
+        if rows != self._pads_waiting:
+            self._pads_waiting = rows
+            self.padsWaitingChanged.emit()
+
+    @Property("QVariantList", notify=padsWaitingChanged)
+    def padsWaiting(self):
+        """Paired controllers that are not connected right now (home screen banner: press PS / Remove and re-pair)."""
+        return self._pads_waiting
+
+    @Slot(str)
+    def repairPad(self, mac: str) -> None:
+        """Home screen / Controllers button: open the pairing page and start Remove and re-pair for this pad."""
+        if self._running:
+            return
+        self.pageRequested.emit("btpair")
+        self._bt_activate("btrepair:" + mac)
 
     def _bt_auto_fix_once(self) -> None:
         """At start: a pad is paired but the reconnect settings are not right -> apply Fix controller reconnect by itself (the
@@ -2635,6 +2687,7 @@ class Backend(QObject):
                     ok = bluetooth.reconnect_ok(Path(bluetooth.MAIN_CONF).read_text(), Path(bluetooth.INPUT_CONF).read_text())
                 except OSError:
                     ok = False
+                ok = ok and bluetooth.boot_ok(bluetooth.boot_status())
                 self.store.set_pref("bt_autofix_done", __version__)
                 if not ok:
                     kiosk.log_event("bluetooth: applying the reconnect fix by itself")
@@ -2655,13 +2708,14 @@ class Backend(QObject):
             except OSError:
                 it = ""
             msg = ("Trusted: " + ", ".join(names) + ". ") if names else ""
-            if bluetooth.reconnect_ok(mt, it):
+            if bluetooth.reconnect_ok(mt, it) and bluetooth.boot_ok(bluetooth.boot_status()):
                 self._bt_msg = msg + "Bluetooth settings were already right. Press the PS / Home button on the pad to reconnect."
                 return
             nm, ni = bluetooth.reconnect_conf(mt, it)
             rc = self._root_run(["pkexec", "sh", "-c", bluetooth.reconnect_script(nm, ni)], timeout=120)
             try:
-                applied = bluetooth.reconnect_ok(Path(bluetooth.MAIN_CONF).read_text(), Path(bluetooth.INPUT_CONF).read_text())
+                applied = bluetooth.reconnect_ok(Path(bluetooth.MAIN_CONF).read_text(), Path(bluetooth.INPUT_CONF).read_text()) \
+                    and bluetooth.boot_ok(bluetooth.boot_status())
             except OSError:
                 applied = False
             if rc == 0 and not applied:
@@ -2679,7 +2733,13 @@ class Backend(QObject):
                 def say(t):
                     self._bt_busy = t
                     self._bgDone.emit()
-                ok, self._bt_msg = bluetooth.repair_pad(mac, say=say)
+                if self._bt_agent is not None:
+                    self._bt_agent.extra.add(mac.upper())
+                try:
+                    ok, self._bt_msg = bluetooth.repair_pad(mac, say=say)
+                finally:
+                    if self._bt_agent is not None:
+                        self._bt_agent.extra.discard(mac.upper())
                 self._bt_found = bluetooth.devices()
                 kiosk.log_event(f"bluetooth re-pair {mac}: {ok} {self._bt_msg}")
             self._bt_job("Removing and pairing again...", rep)
@@ -2695,7 +2755,7 @@ class Backend(QObject):
                 except OSError:
                     it = ""
                 self._bt_check = bluetooth.check_report(bluetooth.devices(), mt, it, bool(create.windows_entry()),
-                                                        bluetooth.adapter()["present"])
+                                                        bluetooth.adapter()["present"]) + bluetooth.boot_lines(bluetooth.boot_status())
                 kiosk.log_event("bluetooth check: " + " | ".join(self._bt_check))
             self._bt_job("Checking...", chk)
             return "refresh"
@@ -2860,6 +2920,11 @@ class Backend(QObject):
         rows: list = []
         if self._ct_msg:
             rows.append(self._info("Result:  " + self._ct_msg))
+        if self._bt_busy:
+            rows.append(self._info("Working:  " + self._bt_busy))
+        elif self._bt_msg:
+            rows.append(self._info("Bluetooth:  " + self._bt_msg))
+        rows += self._repair_rows()
         if not found:
             rows.append(self._info("No gamepad found. Plug it in (or pair it in Bluetooth settings), wait a few seconds, then press Refresh."))
             rows.append(self._info("A pad that is found by Linux but not usable? Settings > Fix Steam controller / gamepad permissions."))
@@ -2920,6 +2985,8 @@ class Backend(QObject):
         return rows
 
     def _controllers_activate(self, rid: str) -> str:
+        if rid.startswith("btrepair:"):
+            return self._bt_activate(rid)
         if rid == "ctallemus":
             from . import padconfig
 

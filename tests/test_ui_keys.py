@@ -240,3 +240,26 @@ def test_mouse_click_rows_and_buttons_everywhere(app, tmp_path, monkeypatch):
         assert not ui.warnings, ui.warnings
     finally:
         ui.close()
+
+
+def test_home_banner_remove_and_repair(app, tmp_path, monkeypatch):
+    from PySide6.QtQuick import QQuickItem
+    ui = Ui(app, tmp_path, monkeypatch, config_exists=True)
+    try:
+        called = []
+        monkeypatch.setattr(ui.backend, "_bt_activate", lambda rid: called.append(rid) or "refresh")
+        ui.backend._on_pads_waiting([{"mac": "AA:BB:CC:DD:EE:01", "name": "Wireless Controller"}])
+        pump(app, 200)
+        ban = ui.win.findChild(QQuickItem, "padWaitBanner")
+        assert ui.mode == "library" and ban is not None and ban.property("visible")
+        rows = ui.backend._controllers_rows()
+        assert any(r.get("id") == "btrepair:AA:BB:CC:DD:EE:01" for r in rows)
+        assert any("press the PS button" in r.get("title", "").lower() + r.get("detail", "").lower() + str(r.get("text", "")).lower()
+                   or "PS button" in str(r) for r in rows)
+        ui.key(Qt.Key_R, 200)
+        assert called == ["btrepair:AA:BB:CC:DD:EE:01"]
+        ui.backend._on_pads_waiting([])
+        pump(app, 100)
+        assert not ban.property("visible")
+    finally:
+        ui.close()

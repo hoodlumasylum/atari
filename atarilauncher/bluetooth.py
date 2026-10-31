@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass
 from typing import Callable
 
@@ -270,7 +271,7 @@ def reconnect_conf(main_text: str, input_text: str) -> tuple[str, str]:
     input.conf: [General] ClassicBondedOnly=false - with true (BlueZ 5.6x default), a DualShock 4 whose bond BlueZ does not fully
     trust is refused at reconnect and has to be paired again. UserspaceHID is left as the distro set it."""
     from .inifile import set_values
-    main_text = set_values(main_text, "General", {"FastConnectable": "true"}, "=")
+    main_text = set_values(main_text, "General", {"FastConnectable": "true", "JustWorksRepairing": "always"}, "=")
     return (set_values(main_text, "Policy", {"AutoEnable": "true", "ReconnectAttempts": "7"}, "="),
             set_values(input_text, "General", {"ClassicBondedOnly": "false"}, "="))
 
@@ -290,6 +291,7 @@ def reconnect_script(new_main: str, new_input: str, main: str = MAIN_CONF, inp: 
         out.append(f"mkdir -p {q(str(__import__('pathlib').Path(path).parent))}")
         out.append(f"[ -f {q(path)} ] && [ ! -f {q(path + '.codeaque.bak')} ] && cp -a {q(path)} {q(path + '.codeaque.bak')} || true")
         out.append(f"printf %s {q(text)} > {q(path)}")
+    out += boot_fix_lines()
     out.append(restart)
     return "\n".join(out) + "\n"
 
@@ -397,3 +399,116 @@ def auto_reconnect(runner: Callable | None = None, which: Callable = shutil.whic
             if "Connection successful" in out or "AlreadyConnected" in out:
                 done.append(d.name)
     return done
+
+
+# ---- 0.5.4: Bluetooth at boot, a pairing agent that is always there, plain boot status ------------------------------------------
+BOOT_UNIT = "/etc/systemd/system/codeaque-bluetooth-on.service"
+BOOT_UNIT_TEXT = """[Unit]
+Description=CodeAque: switch Bluetooth on at every start so paired controllers can reconnect
+After=bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+Type=oneshot
+ExecStartPre=-/usr/sbin/rfkill unblock bluetooth
+ExecStart=/bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do bluetoothctl power on 2>/dev/null | grep -q succeeded && exit 0; sleep 2; done; exit 0'
+
+[Install]
+WantedBy=bluetooth.target multi-user.target
+"""
+
+
+def boot_status(runner: Callable | None = None, which: Callable = shutil.which, unit: str = BOOT_UNIT) -> dict:
+    """What decides whether a pad can come back after a restart, without CodeAque: is bluetoothd enabled at boot, running,
+    is CodeAque's 'Bluetooth on at start' helper there, and is the desktop's Bluetooth applet (blueman) installed."""
+    run = runner or subprocess.run
+
+    def sc(*a):
+        try:
+            p = run(["systemctl", *a], capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL)
+            return (p.stdout or "").strip()
+        except (OSError, subprocess.SubprocessError):
+            return ""
+    from pathlib import Path as _P
+    return {"enabled": sc("is-enabled", "bluetooth") in ("enabled", "static", "alias", "enabled-runtime"),
+            "active": sc("is-active", "bluetooth") == "active",
+            "helper": _P(unit).is_file(),
+            "blueman": bool(which("blueman-applet"))}
+
+
+def boot_ok(st: dict) -> bool:
+    return st["enabled"] and st["active"] and st["helper"]
+
+
+def boot_lines(st: dict) -> list[str]:
+    yn = lambda b: "yes" if b else "NO"
+    out = [f"Bluetooth at start: service switched on at boot {yn(st['enabled'])}, running now {yn(st['active'])}, "
+           f"CodeAque's 'Bluetooth on at start' helper {yn(st['helper'])}, desktop Bluetooth icon (blueman) {yn(st['blueman'])}."]
+    if not boot_ok(st):
+        out.append("  -> press Fix controller reconnect (it switches these on; asks for the password once).")
+    return out
+
+
+def boot_fix_lines(unit: str = BOOT_UNIT, install_blueman: bool = True) -> list[str]:
+    import shlex
+    q = shlex.quote
+    out = ["systemctl unmask bluetooth.service >/dev/null 2>&1 || true",
+           "systemctl enable bluetooth.service >/dev/null 2>&1 || true",
+           "rfkill unblock bluetooth 2>/dev/null || true",
+           f"printf %s {q(BOOT_UNIT_TEXT)} > {q(unit)}",
+           "systemctl daemon-reload || true",
+           f"systemctl enable {q(__import__('pathlib').Path(unit).name)} >/dev/null 2>&1 || true"]
+    if install_blueman:
+        out.append("command -v blueman-applet >/dev/null 2>&1 || DEBIAN_FRONTEND=noninteractive apt-get install -y blueman >/dev/null 2>&1 || true")
+    return out
+
+
+class Agent:
+    """A pairing agent that stays registered while CodeAque runs (CodeAque-only mode has no desktop, so no blueman agent: a pad
+    asking to (re)connect could be refused for want of anyone to say yes). It says yes ONLY for controllers already paired here,
+    or for the one address being re-paired right now; every other request is answered no."""
+
+    def __init__(self, popen: Callable | None = None, allowed: Callable[[], set] | None = None):
+        self._popen = popen or subprocess.Popen
+        self._allowed = allowed or (lambda: set())
+        self.extra: set = set()
+        self.proc = None
+        self.answers: list[tuple[str, str]] = []
+
+    def start(self) -> bool:
+        if self.proc is not None and self.proc.poll() is None:
+            return True
+        try:
+            self.proc = self._popen(["bluetoothctl"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, bufsize=1)
+            self.proc.stdin.write("agent NoInputNoOutput\ndefault-agent\n")
+            self.proc.stdin.flush()
+        except (OSError, ValueError):
+            self.proc = None
+            return False
+        threading.Thread(target=self._read, daemon=True, name="atari-btagent").start()
+        return True
+
+    def handle(self, line: str) -> str | None:
+        """'yes' / 'no' for a (yes/no) prompt, None for anything else."""
+        if "(yes/no)" not in line:
+            return None
+        m = re.search(r"([0-9A-F]{2}(?::[0-9A-F]{2}){5})", line.upper())
+        ok = bool(m) and (m.group(1) in {a.upper() for a in self._allowed()} or m.group(1) in {a.upper() for a in self.extra})
+        ans = "yes" if ok else "no"
+        self.answers.append((m.group(1) if m else "", ans))
+        return ans
+
+    def _read(self):
+        p = self.proc
+        try:
+            for line in p.stdout:
+                a = self.handle(line)
+                if a:
+                    p.stdin.write(a + "\n")
+                    p.stdin.flush()
+        except (OSError, ValueError):
+            pass
+
+
+PRESS_PS = "Press the PS button on the pad to connect it."

@@ -275,7 +275,7 @@ Item {
                     anchors.centerIn: parent
                     spacing: 6 * tb.u
                     Icon { name: "pad"; size: 18 * tb.u; color: "#9aa0b4"; anchors.verticalCenter: parent.verticalCenter }
-                    Text { anchors.verticalCenter: parent.verticalCenter; visible: tb.squeeze < 3; text: tb.squeeze >= 1 ? "Pair controller" : "No controller - tap to pair"; color: "#c9cdda"; font.pixelSize: 14 * tb.u }
+                    Text { anchors.verticalCenter: parent.verticalCenter; visible: tb.squeeze < 3; text: backend.padsWaiting.length ? (tb.squeeze >= 1 ? "Press PS" : "Pad: press PS to connect") : (tb.squeeze >= 1 ? "Pair controller" : "No controller - tap to pair"); color: "#c9cdda"; font.pixelSize: 14 * tb.u }
                 }
                 MouseArea { anchors.fill: parent; onClicked: backend.openControllerPill() }
             }
