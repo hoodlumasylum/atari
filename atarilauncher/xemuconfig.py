@@ -513,8 +513,17 @@ def get_ready_hdd(home: Path | None = None, which: Callable = shutil.which, fetc
     try:
         folder.mkdir(parents=True, exist_ok=True)
         if not (dest.is_file() and _sha256(dest) == READY_HDD_SHA256):
+            moved = None
             if dest.exists():
-                return False, f"{dest} exists but is not xemu's ready-made disk - nothing was changed.", None
+                # usually our own disk, changed by xemu while you played (xemu writes to it) - never delete: keep it as a .bak
+                import time as _t
+                moved = dest.with_name(dest.name + "." + _t.strftime("%Y%m%d-%H%M%S") + ".bak")
+                n = 1
+                while moved.exists():
+                    n += 1
+                    moved = dest.with_name(dest.name + "." + _t.strftime("%Y%m%d-%H%M%S") + f"-{n}.bak")
+                os.replace(dest, moved)
+                say("Kept your old disk as " + moved.name, 0.0)
             with tempfile.TemporaryDirectory(dir=folder) as td:
                 z = Path(td) / "hdd.zip"
                 say("Downloading", 0.0)
@@ -524,15 +533,21 @@ def get_ready_hdd(home: Path | None = None, which: Callable = shutil.which, fetc
                     fetch(READY_HDD_URL, z)
                 say("Checking", 1.0)
                 if _sha256(z) != READY_HDD_ZIP_SHA256:
+                    if moved is not None and not dest.exists():
+                        os.replace(moved, dest)
                     return False, "The download did not match xemu's published disk (checksum) - nothing was changed.", None
                 with zipfile.ZipFile(z) as zf:
                     member = next((n for n in zf.namelist() if n.endswith(".qcow2") and "/" not in n.strip("/")), None)
                     if member is None:
+                        if moved is not None and not dest.exists():
+                            os.replace(moved, dest)
                         return False, "The download had no disk image in it - nothing was changed.", None
                     tmp = Path(td) / "disk.qcow2"
                     with zf.open(member) as src, open(tmp, "wb") as out:
                         shutil.copyfileobj(src, out)
                 if _sha256(tmp) != READY_HDD_SHA256:
+                    if moved is not None and not dest.exists():
+                        os.replace(moved, dest)
                     return False, "The disk inside the download did not match its checksum - nothing was changed.", None
                 os.replace(tmp, dest)
     except (OSError, zipfile.BadZipFile) as exc:
@@ -551,8 +566,10 @@ def get_ready_hdd(home: Path | None = None, which: Callable = shutil.which, fetc
             continue
     if not wrote:
         return False, f"Got the disk ({dest}) but could not write it into xemu's settings - pick it in xemu: Machine > System.", dest
-    return True, (f"Ready: a formatted 8 GB Xbox hard disk (xemu's own, checksum verified) at {dest}, set in " + ", ".join(wrote)
-                  + ". Close and reopen xemu if it was running."), dest
+    old = sorted(folder.glob(READY_HDD_NAME + ".*.bak"))
+    return True, (f"Done. A formatted 8 GB Xbox hard disk (xemu's own, checksum verified) at {dest}, set in " + ", ".join(wrote)
+                  + ". Close and reopen xemu if it was running."
+                  + (f" Your previous disk was kept (not deleted) as {old[-1].name}." if old else "")), dest
 
 
 HDD_PAGE = "https://xemu.app/docs/required-files/"

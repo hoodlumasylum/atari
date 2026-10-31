@@ -58,3 +58,17 @@ def test_diagnostics_and_quick_connect():
         assert bt.quick_connect("AA:BB:CC:DD:EE:01", 10, sleep=lambda s: None)
     finally:
         bt._run = orig
+
+
+def test_link_key_check_script(tmp_path):
+    import subprocess
+    d = tmp_path / "00:11:22:33:44:55" / "AA:BB:CC:DD:EE:01"
+    d.mkdir(parents=True)
+    (d / "info").write_text("[General]\nName=x\n\n[LinkKey]\nKey=ABCDEF\nType=4\n")
+    out = subprocess.run(["sh", "-c", b.link_key_script("aa:bb:cc:dd:ee:01", str(tmp_path))], capture_output=True, text=True).stdout
+    i = b.parse_link_key(out)
+    assert i["saved"] and len(i["fingerprint"]) == 8 and "ABCDEF" not in out
+    assert "CHANGED" in " ".join(b.link_key_lines(i, "00000000"))
+    (d / "info").write_text("[General]\nName=x\n")
+    out = subprocess.run(["sh", "-c", b.link_key_script("AA:BB:CC:DD:EE:01", str(tmp_path))], capture_output=True, text=True).stdout
+    assert b.parse_link_key(out)["saved"] is False

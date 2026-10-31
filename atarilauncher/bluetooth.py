@@ -235,7 +235,9 @@ def connect_pad(mac: str, runner: Callable | None = None, say: Callable[[str], N
     say("Pairing... (keep the pad in pairing mode)")
     if runner is None and (popen is not None or shutil.which("bluetoothctl")):
         # pair inside one session with an agent, and with discovery on (BlueZ often only pairs a device it can currently see)
-        out = session([("agent NoInputNoOutput", 0.3), ("default-agent", 0.3), ("scan on", 4.0), (f"pair {mac}", 12.0)], popen)
+        # a proper bond: adapter powered + pairable + bondable, an agent in the same session, pair, then trust before it closes
+        out = session([("power on", 0.5), ("pairable on", 0.3), ("agent NoInputNoOutput", 0.3), ("default-agent", 0.3),
+                       ("scan on", 4.0), (f"pair {mac}", 12.0), ("scan off", 0.5), (f"trust {mac}", 1.0)], popen)
         rc = 0 if ("Pairing successful" in out or "AlreadyExists" in out) else 1
     else:
         rc, out = _run(["pair", mac], runner, 40)
@@ -390,14 +392,14 @@ def auto_reconnect(runner: Callable | None = None, which: Callable = shutil.whic
             except (OSError, subprocess.SubprocessError):
                 pass
         _run(["power", "on"], runner, 10)
+    # 0.5.6: NO outgoing "connect" for controllers. A DS4 / DualSense connects IN when PS is pressed; our own connect attempts
+    # ("Host is down (112)") made bluetoothd refuse the pad's incoming connection ("Operation already in progress (114)").
+    # So: adapter on, pad trusted, and let the pad come in.
     done = []
     for d in devices(runner):
-        if d.is_pad and d.paired and not d.connected:
-            if not d.trusted:
-                _run(["trust", d.mac], runner, 10)
-            _rc, out = _run(["connect", d.mac], runner, 12)
-            if "Connection successful" in out or "AlreadyConnected" in out:
-                done.append(d.name)
+        if d.is_pad and d.paired and not d.connected and not d.trusted:
+            _run(["trust", d.mac], runner, 10)
+            done.append(d.name)
     return done
 
 
@@ -588,3 +590,47 @@ def quick_connect(mac: str, seconds: float = 10.0, runner: Callable | None = Non
         if _t.monotonic() >= end:
             return False
         sleep(0.7)
+
+
+def link_key_script(mac: str, root: str = "/var/lib/bluetooth") -> str:
+    """Run as root: for each adapter, is there a saved pairing key for this pad? Prints a short fingerprint of the key (never the
+    key itself), so two checks can tell whether the key was replaced in between (for example by pairing in Windows)."""
+    return ("for d in " + root + "/*/; do [ -d \"$d\" ] || continue; a=$(basename \"$d\"); f=\"${d}" + mac.upper() + "/info\"; "
+            "if [ -f \"$f\" ]; then k=$(sed -n '/^\\[LinkKey\\]/,/^\\[/s/^Key=//p' \"$f\" | head -n1); "
+            "if [ -n \"$k\" ]; then echo \"adapter $a key yes $(printf %s \"$k\" | sha256sum | cut -c1-8)\"; "
+            "else echo \"adapter $a key no\"; fi; else echo \"adapter $a nofile\"; fi; done\n")
+
+
+def parse_link_key(out: str) -> dict:
+    """-> {'adapters': [..], 'saved': bool|None, 'fingerprint': str}"""
+    ad, saved, fp = [], None, ""
+    for l in out.splitlines():
+        m = re.match(r"adapter (\S+) (key yes (\w+)|key no|nofile)", l.strip())
+        if not m:
+            continue
+        ad.append(m.group(1))
+        if m.group(3):
+            saved, fp = True, m.group(3)
+        elif saved is None:
+            saved = False
+    return {"adapters": ad, "saved": saved, "fingerprint": fp}
+
+
+def link_key_lines(info: dict, previous: str = "") -> list[str]:
+    if info["saved"] is None:
+        return ["Saved pairing key: could not check (no Bluetooth folder found, or the password box was closed)."]
+    if not info["saved"]:
+        return ["Saved pairing key: NO - this computer did not keep a key for the pad, so it must be paired again each time. "
+                "Press Remove and re-pair once more; if it still says NO, send these diagnostics."]
+    out = [f"Saved pairing key: yes (fingerprint {info['fingerprint']}; adapter {', '.join(info['adapters'])})."]
+    if previous and previous != info["fingerprint"]:
+        out.append(f"The key CHANGED since the last check (was {previous}). Something paired the pad again in between - most often "
+                   "Windows on the same computer, or a PS4 console. " + "The pad keeps only one key per computer.")
+    if len(info["adapters"]) > 1:
+        out.append("More than one Bluetooth adapter address is stored - if the adapter's address changes between starts, the pad "
+                   "cannot find it again.")
+    return out
+
+
+DUALBOOT_SHORT = ("Dual boot: if you pair this pad in Windows (or with a PS4) it gets a new key and Linux's saved key stops working - "
+                  "then only SHARE + PS (pairing again) works here. Pair it in only one place.")

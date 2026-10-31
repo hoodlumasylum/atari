@@ -141,7 +141,7 @@ def test_remove_and_repair_one_tap(monkeypatch):
     assert any(f"pair {MAC}" in c.cmds for c in ctls)
 
 
-def test_auto_reconnect_powers_on_and_connects_paired_pads(monkeypatch):
+def test_auto_reconnect_powers_on_and_trusts_but_never_connects_out(monkeypatch):
     calls = []
 
     def run(args, runner=None, timeout=20):
@@ -163,5 +163,5 @@ def test_auto_reconnect_powers_on_and_connects_paired_pads(monkeypatch):
         returncode, stdout, stderr = 0, "", ""
     got = bt.auto_reconnect(runner=lambda *a, **k: P(), which=lambda n: "/usr/bin/" + n)
     assert got == ["Wireless Controller"]
-    assert ["power", "on"] in calls and ["trust", MAC] in calls and ["connect", MAC] in calls
-    assert ["connect", "11:22:33:44:55:66"] not in calls
+    assert ["power", "on"] in calls and ["trust", MAC] in calls
+    assert not any(c[0] == "connect" for c in calls)       # outgoing connects blocked the DS4's own incoming connection

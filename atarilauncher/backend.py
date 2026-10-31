@@ -2616,12 +2616,37 @@ class Backend(QObject):
             if w["mac"] in seen:
                 continue
             seen.add(w["mac"])
-            rows.append(self._info(f"{w['name']} is paired but not connected. {bluetooth.PRESS_PS}"))
+            d = next((x for x in self._bt_paired if x.mac == w["mac"]), None)
+            bond = "" if d is None else ("  Trusted: " + ("yes" if d.trusted else "NO") + ", Bonded (key saved): "
+                                         + {True: "yes", False: "NO - it will need pairing again", None: "unknown"}[d.bonded] + ".")
+            rows.append(self._info(f"{w['name']} is paired but not connected. {bluetooth.PRESS_PS}{bond}"))
             if not self._bt_busy:
                 rows.append({"kind": "done", "id": "btrepair:" + w["mac"], "title": f"REMOVE AND RE-PAIR {w['name']}",
                              "detail": "If pressing PS does not bring it back: hold SHARE + PS until the light double-blinks, then "
                                        "press this. It removes the old pairing, pairs, trusts and connects it again in one go."})
         return rows
+
+    def _bt_key_check(self, mac: str) -> list:
+        """Read (as administrator, password in CodeAque's own box) whether a pairing key for this pad is saved in
+        /var/lib/bluetooth - only a short fingerprint is shown, never the key. Remembers the fingerprint to spot a replaced key."""
+        if not mac:
+            return []
+        full, secret, early = rootauth.prepare(["pkexec", "sh", "-c", bluetooth.link_key_script(mac)])
+        if early is not None:
+            return ["Saved pairing key: not checked (the password box was closed)."]
+        try:
+            p = subprocess.run(full, capture_output=True, text=True, timeout=30,
+                               **({"input": secret.decode()} if secret else {"stdin": subprocess.DEVNULL}))
+            out = p.stdout or ""
+        except (OSError, subprocess.SubprocessError):
+            out = ""
+        info = bluetooth.parse_link_key(out)
+        key = "bt_key_fp:" + mac.upper()
+        lines = bluetooth.link_key_lines(info, self.store.get_pref(key, "") or "")
+        if info["saved"]:
+            self.store.set_pref(key, info["fingerprint"])
+        kiosk.log_event("bluetooth key check: " + " | ".join(lines))
+        return lines
 
     def _bt_job(self, what: str, fn) -> None:
         if self._bt_busy:
@@ -2647,7 +2672,7 @@ class Backend(QObject):
             try:
                 got = bluetooth.auto_reconnect()
                 if got:
-                    kiosk.log_event(f"bluetooth: reconnected {got}")
+                    kiosk.log_event(f"bluetooth: marked trusted {got}")
                 if self._bt_agent is not None:
                     self._bt_agent.start()          # restarts it if bluetoothd was restarted
                 devs = bluetooth.devices()
@@ -2661,8 +2686,7 @@ class Backend(QObject):
 
     def _bt_pad_seen(self, mac: str) -> None:
         """The pairing helper saw a paired pad stir (PS pressed): try to connect it for ~10 seconds (once per 15 s per pad)."""
-        if not any(w["mac"].upper() == mac for w in self._pads_waiting):
-            return
+        return      # 0.5.6: never connect out to a pad - it blocks the pad's own incoming connection (see bluetooth.auto_reconnect)
         now = time.monotonic()
         if now - self._bt_quick.get(mac, -99.0) < 15.0:
             return
@@ -2677,7 +2701,7 @@ class Backend(QObject):
     def _on_pads_waiting(self, rows) -> None:
         rows = list(rows)
         try:
-            self._btauto_timer.setInterval(3000 if rows else 8000)   # a pad is waiting: look more often
+            self._btauto_timer.setInterval(8000)
         except (AttributeError, RuntimeError):
             pass
         if rows != self._pads_waiting:
@@ -2760,6 +2784,10 @@ class Backend(QObject):
                     self._bt_agent.extra.add(mac.upper())
                 try:
                     ok, self._bt_msg = bluetooth.repair_pad(mac, say=say)
+                    say("Checking that the pairing key was saved (password)...")
+                    self._bt_check = self._bt_key_check(mac)
+                    if self._bt_check and self._bt_check[0].startswith("Saved pairing key: NO"):
+                        ok = False
                 finally:
                     if self._bt_agent is not None:
                         self._bt_agent.extra.discard(mac.upper())
@@ -2771,6 +2799,9 @@ class Backend(QObject):
             def dg():
                 mac = self._pads_waiting[0]["mac"] if self._pads_waiting else ""
                 self._bt_check = bluetooth.diagnostics(mac)
+                if not mac:
+                    mac = next((d.mac for d in self._bt_paired if d.is_pad and d.paired), "")
+                self._bt_check += self._bt_key_check(mac) + [bluetooth.DUALBOOT_SHORT]
                 kiosk.log_event("bluetooth diagnostics: " + " | ".join(self._bt_check))
             self._bt_job("Collecting diagnostics...", dg)
             return "refresh"

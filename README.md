@@ -31,6 +31,26 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
+## What's new in 0.5.6
+
+**Updating:** in-app update (Settings) as usual, then restart the computer once.
+
+### PS4 pad: just press PS after a restart
+* **Found from your diagnostics:** CodeAque itself was getting in the way. Every few seconds it tried to call the pad (Bluetooth log: `Host is down (112)`). When you pressed PS and the pad tried to connect in, Bluetooth refused it because CodeAque's own attempt was still running (`Refusing input device connect: Operation already in progress (114)`).
+* **Fixed:** CodeAque no longer calls out to PlayStation / Bluetooth controllers at all. The 3- and 8-second connect loop and the 10-second "quick connect" are gone for pads. CodeAque only keeps Bluetooth on, keeps the computer connectable and keeps the pad Trusted, and lets the pad connect in when you press PS.
+* **Pairing makes a proper bond:** Remove and re-pair now switches the adapter on and pairable, pairs with the helper in the same step, and marks the pad Trusted before it finishes.
+* **Saved pairing key check:** after Remove and re-pair, and in Send diagnostics, CodeAque checks (password once) that a key for the pad is saved in `/var/lib/bluetooth`. It shows **Saved pairing key: yes / NO** plus a short fingerprint (never the key itself). If the fingerprint changes between checks, it tells you the pad was paired again somewhere else.
+* The home banner and the Controllers page now show **Trusted** and **Bonded (key saved)** plainly.
+* **Dual boot:** if you pair the pad in Windows (or with a PS4), it gets a new key and Linux's key stops working. Then only SHARE + PS works here. Pair it in one place only.
+
+### Xbox: "Get a formatted hard disk" now always finishes
+* *Why it failed:* the checksums CodeAque expects are right. I checked them again against xemu's official release today: the zip `d9f5a4c1...` and `xbox_hdd.qcow2` inside it `eb35d069...` both match. But xemu **writes to the disk while you play**, so after one use the file no longer matches, and CodeAque refused to touch it.
+* **Now:** the existing file is **renamed, never deleted**, to `xbox_hdd_formatted.qcow2.<date-time>.bak`. Then the verified fresh disk goes in place and `hdd_path` is set. One tap, with a progress bar, then **Done** (it names the .bak). If the download fails, your old disk is put back where it was.
+
+### Not tested on real hardware
+- Not tried on the Dell or with the real DS4. The pad fix matches the errors in your Bluetooth log, but I could not press PS here. Tested with pretend Bluetooth tools.
+- The disk fix ran with a real download of xemu's disk and pretend files. It was not run inside xemu on the Dell.
+
 ## What's new in 0.5.5
 
 **Updating:** in-app update (Settings) as usual. About 15 seconds after CodeAque starts, it asks for your password once to apply the new Bluetooth fixes. Then **restart the computer once**.
@@ -282,7 +302,7 @@ Plan for a future CodeAque Live USB: [docs/live-usb-plan.md](docs/live-usb-plan.
 - **If the in-app updater cannot be trusted on your connection, one command does the same by hand** (resumes if it drops, checks the SHA256 against the release's own list, keeps your settings and games):
 
   ```bash
-  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.5.5.tar.gz https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.5/atari-0.5.5.tar.gz && curl -fsSL https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.5/SHA256SUMS.txt | grep ' atari-0.5.5.tar.gz$' | sha256sum -c - && tar xzf atari-0.5.5.tar.gz && cd atari-0.5.5 && ./install.sh --yes
+  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.5.6.tar.gz https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.6/atari-0.5.6.tar.gz && curl -fsSL https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.6/SHA256SUMS.txt | grep ' atari-0.5.6.tar.gz$' | sha256sum -c - && tar xzf atari-0.5.6.tar.gz && cd atari-0.5.6 && ./install.sh --yes
   ```
 
 ## What's new in 0.4.1
@@ -504,13 +524,13 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.5.5.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/codeaque/releases/latest).
+1. Download **`atari-0.5.6.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/codeaque/releases/latest).
 2. Open a **Terminal** and type:
 
    ```bash
    cd ~/Downloads
-   tar xzf atari-0.5.5.tar.gz
-   cd atari-0.5.5
+   tar xzf atari-0.5.6.tar.gz
+   cd atari-0.5.6
    ./install.sh
    ```
 

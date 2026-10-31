@@ -44,6 +44,13 @@ def test_ready_hdd_checksums_and_settings(tmp_path, monkeypatch):
     assert xemuconfig.read_files_section((folder / "xemu.toml").read_text())["hdd_path"] == str(p)
     ok, msg, p2 = xemuconfig.get_ready_hdd(fetch=lambda url, dest: (_ for _ in ()).throw(AssertionError("no second download")))
     assert ok and p2 == p
+    p.write_bytes(b"used by xemu")                         # xemu wrote to it -> kept as .bak, fresh disk put in place
+    ok, msg, p3 = xemuconfig.get_ready_hdd(fetch=lambda url, dest: Path(dest).write_bytes(good))
+    baks = list(folder.glob(xemuconfig.READY_HDD_NAME + ".*.bak"))
+    assert ok and p3.read_bytes() == disk and len(baks) == 1 and baks[0].read_bytes() == b"used by xemu" and "kept" in msg
+    p.write_bytes(b"used again")                           # a bad download puts the old disk back
+    ok, msg, _ = xemuconfig.get_ready_hdd(fetch=lambda url, dest: Path(dest).write_bytes(b"evil"))
+    assert not ok and p.read_bytes() == b"used again"
     assert xemuconfig.READY_HDD_URL.startswith("https://github.com/xemu-project/")
 
 
