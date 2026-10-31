@@ -31,7 +31,7 @@ ACTION_KEYS = {
     "up": Qt.Key_Up, "down": Qt.Key_Down, "left": Qt.Key_Left, "right": Qt.Key_Right,
     "accept": Qt.Key_Return, "back": Qt.Key_Escape, "search": Qt.Key_Slash,
     "favorite": Qt.Key_F, "menu": Qt.Key_F10, "options": Qt.Key_F10,
-    "system": Qt.Key_Tab, "prev": Qt.Key_Q, "next": Qt.Key_E,
+    "system": Qt.Key_Tab, "prev": Qt.Key_Q, "next": Qt.Key_E, "view": Qt.Key_V,
 }
 
 
@@ -365,6 +365,7 @@ class Backend(QObject):
         self._raiseMe.connect(self._raise_window_if_idle, Qt.QueuedConnection)
         self._batteryRead.connect(self._on_battery_read, Qt.QueuedConnection)
         self._padsWaitingRead.connect(self._on_pads_waiting, Qt.QueuedConnection)
+        self._pads_was_connected = set()
         self._last_pad_name = ""
         self._badgesReady.connect(lambda: self.model.badges_updated(), Qt.QueuedConnection)
         self._pad_batt: list = []
@@ -582,8 +583,14 @@ class Backend(QObject):
             return
         if QGuiApplication.applicationState() != Qt.ApplicationActive and not os.environ.get("ATARI_TEST_INPUT"):
             return
+        self._pad_key_at = time.monotonic()
         for kind in (QKeyEvent.KeyPress, QKeyEvent.KeyRelease):
             QGuiApplication.postEvent(win, QKeyEvent(kind, key, Qt.NoModifier))
+
+    @Slot(result=bool)
+    def keyFromPad(self) -> bool:
+        """True when the key being handled right now came from a controller (not the keyboard)."""
+        return time.monotonic() - getattr(self, "_pad_key_at", -99.0) < 0.5
 
     # ----- screen recorder -------------------------------------------------------------
     def _start_hotkey(self) -> None:
@@ -2679,6 +2686,9 @@ class Backend(QObject):
                     self._bt_agent.start()          # restarts it if bluetoothd was restarted
                 devs = bluetooth.devices()
                 self._bt_paired = devs
+                for d in devs:
+                    if d.is_pad and d.connected:
+                        self._pads_was_connected.add(d.mac)
                 self._padsWaitingRead.emit([{"mac": d.mac, "name": d.name} for d in devs if d.is_pad and d.paired and not d.connected])
             except Exception:
                 pass
@@ -2709,6 +2719,11 @@ class Backend(QObject):
         if rows != self._pads_waiting:
             self._pads_waiting = rows
             self.padsWaitingChanged.emit()
+
+    @Property("QVariantList", notify=padsWaitingChanged)
+    def padsDropped(self):
+        """Pads that were connected earlier while CodeAque ran and have dropped (the small home-screen reminder)."""
+        return [w for w in self._pads_waiting if w.get("mac") in self._pads_was_connected]
 
     @Property("QVariantList", notify=padsWaitingChanged)
     def padsWaiting(self):
@@ -5237,6 +5252,42 @@ class Backend(QObject):
     def animations(self):
         return not self.cfg.reduce_animations
 
+    def _weak_gpu(self) -> bool:
+        if getattr(self, "_weak_gpu_v", None) is None:
+            from . import gpuinfo
+            try:
+                self._weak_gpu_v = gpuinfo.weak_gpu()
+            except Exception:
+                self._weak_gpu_v = False
+        return self._weak_gpu_v
+
+    @Property(bool, notify=uiPrefsChanged)
+    def effects(self):
+        """Blur, soft shadows and the big blurred backdrop. Settings > Reduce effects: AUTO turns them off on weak chips."""
+        mode = self.cfg.reduce_effects
+        if mode == "on":
+            return False
+        if mode == "off":
+            return True
+        return not self._weak_gpu()
+
+    @Slot()
+    def cycleEffects(self) -> None:
+        order = ["auto", "on", "off"]
+        self.cfg.reduce_effects = order[(order.index(self.cfg.reduce_effects) + 1) % 3] if self.cfg.reduce_effects in order else "auto"
+        self._save_prefs()
+        self.uiPrefsChanged.emit()
+
+    @Property(bool, notify=uiPrefsChanged)
+    def padReminderOn(self):
+        return self.cfg.pad_reminder
+
+    @Slot()
+    def togglePadReminder(self) -> None:
+        self.cfg.pad_reminder = not self.cfg.pad_reminder
+        self._save_prefs()
+        self.uiPrefsChanged.emit()
+
     def _save_prefs(self) -> None:
         if not self._demo and not self._first_run:
             try:
@@ -5750,6 +5801,13 @@ class Backend(QObject):
         rows.append({"kind": "anim", "title": "Reduce animations",
                      "value": "ON" if self.cfg.reduce_animations else "OFF",
                      "detail": "Turns off the moving background, bobbing icons and fades. Choose ON on a slow computer."})
+        _fxv = {"auto": "AUTO (" + ("ON" if not self.effects else "OFF") + ")", "on": "ON", "off": "OFF"}.get(self.cfg.reduce_effects, "AUTO")
+        rows.append({"kind": "effects", "title": "Reduce effects", "value": _fxv,
+                     "detail": "Turns off the see-through blur, soft shadows and the big blurred picture behind the home screen. "
+                               "AUTO = on by itself for weak graphics chips. Press to step AUTO / ON / OFF."})
+        rows.append({"kind": "padreminder", "title": "Show pad reminder", "value": "ON" if self.cfg.pad_reminder else "OFF",
+                     "detail": "A small note on the home screen when a pad that was connected before drops. "
+                               "Remove and re-pair stays in Settings > Controllers."})
         rows += self._rec_rows()
         rows.append({"kind": "sgdbkey", "title": "SteamGridDB key (optional, for more covers)",
                      "value": "Set" if self.cfg.steamgriddb_key else "Not set",

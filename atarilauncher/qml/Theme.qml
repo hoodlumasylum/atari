@@ -7,6 +7,7 @@ QtObject {
     property color gradBottom: pal.gradBottom !== undefined ? pal.gradBottom : bg
     property real waveOpacity: pal.waveOpacity !== undefined ? pal.waveOpacity : 0.55
     property bool rain: pal.rain === true
+    property bool fx: true              // false = "Reduce effects": no blur, soft shadows or blurred backdrop (set from Main.qml)
     property bool anim: true            // false = "Reduce animations": nothing moves on its own (set from Main.qml)
     property color bg: pal.bg !== undefined ? pal.bg : "#08090e"
     property color panel: pal.panel !== undefined ? pal.panel : "#0f111a"

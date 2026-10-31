@@ -4,15 +4,15 @@ import QtQuick
 Rectangle {
     id: hb
     property real u: 1
-    color: "#0b0c13"
+    color: Theme.fx ? "#800a0b12" : "#e60b0c13"
     Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: Theme.line }
     readonly property var hints: [
         { k: "A", t: "SELECT" }, { k: "B", t: "BACK" }, { k: "X", t: "FAVOURITE" }, { k: "Y", t: "OPTIONS" },
-        { k: "menu", t: "CHANGE SYSTEM" }, { k: "LB", t: "PREVIOUS" }, { k: "RB", t: "NEXT" }
+        { k: "menu", t: "CHANGE SYSTEM" }, { k: "LB", t: "PREVIOUS" }, { k: "RB", t: "NEXT" }, { k: "R3", t: "GRID / LIST" }
     ]
     Row {
         anchors.centerIn: parent
-        spacing: 46 * hb.u
+        spacing: 34 * hb.u
         Repeater {
             model: hb.hints
             Row {

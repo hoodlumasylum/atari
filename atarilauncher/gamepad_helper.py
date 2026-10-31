@@ -22,11 +22,11 @@ STICK_DEADZONE = 0.55
 
 # SDL "game controller" button names -> launcher actions (Xbox-style layout)
 # A = select/launch, B = back, X = favourite, Y = options/sort menu, Start/Menu = change system,
-# Select/View = search, LB/RB = previous/next system, d-pad and left stick = move.
+# Select/View = search, LB/RB = previous/next system, R3 (press the right stick) = grid / list, d-pad and left stick = move.
 BUTTON_MAP = {
     "a": "accept", "b": "back", "x": "favorite", "y": "options",
     "start": "system", "back": "search",
-    "leftshoulder": "prev", "rightshoulder": "next",
+    "leftshoulder": "prev", "rightshoulder": "next", "rightstick": "view",
     "dpad_up": "up", "dpad_down": "down", "dpad_left": "left", "dpad_right": "right",
 }
 DIRECTIONS = {"up", "down", "left", "right"}

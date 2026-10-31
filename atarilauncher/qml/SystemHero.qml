@@ -10,16 +10,16 @@ Rectangle {
     property string subtitle: ""
     property string blurb: ""
     property var chips: []           // [{icon, text}]
-    radius: 16 * u
+    radius: 24 * u
     clip: true
     gradient: Gradient {
         orientation: Gradient.Horizontal
-        GradientStop { position: 0.0; color: "#06231a" }
-        GradientStop { position: 0.55; color: "#0b3a2b" }
-        GradientStop { position: 1.0; color: "#14110a" }
+        GradientStop { position: 0.0; color: "#c006231a" }
+        GradientStop { position: 0.55; color: "#800b3a2b" }
+        GradientStop { position: 1.0; color: "#4014110a" }
     }
     border.width: 1.5 * u
-    border.color: "#4de8c25a"
+    border.color: "#33e8c25a"
 
     Canvas {           // original backdrop: a sun disc, dunes and three pyramids in thin gold lines
         id: bg

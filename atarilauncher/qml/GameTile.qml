@@ -30,25 +30,25 @@ Item {
         y: (tile.listMode ? 5 : 8) * tile.u
         height: tile.listMode ? tile.height - 10 * tile.u : tile.height - tile.capH - 12 * tile.u
         width: tile.listMode ? height * 0.75 : tile.width - 16 * tile.u
-        scale: tile.current && tile.focused && !tile.listMode ? 1.05 : 1.0
+        scale: tile.current && tile.focused && !tile.listMode ? 1.08 : 1.0
         z: tile.current ? 2 : 0
-        Behavior on scale { NumberAnimation { duration: 110; easing.type: Easing.OutQuad } }
+        Behavior on scale { enabled: Theme.anim; NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
 
         // red glow (only for the highlighted tile): two soft rings
         Rectangle {
             visible: tile.current && tile.focused
             anchors.fill: parent
-            anchors.margins: -7 * tile.u
-            radius: 14 * tile.u
+            anchors.margins: -8 * tile.u
+            radius: 20 * tile.u
             color: "transparent"
-            border.width: 5 * tile.u
+            border.width: 6 * tile.u
             border.color: Theme.accentGlow
         }
         Rectangle {
             visible: tile.current && tile.focused
             anchors.fill: parent
             anchors.margins: -3.5 * tile.u
-            radius: 11 * tile.u
+            radius: 15 * tile.u
             color: "transparent"
             border.width: 3 * tile.u
             border.color: Theme.accent
@@ -57,7 +57,7 @@ Item {
             anchors.fill: parent
             anchors.margins: 2 * tile.u
             u: tile.u
-            radius: 7 * tile.u
+            radius: 11 * tile.u
             source: tile.cover
             fit: tile.fit
             title: tile.title
@@ -67,10 +67,10 @@ Item {
         }
         Rectangle {  // frame
             anchors.fill: parent
-            radius: 9 * tile.u
+            radius: 12 * tile.u
             color: "transparent"
-            border.width: (tile.current ? 3 : 1.5) * tile.u
-            border.color: tile.current ? Theme.accent : "#2c3044"
+            border.width: (tile.current ? 2.5 : 1) * tile.u
+            border.color: tile.current ? Theme.accent : "#22ffffff"
         }
         Rectangle {   // Modern Games: will it run on Linux (ProtonDB / anti-cheat)
             objectName: "runBadge"

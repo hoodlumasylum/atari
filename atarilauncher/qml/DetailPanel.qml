@@ -13,10 +13,11 @@ Rectangle {
     signal deleteRequested()
     signal clicked()
 
-    radius: 14 * u
-    color: "#0f111a"
-    border.width: 1.5 * u
-    border.color: focused ? Theme.accent : Theme.line
+    radius: 22 * u
+    color: Theme.fx ? "#990c0f17" : "#e60d0f18"
+    border.width: focused ? 2 * u : 1 * u
+    border.color: focused ? Theme.accent : "#24ffffff"
+    Behavior on border.color { enabled: Theme.anim; ColorAnimation { duration: 180 } }
 
     Cover {
         id: art

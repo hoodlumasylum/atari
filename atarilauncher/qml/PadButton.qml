@@ -9,14 +9,14 @@ Item {
     property real u: 1
     property string style: (typeof backend !== "undefined" && backend) ? backend.padStyle : "xbox"
     readonly property bool ps: style === "ps"
-    readonly property bool shoulder: kind === "LB" || kind === "RB"
+    readonly property bool shoulder: kind === "LB" || kind === "RB" || kind === "R3"
     readonly property bool pill: kind === "menu" || kind === "view"
     readonly property bool face: !shoulder && !pill
     readonly property string psShape: kind === "A" ? "cross" : kind === "B" ? "circle" : kind === "X" ? "square" : kind === "Y" ? "triangle" : ""
     readonly property color tint: ps ? (kind === "A" ? "#7ea4e8" : kind === "B" ? "#ec6a73" : kind === "X" ? "#e08fcf" : "#45c4a6")
                                      : (kind === "A" ? Theme.green : kind === "B" ? Theme.red : kind === "X" ? Theme.blue
                                         : kind === "Y" ? Theme.yellow : "#cfd3e0")
-    readonly property string label: shoulder ? (ps ? (kind === "LB" ? "L1" : "R1") : kind)
+    readonly property string label: kind === "R3" ? "R3" : shoulder ? (ps ? (kind === "LB" ? "L1" : "R1") : kind)
                                   : pill ? (ps ? (kind === "menu" ? "OPTIONS" : "SHARE") : "") : (ps ? "" : kind)
     objectName: "padButton_" + kind
     width: (shoulder ? 54 : (pill && ps) ? 84 : 34) * u

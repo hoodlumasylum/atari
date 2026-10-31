@@ -17,13 +17,13 @@ Item {
         id: card
         anchors.fill: parent
         anchors.margins: 5 * st.u
-        scale: st.focused ? 1.06 : 1.0
-        Behavior on scale { enabled: Theme.anim; NumberAnimation { duration: 120; easing.type: Easing.OutQuad } }
+        scale: st.focused ? 1.08 : 1.0
+        Behavior on scale { enabled: Theme.anim; NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
         Rectangle {          // glow
             visible: st.lit && st.focused
             anchors.fill: parent
             anchors.margins: -5 * st.u
-            radius: 16 * st.u
+            radius: 20 * st.u
             color: "transparent"
             border.width: 5 * st.u
             border.color: Theme.accentGlow
@@ -31,10 +31,10 @@ Item {
         Rectangle {
             id: face
             anchors.fill: parent
-            radius: 12 * st.u
+            radius: 16 * st.u
             gradient: Gradient {
-                GradientStop { position: 0.0; color: st.lit ? "#2a2410" : "#171a22" }
-                GradientStop { position: 1.0; color: st.lit ? "#120f06" : "#0b0d12" }
+                GradientStop { position: 0.0; color: st.lit ? "#b02a2410" : "#80171a22" }
+                GradientStop { position: 1.0; color: st.lit ? "#a0120f06" : "#700b0d12" }
             }
             Icon {
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -61,7 +61,7 @@ Item {
         }
         Rectangle {  // frame
             anchors.fill: parent
-            radius: 12 * st.u
+            radius: 16 * st.u
             color: "transparent"
             border.width: (st.lit ? 3 : 1.2) * st.u
             border.color: st.lit ? Theme.accent : (st.focused ? "#6a7290" : "#2a3042")

@@ -12,6 +12,7 @@ Window {
 
     // everything is drawn in "units" that scale with the window (1 unit = 1 pixel at 1920x1080)
     Binding { target: Theme; property: "anim"; value: backend.animations }
+    Binding { target: Theme; property: "fx"; value: backend.effects }
     Binding { target: Theme; property: "pal"; value: backend.themeColors }
     readonly property real u: Math.max(0.4, Math.min(width / 1920, height / 1080))
 
@@ -406,6 +407,7 @@ Window {
         var k = e.key
         var n = grid.count
         if (k === Qt.Key_F10 || k === Qt.Key_Menu || k === Qt.Key_M || k === Qt.Key_O) { openOptions(); return }
+        if (k === Qt.Key_V && (area === "grid" || area === "recent" || area === "tiles" || area === "side" || area === "detail")) { setListMode(!listMode); return }
         if (k === Qt.Key_Slash || k === Qt.Key_Find || (k === Qt.Key_F && (e.modifiers & Qt.ControlModifier))) { openSearch(); return }
         if (k === Qt.Key_Tab || k === Qt.Key_Backtab) { area = area === "tiles" ? (n > 0 ? "grid" : "tiles") : "tiles"; return }
         if (k === Qt.Key_PageUp || k === Qt.Key_Q) { cycleSystem(-1); return }
@@ -616,6 +618,8 @@ Window {
         else if (r.kind === "fsgames") { backend.toggleFullscreenGames(); refreshSetup(true) }
         else if (r.kind === "escexit") { backend.toggleEscExit(); refreshSetup(true) }
         else if (r.kind === "anim") { backend.toggleAnimations(); refreshSetup(true) }
+        else if (r.kind === "effects") { backend.cycleEffects(); refreshSetup(true) }
+        else if (r.kind === "padreminder") { backend.togglePadReminder(); refreshSetup(true) }
         else if (r.kind === "covers") { backend.downloadCoversNow(); refreshSetup(true) }
         else if (r.kind === "coversauto") { backend.toggleCoversAuto(); refreshSetup(true) }
         else if (r.kind === "emulators") { importReturn = "setup"; openEmulators() }
@@ -716,6 +720,7 @@ Window {
                 else if (backend.runningSteam && (e.key === Qt.Key_C || e.key === Qt.Key_Y || e.key === Qt.Key_F10)) backend.copySteamLog()
                 return
             }
+            if (padWaitBanner.visible && !backend.keyFromPad()) root.padToastHidden = root.padToastKey   // keyboard in use: hide the pad note
             var snd = win.keySound(e)
             if (win.mode === "library") libraryKey(e)
             else if (win.mode === "search") searchKey(e)
@@ -747,8 +752,18 @@ Window {
         }
         WaveBackground {
             anchors.fill: parent
-            active: !backend.running && win.visibility !== Window.Minimized
+            visible: !homeBackdrop.visible
+            active: !homeBackdrop.visible && !backend.running && win.visibility !== Window.Minimized
                     && (win.mode === "library" || win.mode === "search" || win.mode === "menu" || win.mode === "sort")
+        }
+        Backdrop {     // 0.6.1: the highlighted game's art, big and blurred, behind the home screen
+            id: homeBackdrop
+            objectName: "homeBackdrop"
+            anchors.fill: parent
+            visible: win.mode === "library" || win.mode === "search" || win.mode === "menu" || win.mode === "sort"
+            source: win.cur && win.cur.wideArt ? win.cur.wideArt : (win.cur && win.cur.art ? win.cur.art : "")
+            hue: win.cur && win.cur.hue !== undefined ? win.cur.hue : 0.42
+            drift: grid.cols > 1 && grid.currentIndex >= 0 ? ((grid.currentIndex % grid.cols) / (grid.cols - 1)) * 2 - 1 : 0
         }
 
         // ------------------------------------------------------------ banner + tabs
@@ -758,7 +773,7 @@ Window {
             anchors.top: parent.top
             anchors.left: parent.left
             anchors.right: parent.right
-            height: 104 * win.u
+            height: 64 * win.u
             activeTab: win.activeTab
             focusIndex: win.area === "tabs" && win.mode === "library" ? win.tabFocus : -1
             onActivated: function (i) { win.area = "tabs"; win.tabFocus = i; win.activateTab(i) }
@@ -766,63 +781,61 @@ Window {
         }
 
         // ------------------------------------------------------------ paired pad not connected: press PS / Remove and re-pair
+        // 0.6.1: a small note, only when a pad that was connected earlier drops. X closes it; it also hides as soon as the
+        // keyboard or mouse is used; Settings > Show pad reminder turns it off. Remove and re-pair: Settings > Controllers.
+        property string padToastKey: backend.padsDropped.map(function (p) { return p.mac }).join(",")
+        property string padToastHidden: ""
         Rectangle {
             id: padWaitBanner
             objectName: "padWaitBanner"
             z: 60
-            visible: !backend.running && backend.padsWaiting.length > 0 && win.mode === "library"
+            visible: !backend.running && backend.padReminderOn && root.padToastKey !== "" && root.padToastHidden !== root.padToastKey
+                     && win.mode === "library"
             anchors.top: top.bottom
-            anchors.topMargin: 4 * win.u
-            anchors.horizontalCenter: parent.horizontalCenter
-            width: Math.min(parent.width - 40 * win.u, Math.max(pwRow.implicitWidth, pwHint.implicitWidth) + 40 * win.u)
-            clip: true
-            height: 96 * win.u
-            radius: 14 * win.u
-            color: "#e01b2a4a"
-            border.color: "#6fa8ff"
-            border.width: 2 * win.u
-            Text {
-                id: pwHint
-                objectName: "padWaitHint"
-                anchors.bottom: parent.bottom
-                anchors.bottomMargin: 8 * win.u
-                anchors.horizontalCenter: parent.horizontalCenter
-                width: Math.min(implicitWidth, padWaitBanner.width - 24 * win.u)
-                elide: Text.ElideRight
-                text: "Used this pad on Windows or a PS4? It remembers only one - hold SHARE + PS to bring it back here. Xbox pads: press the Xbox button."
-                color: "#cfe0ff"; font.pixelSize: 16 * win.u
-            }
+            anchors.topMargin: 10 * win.u
+            anchors.right: parent.right
+            anchors.rightMargin: 20 * win.u
+            width: Math.min(parent.width * 0.5, pwRow.implicitWidth + 28 * win.u)
+            height: 40 * win.u
+            radius: height / 2
+            color: "#e6141826"
+            border.color: "#556fa8ff"
+            border.width: 1 * win.u
+            opacity: visible ? 1 : 0
+            Behavior on opacity { enabled: Theme.anim; NumberAnimation { duration: 200 } }
             Row {
                 id: pwRow
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.top: parent.top
-                anchors.topMargin: 9 * win.u
-                spacing: 18 * win.u
-                Icon { name: "pad"; size: 30 * win.u; color: "white"; anchors.verticalCenter: parent.verticalCenter }
+                anchors.verticalCenter: parent.verticalCenter
+                x: 14 * win.u
+                spacing: 10 * win.u
+                Icon { name: "pad"; size: 20 * win.u; color: "#9cc0ff"; anchors.verticalCenter: parent.verticalCenter }
                 Text {
+                    id: pwHint
+                    objectName: "padWaitHint"
                     anchors.verticalCenter: parent.verticalCenter
-                    width: Math.min(implicitWidth, padWaitBanner.parent.width - 40 * win.u - 120 * win.u - rpText.implicitWidth - 30 * win.u * 2)
+                    width: Math.min(implicitWidth, padWaitBanner.parent.width * 0.5 - 100 * win.u)
                     elide: Text.ElideRight
-                    text: backend.padsWaiting.length ? ("Pad not connected: press PS (some non-Sony pads need SHARE + PS each time)") : ""
-                    color: "white"; font.pixelSize: 22 * win.u; font.bold: true
+                    text: backend.padsDropped.length ? (backend.padsDropped[0].name + " disconnected - press PS / Xbox to reconnect") : ""
+                    color: "#e6ebf7"; font.pixelSize: 15 * win.u
                 }
                 Rectangle {
-                    objectName: "repairButton"
+                    objectName: "padToastClose"
                     anchors.verticalCenter: parent.verticalCenter
-                    height: 46 * win.u
-                    width: rpText.implicitWidth + 36 * win.u
-                    radius: 10 * win.u
-                    color: rpMouse.containsMouse ? "#ff5a5a" : "#d33a3a"
-                    Text { id: rpText; anchors.centerIn: parent; text: "REMOVE AND RE-PAIR  (R)"; color: "white"; font.pixelSize: 20 * win.u; font.bold: true }
-                    MouseArea { id: rpMouse; anchors.fill: parent; hoverEnabled: true
-                                onClicked: if (backend.padsWaiting.length) backend.repairPad(backend.padsWaiting[0].mac) }
+                    width: 26 * win.u; height: width; radius: width / 2
+                    color: closeMouse.containsMouse ? "#33ffffff" : "transparent"
+                    Text { anchors.centerIn: parent; text: "\u2715"; color: "#c9cfdf"; font.pixelSize: 14 * win.u }
+                    MouseArea { id: closeMouse; anchors.fill: parent; hoverEnabled: true; onClicked: root.padToastHidden = root.padToastKey }
                 }
             }
         }
-        Shortcut {
-            sequence: "R"
+        MouseArea {    // any mouse use hides the pad note (it never takes the click away from what is underneath)
+            anchors.fill: parent
+            z: 59
             enabled: padWaitBanner.visible
-            onActivated: if (backend.padsWaiting.length) backend.repairPad(backend.padsWaiting[0].mac)
+            acceptedButtons: Qt.AllButtons
+            propagateComposedEvents: true
+            hoverEnabled: false
+            onPressed: function (m) { root.padToastHidden = root.padToastKey; m.accepted = false }
         }
 
         // ------------------------------------------------------------ system tiles
@@ -834,7 +847,7 @@ Window {
             anchors.leftMargin: 10 * win.u
             anchors.right: parent.right
             anchors.rightMargin: 10 * win.u
-            height: 128 * win.u
+            height: 112 * win.u
             orientation: ListView.Horizontal
             clip: true
             model: win.tileList
@@ -865,7 +878,7 @@ Window {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            height: 56 * win.u
+            height: 46 * win.u
         }
         Rectangle {   // "Covers 12/80" while pictures download in the background
             id: coverPill
@@ -901,11 +914,12 @@ Window {
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
                 anchors.left: parent.left
-                width: 280 * win.u
-                radius: 14 * win.u
-                color: "#0d0f18"
-                border.width: 1.5 * win.u
-                border.color: win.area === "side" ? Theme.accent : Theme.line
+                width: 260 * win.u
+                radius: 22 * win.u
+                color: Theme.fx ? "#990c0f17" : "#e60d0f18"
+                border.width: (win.area === "side" ? 2 : 1) * win.u
+                border.color: win.area === "side" ? Theme.accent : "#24ffffff"
+                Behavior on border.color { enabled: Theme.anim; ColorAnimation { duration: 180 } }
                 SideItem {
                     id: sideAll
                     anchors.top: parent.top
@@ -984,7 +998,7 @@ Window {
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
                 anchors.right: parent.right
-                width: 380 * win.u
+                width: 360 * win.u
                 u: win.u
                 game: win.cur
                 focused: win.area === "detail" && win.mode === "library"
@@ -1046,8 +1060,8 @@ Window {
                                   : (win.heroInfo.isTile && apps_like.indexOf(win.heroInfo.key) < 0 ? win.heroInfo.short + " Games" : backend.currentLabel)
                             color: "white"
                             font.pixelSize: 24 * win.u
-                            font.bold: true
-                            font.letterSpacing: 1.5 * win.u
+                            font.weight: Font.DemiBold
+                            font.letterSpacing: 0.6 * win.u
                             elide: Text.ElideRight
                         }
                         Text {
@@ -1109,7 +1123,7 @@ Window {
 
                 GridView {
                     id: grid
-                    readonly property int cols: win.listMode ? 1 : Math.max(2, Math.round(width / (190 * win.u)))
+                    readonly property int cols: win.listMode ? 1 : Math.max(2, Math.round(width / (236 * win.u)))
                     anchors.top: heading.bottom
                     anchors.topMargin: 6 * win.u
                     anchors.bottom: recentBox.visible ? recentBox.top : parent.bottom
@@ -1117,7 +1131,8 @@ Window {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     cellWidth: Math.floor(width / cols)
-                    cellHeight: win.listMode ? 84 * win.u : Math.min(cellWidth * 1.25 + 36 * win.u, Math.max(height, 150 * win.u))
+                    cellHeight: win.listMode ? 84 * win.u : Math.min(cellWidth * 1.25 + 36 * win.u, Math.max(height - topMargin, 150 * win.u))
+                    topMargin: win.listMode ? 0 : 12 * win.u      // room for the focused cover to grow (it scales up on focus)
                     clip: true
                     model: backend.games
                     keyNavigationEnabled: false
@@ -1154,7 +1169,7 @@ Window {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
-                    height: visible ? Math.round(Math.min(220 * win.u, centre.height * 0.30)) : 0
+                    height: visible ? Math.round(Math.min(250 * win.u, centre.height * 0.32)) : 0
                     visible: backend.query === "" && backend.recentGames.length > 0 && grid.count > 0
                     Row {
                         id: recentHead

@@ -35,7 +35,12 @@ Item {
         { label: "SYSTEMS", icon: "pad" }, { label: "SETTINGS", icon: "gear" }
     ]
 
+    Rectangle {   // 0.6.1: a slim see-through glass strip over the backdrop (was the big banner picture)
+        anchors.fill: parent
+        color: Theme.fx ? "#730a0c12" : "#f00a0c12"
+    }
     Image {
+        visible: false
         anchors.fill: parent
         source: Qt.resolvedUrl("../assets/banner.jpg")
         fillMode: Image.PreserveAspectCrop
@@ -47,19 +52,20 @@ Item {
         anchors.fill: parent
         gradient: Gradient {
             orientation: Gradient.Horizontal
-            GradientStop { position: 0.0; color: "#10000000" }
-            GradientStop { position: 0.3; color: "#66000000" }
-            GradientStop { position: 1.0; color: "#99000000" }
+            GradientStop { position: 0.0; color: "#00000000" }
+            GradientStop { position: 1.0; color: "#00000000" }
         }
     }
-    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#33ffffff" }
+    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#1fffffff" }
 
     Wordmark {
         id: wm
         u: tb.u
         compact: true
+        scale: 0.72
+        transformOrigin: Item.Left
         anchors.left: parent.left
-        anchors.leftMargin: 34 * tb.u
+        anchors.leftMargin: 28 * tb.u
         anchors.verticalCenter: parent.verticalCenter
     }
 
@@ -67,7 +73,7 @@ Item {
         id: tabRow
         anchors.left: wm.right
         objectName: "tabRow"
-        anchors.leftMargin: (tb.squeeze >= 4 ? 28 : 70) * tb.u
+        anchors.leftMargin: (tb.squeeze >= 4 ? 4 : 24) * tb.u - wm.width * 0.28
         anchors.verticalCenter: parent.verticalCenter
         spacing: (tb.squeeze >= 4 ? 5 : 8) * tb.u
         onWidthChanged: tb.fit()
@@ -79,7 +85,7 @@ Item {
                 required property int index
                 readonly property bool active: index === tb.activeTab
                 readonly property bool hot: index === tb.focusIndex
-                height: 46 * tb.u
+                height: 36 * tb.u
                 width: tabRowInner.implicitWidth + (tb.squeeze >= 4 ? 24 : 36) * tb.u
                 radius: height / 2
                 color: active ? "#3a3012" : (hot ? "#26ffffff" : "#40000000")
@@ -89,21 +95,21 @@ Item {
                     visible: tab.active
                     anchors.fill: parent; anchors.margins: -4 * tb.u
                     radius: height / 2; color: "transparent"
-                    border.width: 4 * tb.u; border.color: Theme.accentGlow
+                    border.width: 3 * tb.u; border.color: Theme.accentGlow
                 }
                 Row {
                     id: tabRowInner
                     anchors.centerIn: parent
                     spacing: 9 * tb.u
                     Icon { scale: tab.hot ? 1.2 : 1.0; Behavior on scale { enabled: Theme.anim; NumberAnimation { duration: 140; easing.type: Easing.OutBack } }
-                           name: tab.modelData.icon; size: 22 * tb.u; color: tab.active ? Theme.accent : "#d6d9e6"
+                           name: tab.modelData.icon; size: 18 * tb.u; color: tab.active ? Theme.accent : "#d6d9e6"
                            anchors.verticalCenter: parent.verticalCenter }
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
                         visible: tb.squeeze < 5 || tab.active
                         text: tab.modelData.label
                         color: tab.active ? "white" : "#d6d9e6"
-                        font.pixelSize: 16 * tb.u
+                        font.pixelSize: 14 * tb.u
                         font.bold: true
                         font.letterSpacing: 0.8 * tb.u
                     }
@@ -114,7 +120,7 @@ Item {
         Rectangle {  // the prominent Add Games button
             id: addBtn
             readonly property bool hot: tb.focusIndex === 5
-            height: 46 * tb.u
+            height: 36 * tb.u
             objectName: "addGamesButton"
             width: addRow.implicitWidth + 36 * tb.u
             radius: height / 2
@@ -128,12 +134,12 @@ Item {
                 id: addRow
                 anchors.centerIn: parent
                 spacing: 8 * tb.u
-                Icon { name: "plus"; size: 22 * tb.u; color: "white"; stroke: 2.8; anchors.verticalCenter: parent.verticalCenter }
+                Icon { name: "plus"; size: 18 * tb.u; color: "white"; stroke: 2.8; anchors.verticalCenter: parent.verticalCenter }
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
                     text: "ADD GAMES"
                     color: "white"
-                    font.pixelSize: 16 * tb.u
+                    font.pixelSize: 14 * tb.u
                     font.bold: true
                     font.letterSpacing: 0.8 * tb.u
                 }
@@ -153,7 +159,7 @@ Item {
         Rectangle {   // a newer CodeAque release exists (found by the quiet daily check)
             visible: backend.updateAvailable
             anchors.verticalCenter: parent.verticalCenter
-            height: 34 * tb.u
+            height: 28 * tb.u
             width: updText.implicitWidth + 26 * tb.u
             radius: height / 2
             color: "#1d3a1f"
@@ -166,8 +172,8 @@ Item {
         Rectangle {
             id: searchBtn
             objectName: "searchButton"
-            width: 46 * tb.u
-            height: 46 * tb.u
+            width: 36 * tb.u
+            height: 36 * tb.u
             radius: width / 2
             anchors.verticalCenter: parent.verticalCenter
             color: tb.focusIndex === 6 ? "#26ffffff" : "#40000000"
@@ -181,7 +187,7 @@ Item {
             objectName: "wifiButton"
             readonly property bool hot: tb.focusIndex === 7
             anchors.verticalCenter: parent.verticalCenter
-            height: 46 * tb.u
+            height: 36 * tb.u
             width: wifiRow.implicitWidth + 30 * tb.u
             radius: height / 2
             color: hot ? "#26ffffff" : "#40000000"
@@ -215,7 +221,7 @@ Item {
                     readonly property bool hot: tb.focusIndex === modelData.idx
                     objectName: "media_" + modelData.act
                     anchors.verticalCenter: parent.verticalCenter
-                    width: 40 * tb.u; height: 40 * tb.u; radius: width / 2
+                    width: 30 * tb.u; height: 30 * tb.u; radius: width / 2
                     color: hot ? "#26ffffff" : "#40000000"
                     border.width: hot ? 2 * tb.u : 0
                     border.color: "#cfd3e0"
@@ -238,7 +244,7 @@ Item {
             id: brPill
             objectName: "brightnessPill"
             anchors.verticalCenter: parent.verticalCenter
-            height: 34 * tb.u
+            height: 28 * tb.u
             width: (tb.squeeze >= 3 ? 96 : tb.squeeze >= 1 ? 130 : 170) * tb.u
             radius: height / 2
             color: "#40000000"
@@ -272,7 +278,7 @@ Item {
             Rectangle {     // always there: with no pad, a way to pair one
                 objectName: "noPadPill"
                 visible: backend.padBatteries.length === 0
-                height: 34 * tb.u
+                height: 28 * tb.u
                 width: noPadRow.implicitWidth + 20 * tb.u
                 radius: height / 2
                 color: "#40000000"
@@ -291,7 +297,7 @@ Item {
                     required property var modelData
                     objectName: "padBattery"
                     property string label: modelData.text
-                    height: 34 * tb.u
+                    height: 28 * tb.u
                     width: battRow.implicitWidth + 20 * tb.u
                     radius: height / 2
                     color: modelData.low ? "#a01822" : "#40000000"
@@ -322,7 +328,7 @@ Item {
             property string stamp: Qt.formatTime(new Date(), "HH:mm")
             text: stamp
             color: "white"
-            font.pixelSize: 26 * tb.u
+            font.pixelSize: 21 * tb.u
             font.bold: true
             Timer {
                 interval: 1000
