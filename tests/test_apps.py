@@ -21,7 +21,7 @@ def nowhere(_n):
 
 
 def test_app_table_uses_the_verified_flathub_ids():
-    assert {a.id: a.flatpak for a in apps.APP_DEFS} == VERIFIED_FLATHUB_IDS
+    assert {a.id: a.flatpak for a in apps.APP_DEFS if not a.lutris} == VERIFIED_FLATHUB_IDS
     assert "unofficial" in apps.BY_ID["roblox"].note.lower() and "sign in" in apps.BY_ID["roblox"].note.lower()
 
 

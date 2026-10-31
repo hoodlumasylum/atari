@@ -27,7 +27,7 @@ def conf(tmp_path, text="[steam]\nenabled = false\n"):
     (tmp_path / "conf" / "config.toml").write_text(text)
 
 
-MENU_ORDER = ["resume", "sort", "add", "bios", "studio", "winadd", "pickcover", "record", "recordings", "fix", "help", "rescan", "emus", "update", "settings", "golive", "downloads", "files", "support", "full", "power"]
+MENU_ORDER = ["resume", "sort", "view", "add", "bios", "studio", "winadd", "pickcover", "record", "recordings", "fix", "help", "rescan", "emus", "update", "settings", "golive", "downloads", "files", "support", "full", "power"]
 
 
 def open_menu_item(ui, item_id):
@@ -67,7 +67,7 @@ def test_settings_and_emulator_rows_for_030(app, tmp_path, monkeypatch):
         assert {"bios", "covers", "coversauto", "update", "updateauto", "emulators"} <= kinds
         rows = ui.backend.emulatorRows()
         ekinds = [r["kind"] for r in rows]
-        assert "install" in ekinds and "bios" in ekinds and "controls" in ekinds and ekinds.count("app") == 16
+        assert "install" in ekinds and "bios" in ekinds and "controls" in ekinds and ekinds.count("app") == 18
         ps1 = next(r for r in rows if r.get("id") == "ps1")
         assert "BIOS" in ps1["detail"] and "your own console" in ps1["detail"]
         assert "apps" in [t["key"] for t in ui.backend.tiles]       # the PC Apps tile is always there

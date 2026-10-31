@@ -65,7 +65,7 @@ def essential_selection() -> list:
 
 def default_selection() -> list:
     """Everything: the emulators for the supported consoles plus the PC apps / stores (Roblox, Heroic, Lutris, ...)."""
-    return ([e for e in used_emulators() if e.id not in SKIP_BY_DEFAULT] + list(apps.APP_DEFS) + list(apps.HELPERS))
+    return ([e for e in used_emulators() if e.id not in SKIP_BY_DEFAULT] + [a for a in apps.APP_DEFS if not a.lutris] + list(apps.HELPERS))
 
 
 def wanted_cores() -> list[str]:

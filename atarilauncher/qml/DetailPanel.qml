@@ -16,7 +16,7 @@ Rectangle {
     radius: 14 * u
     color: "#0f111a"
     border.width: 1.5 * u
-    border.color: focused ? "#80e0202a" : Theme.line
+    border.color: focused ? Theme.accent : Theme.line
 
     Cover {
         id: art

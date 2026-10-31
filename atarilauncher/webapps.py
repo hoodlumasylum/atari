@@ -18,6 +18,8 @@ from . import donate, emulators, paths
 
 STREAMING = "streaming"
 STREAMING_NAME = "Streaming & Social"
+CLOUD = "cloud"
+CLOUD_NAME = "Cloud Gaming"
 
 
 @dataclass(frozen=True)
@@ -31,6 +33,7 @@ class WebApp:
     browse: bool = False        # a normal browser window (address bar, back / forward) instead of a full-screen app window
     mic: bool = False           # records with the microphone: the browser is told to allow it (no pop-up a controller cannot answer)
     studio: bool = False        # listed in the Studio area (next to the built-in Studio) instead of Streaming & Social
+    cloud: bool = False         # a cloud gaming service: listed on the Cloud Gaming tile
 
     @property
     def gid(self) -> str:
@@ -68,6 +71,26 @@ WEBAPPS: list[WebApp] = [
     WebApp("instagram", "Instagram", "https://www.instagram.com", note="Made for phones: a mouse or touch screen helps."),
     WebApp("facebook", "Facebook", "https://www.facebook.com", note="A mouse or touch screen helps."),
     WebApp("tiktok", "TikTok", "https://www.tiktok.com", note="A mouse or touch screen helps."),
+]
+# Cloud gaming: the services on Samsung's TV Gaming Hub that have a web player (checked October 2026; Utomik closed in January
+# 2025, so it is not here). Each opens full screen in its own browser profile; controllers work through the browser.
+CLOUD_NOTE = (" You need your own account (and the service's own subscription where it has one). Games stream from the internet: "
+              "a wired connection or 5 GHz Wi-Fi works best. Press Esc twice (or hold Guide + B) to come back to CodeAque.")
+WEBAPPS += [
+    WebApp("xcloud", "Xbox Cloud Gaming", "https://www.xbox.com/play", cloud=True,
+           note="Xbox Cloud Gaming in the browser (needs Game Pass Ultimate or a game you own that supports cloud play)." + CLOUD_NOTE),
+    WebApp("geforcenow", "GeForce NOW", "https://play.geforcenow.com", cloud=True,
+           note="NVIDIA's cloud PC: plays games you own on Steam, Epic, Ubisoft and others, on NVIDIA's computers. Free tier with "
+                "waiting times; games with anti-cheat run there too, because they run on NVIDIA's PCs." + CLOUD_NOTE),
+    WebApp("luna", "Amazon Luna", "https://luna.amazon.com", cloud=True,
+           note="Amazon's cloud gaming. Some games come with Prime; more with Luna+." + CLOUD_NOTE),
+    WebApp("boosteroid", "Boosteroid", "https://cloud.boosteroid.com", cloud=True,
+           note="Independent cloud gaming: plays games you own on Steam, Epic and other stores (subscription)." + CLOUD_NOTE),
+    WebApp("antstream", "Antstream Arcade", "https://vision.antstream.com", cloud=True,
+           note="Over a thousand classic arcade and home-computer games, streamed. Its web player is in open beta and made for Chrome."
+                + CLOUD_NOTE),
+    WebApp("blacknut", "Blacknut", "https://app.blacknut.com", cloud=True,
+           note="Family cloud gaming with hundreds of games in one subscription (Chrome works best)." + CLOUD_NOTE),
 ]
 # The optional "Support CodeAque" donate page: a browser window opened by a button in Settings / Options. It is NOT a tile (not in WEBAPPS).
 SUPPORT = WebApp("support", donate.TITLE, donate.DONATE_URL, browse=True, note=donate.NOTE)

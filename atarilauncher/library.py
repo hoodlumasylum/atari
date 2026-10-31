@@ -185,7 +185,7 @@ def build_library(cfg: Config, home: Path | None = None, covers_root: Path | Non
         plat, pname = ((webapps.STREAMING, webapps.STREAMING_NAME) if app.group == "streaming"
                        else (apps.APPS, apps.APPS_NAME))
         res.games.append(Game(gid=app.gid, title=app.title, platform=plat, platform_name=pname,
-                              note=app.note if ready else apps.install_hint(app), missing="" if ready else app.id))
+                              note=app.note if ready else apps.install_hint(app), missing="" if ready else ("lutris" if app.lutris else app.id)))
     # the music Studio: one tile that opens the Studio screen
     res.games.append(Game(gid="studio:open", title="Hoodlum Asylum Studio", platform="studio", platform_name="Studio",
                           note="Make a beat, record your voice and share it. Press Play to open the Studio."))
@@ -220,7 +220,8 @@ def build_library(cfg: Config, home: Path | None = None, covers_root: Path | Non
     # "Streaming & Social": web apps that open in a browser window
     for wa in (w for w in webapps.WEBAPPS if not w.studio):
         ready, text = webapps.status(cfg, wa, home)
-        res.games.append(Game(gid=wa.gid, title=wa.title, platform=webapps.STREAMING, platform_name=webapps.STREAMING_NAME,
+        plat, pname = (webapps.CLOUD, webapps.CLOUD_NAME) if wa.cloud else (webapps.STREAMING, webapps.STREAMING_NAME)
+        res.games.append(Game(gid=wa.gid, title=wa.title, platform=plat, platform_name=pname,
                               note=(wa.note + " " + text).strip() if ready else text, missing="" if ready else "chrome"))
     # Windows games you added with "Add Windows game"
     for wg in windows.load_games():
@@ -293,5 +294,7 @@ def demo_library() -> LibraryResult:
         counts[sid] = len(titles)
         games += [Game(f"rom:{sid}:/demo/{t}", t, sid, name, rom_path=f"/demo/{t}", added=now - 86400 * len(games))
                   for t in titles]
+    games += [Game(wa.gid, wa.title, webapps.CLOUD, webapps.CLOUD_NAME, note=wa.note) for wa in webapps.WEBAPPS if wa.cloud]
+    games += [Game(a.gid, a.title, apps.APPS, apps.APPS_NAME, note=a.note) for a in apps.APP_DEFS if a.lutris]
     scan = steam.SteamScan(root=Path("/demo/Steam"))
     return LibraryResult(games, scan, counts, "Demo mode - these games are made up.")

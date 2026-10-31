@@ -19,7 +19,7 @@ from typing import Callable
 from . import emulators
 
 APPS = "apps"                       # platform id of the "PC Apps / Stores" section
-NON_GAME = ("apps", "streaming", "free", "studio", "tools")    # tiles that are not games: hidden from "All Games" and the game counts
+NON_GAME = ("apps", "streaming", "cloud", "free", "studio", "tools")    # tiles that are not games: hidden from "All Games" and the game counts
 APPS_NAME = "PC Apps / Stores"
 HEROIC = "heroic"
 LUTRIS = "lutris"
@@ -35,6 +35,8 @@ class AppDef:
     apt: str = ""                   # apt package name when there is one
     group: str = "apps"             # which tile it lives on: "apps" (PC Apps) or "streaming" (Streaming & Social)
     background: bool = False        # keeps running behind CodeAque (music): Esc twice / Guide+B brings CodeAque back and leaves it playing
+    lutris: str = ""                # a Windows launcher installed through Lutris: its Lutris game slug (e.g. "ea-app")
+    lutris_installer: str = ""      # ... and the Lutris install script that installs it (lutris.net/games/<slug>)
 
     @property
     def name(self) -> str:          # lets the installer treat apps like emulators
@@ -81,6 +83,16 @@ APP_DEFS: list[AppDef] = [
            "Spotify's own app (a Spotify account is needed; free accounts have ads). It keeps playing behind CodeAque: press Esc twice "
            "(or Guide + B) to come back, and use the music buttons in the top bar (they need playerctl). The Flathub package is "
            "community-maintained, not made by Spotify or CodeAque.", group="streaming", background=True),
+    AppDef("eaapp", "EA app", "", lutris="ea-app", lutris_installer="ea-app-standard",
+           note="EA's Windows launcher, run through Lutris (Wine / Proton). The first Play installs it with Lutris's own community "
+                "install script (lutris.net/games/ea-app); after that Play opens it. Sign in with your own EA account. EA games with "
+                "anti-cheat (for example Battlefield and EA Sports FC) refuse Linux and will not run - play those on Windows."),
+    AppDef("rockstar", "Rockstar Games Launcher", "", lutris="rockstar-games-launcher",
+           lutris_installer="rockstar-games-launcher-latest",
+           note="Rockstar's Windows launcher, run through Lutris (Wine / Proton). The first Play installs it with Lutris's own community "
+                "install script (lutris.net/games/rockstar-games-launcher); after that Play opens it. Sign in with your own Rockstar "
+                "account. GTA Online refuses Linux (anti-cheat); story modes usually work. Rockstar games you own on Steam are best "
+                "played from Steam."),
     AppDef("moonlight", "Moonlight (game streaming)", "com.moonlight_stream.Moonlight", ("moonlight", "moonlight-qt"),
            "Streams games from another PC running Sunshine or GeForce Experience."),
 ]
@@ -104,7 +116,28 @@ HELPERS: list[AppDef] = [
 ]
 
 
+def lutris_installed_slugs(home: Path | None = None) -> set[str]:
+    """Slugs of games Lutris has installed (read only)."""
+    home = home or Path.home()
+    out: set[str] = set()
+    for db in lutris_dbs(home):
+        if not db.is_file():
+            continue
+        try:
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=2)
+            try:
+                out |= {str(r[0]) for r in con.execute("SELECT slug FROM games WHERE installed = 1").fetchall() if r[0]}
+            finally:
+                con.close()
+        except sqlite3.Error:
+            continue
+    return out
+
+
 def install_hint(app: AppDef) -> str:
+    if app.lutris:
+        return (f"{app.title} is installed through Lutris, which is not installed yet. Press Play to install Lutris first "
+                "(or Settings > Emulators > Install emulators and apps), then press Play again.")
     return (f"{app.title} is not installed yet. Use Settings > Emulators > Install emulators and apps "
             f"(or: flatpak install flathub {app.flatpak}).")
 
@@ -116,6 +149,13 @@ def app_command(cfg, app: AppDef, home: Path | None = None,
     custom = (cfg.emulator_commands.get(app.id) or "").strip()
     if custom:
         return shlex.split(custom), "custom"
+    if app.lutris:                  # Lutris starts it, or installs it with its own script the first time
+        base, how = app_command(cfg, BY_ID[LUTRIS], home, which)
+        if not how:
+            return base, ""
+        if app.lutris in lutris_installed_slugs(home):
+            return base + [f"lutris:rungame/{app.lutris}"], "lutris"
+        return base + [f"lutris:install/{app.lutris_installer}"], "lutris-install"
     if emulators.flatpak_installed(app.flatpak, home):
         return ["flatpak", "run", app.flatpak], "flatpak"
     for exe in app.exes:
@@ -127,7 +167,8 @@ def app_command(cfg, app: AppDef, home: Path | None = None,
 def app_status(cfg, app: AppDef, home: Path | None = None, which=shutil.which) -> tuple[bool, str]:
     cmd, how = app_command(cfg, app, home, which)
     if how:
-        return True, app.title + {"flatpak": " (Flatpak)", "custom": " (your command)"}.get(how, "")
+        return True, app.title + {"flatpak": " (Flatpak)", "custom": " (your command)", "lutris": " (Lutris)",
+                                  "lutris-install": " - not installed yet: Play installs it with Lutris"}.get(how, "")
     return False, install_hint(app)
 
 

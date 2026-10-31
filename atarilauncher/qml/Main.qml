@@ -24,6 +24,21 @@ Window {
     property int sideIndex: 0
     property int detailIndex: 0
     property int emptyIndex: 0
+    property int recentIndex: 0
+    property bool listMode: backend.pref("list_view") === "1"
+    function setListMode(on) { listMode = on; backend.setPref("list_view", on ? "1" : "0") }
+    readonly property var apps_like: ["apps", "streaming", "cloud", "free", "studio", "tools"]
+    // the header shows the system being browsed (the tile), or the list (All Games, Favourites, Recent)
+    readonly property var heroInfo: {
+        var f = backend.currentFilter
+        for (var i = 0; i < tileList.length; i++) if (tileList[i].key === f) {
+            var t = {}; for (var k in tileList[i]) t[k] = tileList[i][k]; t.isTile = true; return t }
+        var names = { all: ["All Games", "Every game in your library, from every system."],
+                      favorites: ["Favourites", "The games you starred. Press X (or F) on a game to add or remove it."],
+                      recent: ["Recent", "The games you played last, newest first."] }
+        var n = names[f] || [backend.currentLabel, ""]
+        return { key: f, short: n[0], full: "", blurb: n[1], glyph: f === "favorites" ? "star" : f === "recent" ? "clock" : "pad" }
+    }
     property int keepIdx: -1
     property var cur: ({})
     property var tileList: []
@@ -57,8 +72,9 @@ Window {
                  short: backend.showAllSystems ? "Show fewer systems" : "Show all systems",
                  glyph: "grid", c1: "#2a3050", c2: "#10121d", count: -1 })
         tileList = t
-        var s = [{ key: "all", label: "All Games", icon: "grid" }, { key: "__modern", label: "Modern Games", icon: "pad" }]
-        for (var j = 0; j < src.length; j++) s.push({ key: src[j].key, label: src[j].short, icon: src[j].glyph })
+        var s = [{ key: "all", label: "All Games", icon: "grid", count: backend.totalGames }, { key: "__modern", label: "Modern Games", icon: "pad" }]
+        for (var j = 0; j < src.length; j++) s.push({ key: src[j].key, label: src[j].short, icon: Theme.consoleFor(src[j].key, src[j].glyph),
+                                                      count: src[j].count })
         s.push({ key: "__more", label: backend.showAllSystems ? "Show fewer systems" : "Show all systems", icon: "more" })
         s.push({ key: "favorites", label: "Favourites", icon: "heart" })
         s.push({ key: "recent", label: "Recent", icon: "clock" })
@@ -150,6 +166,7 @@ Window {
         return [
             { kind: "item", id: "resume", title: "Resume" },
             { kind: "item", id: "sort", title: "Sort: " + backend.sortLabel + "  (change)" },
+            { kind: "item", id: "view", title: listMode ? "Show games as a grid of covers" : "Show games as a list" },
             { kind: "item", id: "add", title: "Add Games (USB stick or folder)" },
             { kind: "item", id: "bios", title: "Add BIOS files (USB stick or folder)" },
             { kind: "item", id: "studio", title: "Studio: make music (beats, voice, mix)" },
@@ -422,6 +439,15 @@ Window {
             else if (isEnter(k) || k === Qt.Key_Space) activateSide(sideIndex)
             return
         }
+        if (area === "recent") {
+            var rn = backend.recentGames.length
+            if (!recentBox.visible || rn === 0) { area = "grid"; return }
+            if (k === Qt.Key_Left) { if (recentIndex > 0) recentIndex--; else area = "side" }
+            else if (k === Qt.Key_Right) { if (recentIndex < rn - 1) recentIndex++ }
+            else if (k === Qt.Key_Up) area = "grid"
+            else if (isEnter(k) || k === Qt.Key_Space) backend.launchGid(backend.recentGames[recentIndex].gid)
+            return
+        }
         if (area === "detail") {
             if (k === Qt.Key_Left) { if (detailIndex === 1 || detailIndex === 2) detailIndex = 0; else area = "grid" }
             else if (k === Qt.Key_Right) { if (detailIndex === 0) detailIndex = 1 }
@@ -449,6 +475,7 @@ Window {
         else if (k === Qt.Key_Down) {
             if (i + cols < n) grid.currentIndex = i + cols
             else if (Math.floor(i / cols) < Math.floor((n - 1) / cols)) grid.currentIndex = n - 1
+            else if (recentBox.visible) { recentIndex = Math.min(recentIndex, backend.recentGames.length - 1); area = "recent" }
         }
         else if (k === Qt.Key_Home) grid.currentIndex = 0
         else if (k === Qt.Key_End) grid.currentIndex = n - 1
@@ -493,6 +520,7 @@ Window {
         var id = menuList.model[i].id
         if (id === "resume") mode = "library"
         else if (id === "sort") openSort()
+        else if (id === "view") { setListMode(!listMode); mode = "library" }
         else if (id === "add") openPage("addgames")
         else if (id === "bios") openImport("library", "bios")
         else if (id === "studio") openStudio()
@@ -806,7 +834,7 @@ Window {
             anchors.leftMargin: 10 * win.u
             anchors.right: parent.right
             anchors.rightMargin: 10 * win.u
-            height: 196 * win.u
+            height: 128 * win.u
             orientation: ListView.Horizontal
             clip: true
             model: win.tileList
@@ -820,11 +848,11 @@ Window {
             delegate: SystemTile {
                 required property var modelData
                 required property int index
-                width: Math.floor((tileView.width) / 7)
+                width: Math.max(Math.floor(112 * win.u), Math.floor(tileView.width / 14))
                 height: tileView.height
                 u: win.u
                 info: modelData
-                selected: index === win.tileIndex && modelData.key.indexOf("__") !== 0
+                selected: modelData.key === backend.currentFilter
                 focused: win.area === "tiles" && win.mode === "library" && index === win.tileIndex
                 onClicked: { win.area = "tiles"; win.tileIndex = index; win.activateTile(index) }
             }
@@ -873,11 +901,11 @@ Window {
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
                 anchors.left: parent.left
-                width: 310 * win.u
+                width: 280 * win.u
                 radius: 14 * win.u
                 color: "#0d0f18"
                 border.width: 1.5 * win.u
-                border.color: win.area === "side" ? "#80e0202a" : Theme.line
+                border.color: win.area === "side" ? Theme.accent : Theme.line
                 SideItem {
                     id: sideAll
                     anchors.top: parent.top
@@ -889,6 +917,7 @@ Window {
                     u: win.u
                     icon: win.sideList.length ? win.sideList[0].icon : "grid"
                     label: win.sideList.length ? win.sideList[0].label : ""
+                    count: win.sideList.length && win.sideList[0].count !== undefined ? win.sideList[0].count : -1
                     active: backend.currentFilter === "all"
                     focused: win.area === "side" && win.sideIndex === 0
                     onClicked: { win.area = "side"; win.sideIndex = 0; win.activateSide(0) }
@@ -941,6 +970,7 @@ Window {
                         u: win.u
                         icon: win.sideList[gi].icon
                         label: win.sideList[gi].label
+                        count: win.sideList[gi].count !== undefined ? win.sideList[gi].count : -1
                         active: backend.currentFilter === win.sideList[gi].key
                         focused: win.area === "side" && win.sideIndex === gi
                         onClicked: { win.area = "side"; win.sideIndex = gi; win.activateSide(gi) }
@@ -954,7 +984,7 @@ Window {
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
                 anchors.right: parent.right
-                width: 440 * win.u
+                width: 380 * win.u
                 u: win.u
                 game: win.cur
                 focused: win.area === "detail" && win.mode === "library"
@@ -974,9 +1004,34 @@ Window {
                 anchors.leftMargin: 18 * win.u
                 anchors.rightMargin: 18 * win.u
 
+                SystemHero {
+                    id: hero
+                    objectName: "systemHero"
+                    anchors.top: parent.top
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    height: visible ? Math.round(Math.min(210 * win.u, centre.height * 0.30)) : 0
+                    visible: backend.query === ""
+                    u: win.u
+                    info: win.heroInfo
+                    title: win.heroInfo.short ? win.heroInfo.short : backend.currentLabel
+                    subtitle: win.heroInfo.full ? win.heroInfo.full : ""
+                    blurb: win.heroInfo.blurb ? win.heroInfo.blurb : ""
+                    chips: {
+                        var st = backend.currentStats
+                        var n = st.games || 0, key = win.heroInfo.key
+                        var unit = key === "cloud" ? ["SERVICE", "SERVICES"] : (win.apps_like.indexOf(key) >= 0 ? ["APP", "APPS"] : ["GAME", "GAMES"])
+                        var c = [{ icon: "grid", text: n + " " + unit[n === 1 ? 0 : 1] }]
+                        if (st.favourites > 0) c.push({ icon: "starfill", text: st.favourites + " FAVOURITE" + (st.favourites === 1 ? "" : "S") })
+                        if (st.played > 0) c.push({ icon: "clock", text: st.played + " PLAYED" })
+                        if (key === "cloud") c.push({ icon: "wifi", text: "NEEDS INTERNET + YOUR ACCOUNT" })
+                        return c
+                    }
+                }
                 Item {
                     id: heading
-                    anchors.top: parent.top
+                    anchors.top: hero.bottom
+                    anchors.topMargin: hero.visible ? 8 * win.u : 0
                     anchors.left: parent.left
                     anchors.right: parent.right
                     height: 48 * win.u
@@ -984,8 +1039,11 @@ Window {
                         anchors.left: parent.left
                         anchors.verticalCenter: parent.verticalCenter
                         spacing: 10 * win.u
+                        Icon { name: "fire"; size: 24 * win.u; color: Theme.accent; anchors.verticalCenter: parent.verticalCenter
+                               visible: backend.query === "" }
                         Text {
-                            text: backend.query !== "" ? "SEARCH: " + backend.query.toUpperCase() : backend.currentLabel.toUpperCase()
+                            text: backend.query !== "" ? "SEARCH: " + backend.query.toUpperCase()
+                                  : (win.heroInfo.isTile && apps_like.indexOf(win.heroInfo.key) < 0 ? win.heroInfo.short + " Games" : backend.currentLabel)
                             color: "white"
                             font.pixelSize: 24 * win.u
                             font.bold: true
@@ -999,6 +1057,33 @@ Window {
                             font.bold: true
                         }
                     }
+                    Row {
+                        anchors.right: sortBtn.left
+                        anchors.rightMargin: 10 * win.u
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 10 * win.u
+                        Rectangle {
+                            objectName: "filterButton"
+                            height: 36 * win.u; width: fRow.implicitWidth + 24 * win.u; radius: 8 * win.u
+                            color: "#121420"; border.width: 1.5 * win.u; border.color: "#2c3044"
+                            Row { id: fRow; anchors.centerIn: parent; spacing: 8 * win.u
+                                Icon { name: "filter"; size: 18 * win.u; color: Theme.accent; anchors.verticalCenter: parent.verticalCenter }
+                                Text { text: "Filter"; color: "#dfe2ee"; font.pixelSize: 17 * win.u; anchors.verticalCenter: parent.verticalCenter } }
+                            MouseArea { anchors.fill: parent; onClicked: win.openSearch() }
+                        }
+                        Rectangle {
+                            objectName: "viewToggle"
+                            height: 36 * win.u; width: 76 * win.u; radius: 8 * win.u
+                            color: "#121420"; border.width: 1.5 * win.u; border.color: "#2c3044"
+                            Row { anchors.centerIn: parent; spacing: 4 * win.u
+                                Rectangle { width: 32 * win.u; height: 28 * win.u; radius: 6 * win.u; color: win.listMode ? "transparent" : "#40e8c25a"
+                                    Icon { anchors.centerIn: parent; name: "grid"; size: 16 * win.u; color: win.listMode ? "#9aa1b6" : Theme.accent }
+                                    MouseArea { anchors.fill: parent; onClicked: win.setListMode(false) } }
+                                Rectangle { width: 32 * win.u; height: 28 * win.u; radius: 6 * win.u; color: win.listMode ? "#40e8c25a" : "transparent"
+                                    Icon { anchors.centerIn: parent; name: "list"; size: 18 * win.u; color: win.listMode ? Theme.accent : "#9aa1b6" }
+                                    MouseArea { anchors.fill: parent; onClicked: win.setListMode(true) } } }
+                        }
+                    }
                     Rectangle {
                         id: sortBtn
                         anchors.right: parent.right
@@ -1008,14 +1093,14 @@ Window {
                         radius: 8 * win.u
                         color: "#121420"
                         border.width: 1.5 * win.u
-                        border.color: win.mode === "sort" ? Theme.red : "#2c3044"
+                        border.color: win.mode === "sort" ? Theme.accent : "#2c3044"
                         Row {
                             id: sortRow
                             anchors.centerIn: parent
                             spacing: 8 * win.u
                             Text { text: "Sort: " + backend.sortLabel; color: "#dfe2ee"; font.pixelSize: 17 * win.u
                                    anchors.verticalCenter: parent.verticalCenter }
-                            Icon { name: "chevron"; size: 18 * win.u; color: Theme.redBright; stroke: 2.6
+                            Icon { name: "chevron"; size: 18 * win.u; color: Theme.accent; stroke: 2.6
                                    anchors.verticalCenter: parent.verticalCenter }
                         }
                         MouseArea { anchors.fill: parent; onClicked: win.openSort() }
@@ -1024,14 +1109,15 @@ Window {
 
                 GridView {
                     id: grid
-                    readonly property int cols: Math.max(2, Math.round(width / (216 * win.u)))
+                    readonly property int cols: win.listMode ? 1 : Math.max(2, Math.round(width / (190 * win.u)))
                     anchors.top: heading.bottom
                     anchors.topMargin: 6 * win.u
-                    anchors.bottom: parent.bottom
+                    anchors.bottom: recentBox.visible ? recentBox.top : parent.bottom
+                    anchors.bottomMargin: recentBox.visible ? 6 * win.u : 0
                     anchors.left: parent.left
                     anchors.right: parent.right
                     cellWidth: Math.floor(width / cols)
-                    cellHeight: cellWidth * 0.86 + 36 * win.u
+                    cellHeight: win.listMode ? 84 * win.u : Math.min(cellWidth * 1.25 + 36 * win.u, Math.max(height, 150 * win.u))
                     clip: true
                     model: backend.games
                     keyNavigationEnabled: false
@@ -1045,6 +1131,7 @@ Window {
                         height: grid.cellHeight
                         u: win.u
                         current: GridView.isCurrentItem
+                        listMode: win.listMode
                         focused: win.area === "grid" && win.mode === "library"
                         onClicked: { win.area = "grid"; grid.currentIndex = index }
                         onActivated: { grid.currentIndex = index; backend.launch(index) }
@@ -1058,6 +1145,78 @@ Window {
                         Qt.callLater(win.refreshCur)
                     }
                     function onDataChanged() { Qt.callLater(win.refreshCur) }
+                }
+
+                // ---- Recently Played
+                Item {
+                    id: recentBox
+                    objectName: "recentRow"
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    height: visible ? Math.round(Math.min(220 * win.u, centre.height * 0.30)) : 0
+                    visible: backend.query === "" && backend.recentGames.length > 0 && grid.count > 0
+                    Row {
+                        id: recentHead
+                        spacing: 10 * win.u
+                        height: 34 * win.u
+                        Icon { name: "clock"; size: 22 * win.u; color: Theme.accent; anchors.verticalCenter: parent.verticalCenter }
+                        Text { text: "Recently Played"; color: "white"; font.pixelSize: 21 * win.u; font.bold: true
+                               anchors.verticalCenter: parent.verticalCenter }
+                    }
+                    ListView {
+                        id: recentView
+                        anchors.top: recentHead.bottom
+                        anchors.topMargin: 4 * win.u
+                        anchors.bottom: parent.bottom
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        orientation: ListView.Horizontal
+                        clip: true
+                        spacing: 4 * win.u
+                        model: backend.recentGames
+                        currentIndex: win.recentIndex
+                        highlightRangeMode: ListView.ApplyRange
+                        preferredHighlightBegin: width * 0.1
+                        preferredHighlightEnd: width * 0.9
+                        boundsBehavior: Flickable.StopAtBounds
+                        delegate: Item {
+                            id: rd
+                            required property var modelData
+                            required property int index
+                            readonly property bool sel: win.area === "recent" && win.mode === "library" && index === win.recentIndex
+                            height: recentView.height
+                            width: Math.round(height * 0.62)
+                            Item {
+                                id: rcard
+                                x: 5 * win.u; y: 5 * win.u
+                                width: parent.width - 10 * win.u
+                                height: parent.height - 34 * win.u
+                                scale: rd.sel ? 1.05 : 1.0
+                                Behavior on scale { enabled: Theme.anim; NumberAnimation { duration: 110 } }
+                                Cover {
+                                    anchors.fill: parent
+                                    u: win.u
+                                    radius: 7 * win.u
+                                    source: rd.modelData.cover
+                                    title: rd.modelData.title
+                                    label: rd.modelData.platformName
+                                    hue: rd.modelData.hue
+                                    glyph: Theme.glyphFor(rd.modelData.gid)
+                                }
+                                Rectangle { anchors.fill: parent; radius: 8 * win.u; color: "transparent"
+                                            border.width: (rd.sel ? 3 : 1.2) * win.u; border.color: rd.sel ? Theme.accent : "#2c3044" }
+                            }
+                            Text {
+                                anchors.top: rcard.bottom; anchors.topMargin: 5 * win.u
+                                width: parent.width; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight
+                                text: rd.modelData.title; color: rd.sel ? "white" : "#bfc3d4"; font.pixelSize: 15 * win.u; font.bold: rd.sel
+                            }
+                            MouseArea { anchors.fill: parent
+                                        onClicked: { win.area = "recent"; win.recentIndex = rd.index }
+                                        onDoubleClicked: backend.launchGid(rd.modelData.gid) }
+                        }
+                    }
                 }
 
                 // ---- friendly empty state

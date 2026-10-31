@@ -20,7 +20,7 @@ from .import_model import ImportModel
 from .library import STEAM, Game, LibraryResult, build_library, demo_library
 from .model import SORT_MODES, GameModel, filter_games
 from .store import Store
-from .systems_meta import system_look
+from .systems_meta import system_blurb, system_full_name, system_look
 
 NTFS_NOTE = ("Tip: Steam libraries on Windows (NTFS) drives often fail to start under Proton. "
              "A library on a Linux drive (ext4) is strongly recommended.")
@@ -41,6 +41,7 @@ def _intro_log(msg: str) -> None:
 
 class Backend(QObject):
     filtersChanged = Signal()
+    statsChanged = Signal()          # the home header chips and the Recently Played row
     currentFilterChanged = Signal()
     queryChanged = Signal()
     statusChanged = Signal()
@@ -3713,14 +3714,17 @@ class Backend(QObject):
         self._filters = fl
         self.filtersChanged.emit()
         self.tilesChanged.emit()
+        self.statsChanged.emit()
 
     def _tile(self, key: str, name: str, count: int) -> dict:
         look = system_look(key, name)
         return {"key": key, "label": name, "short": look["short"], "glyph": look["glyph"],
-                "c1": look["c1"], "c2": look["c2"], "count": count}
+                "c1": look["c1"], "c2": look["c2"], "count": count,
+                "full": system_full_name(key, name), "blurb": system_blurb(key, name)}
 
     def _apply(self) -> None:
         self.model.set_visible(filter_games(self._all, self.store, self._filter, self._query, self._sort))
+        self.statsChanged.emit()
 
     @Slot(str)
     def setFilter(self, key: str) -> None:
@@ -3913,7 +3917,48 @@ class Backend(QObject):
 
     @Slot(int)
     def launch(self, row: int) -> None:
-        g = self.model.game_at(row)
+        self._launch_obj(self.model.game_at(row))
+
+    UI_PREFS = ("list_view",)        # small look choices the home screen remembers
+
+    @Slot(str, result=str)
+    def pref(self, key: str) -> str:
+        return str(self.store.get_pref("ui_" + key, "")) if key in self.UI_PREFS else ""
+
+    @Slot(str, str)
+    def setPref(self, key: str, value: str) -> None:
+        if key in self.UI_PREFS:
+            self.store.set_pref("ui_" + key, value)
+
+    @Slot(str)
+    def launchGid(self, gid: str) -> None:
+        """Start a game by its id (the Recently Played row on the home screen)."""
+        self._launch_obj(next((x for x in self._all if x.gid == gid), None))
+
+    @Property("QVariantList", notify=statsChanged)
+    def recentGames(self):
+        """The last games played (not apps or web pages), newest first, for the Recently Played row."""
+        by = {g.gid: g for g in self._all if g.platform not in apps.NON_GAME}
+        out = []
+        for gid in self.store.recent_ids(40):
+            g = by.get(gid)
+            if g is None:
+                continue
+            out.append({"gid": g.gid, "title": g.title, "platformName": g.platform_name,
+                        "cover": QUrl.fromLocalFile(g.cover).toString() if g.cover else "",
+                        "hue": (sum(map(ord, g.title)) % 360) / 360.0})
+            if len(out) >= 16:
+                break
+        return out
+
+    @Property("QVariantMap", notify=statsChanged)
+    def currentStats(self):
+        """Numbers for the chips under the system header: games, favourites and played in the list being shown."""
+        vis = list(self.model._visible)
+        return {"games": len(vis), "favourites": sum(1 for g in vis if self.store.is_favorite(g.gid)),
+                "played": sum(1 for g in vis if self.store.last_played(g.gid) > 0)}
+
+    def _launch_obj(self, g) -> None:
         if g is None or self._running:
             return
         if g.gid == "studio:open":
@@ -4564,6 +4609,7 @@ class Backend(QObject):
         self._running_hint = ""
         self.runningHintChanged.emit()
         self.runningChanged.emit()
+        self.statsChanged.emit()           # Recently Played row
         self._rebuild_filters()
         self._apply()
         self._restore_window()

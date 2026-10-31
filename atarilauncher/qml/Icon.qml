@@ -16,7 +16,7 @@ Item {
         readonly property int px: Math.max(32, Math.ceil(ic.size * Math.max(1, Screen.devicePixelRatio) * 2))
         sourceSize: Qt.size(px, px)
         mipmap: true
-        source: Theme.svgUrl(ic.name, ic.color, ic.stroke)
+        source: Theme.svgUrl(ic.name, ic.color, ic.stroke, px)   // the size is in the picture too, so a size change always redraws it
         smooth: true
         cache: true
     }

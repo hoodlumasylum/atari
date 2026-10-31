@@ -82,15 +82,21 @@ Item {
                 height: 46 * tb.u
                 width: tabRowInner.implicitWidth + (tb.squeeze >= 4 ? 24 : 36) * tb.u
                 radius: height / 2
-                color: active ? "#3a0a10" : (hot ? "#26ffffff" : "#40000000")
+                color: active ? "#3a3012" : (hot ? "#26ffffff" : "#40000000")
                 border.width: active || hot ? 2 * tb.u : 0
-                border.color: active ? Theme.redBright : "#cfd3e0"
+                border.color: active ? Theme.accent : "#cfd3e0"
+                Rectangle {   // gold glow round the chosen tab
+                    visible: tab.active
+                    anchors.fill: parent; anchors.margins: -4 * tb.u
+                    radius: height / 2; color: "transparent"
+                    border.width: 4 * tb.u; border.color: Theme.accentGlow
+                }
                 Row {
                     id: tabRowInner
                     anchors.centerIn: parent
                     spacing: 9 * tb.u
                     Icon { scale: tab.hot ? 1.2 : 1.0; Behavior on scale { enabled: Theme.anim; NumberAnimation { duration: 140; easing.type: Easing.OutBack } }
-                           name: tab.modelData.icon; size: 22 * tb.u; color: tab.active ? "white" : "#d6d9e6"
+                           name: tab.modelData.icon; size: 22 * tb.u; color: tab.active ? Theme.accent : "#d6d9e6"
                            anchors.verticalCenter: parent.verticalCenter }
                     Text {
                         anchors.verticalCenter: parent.verticalCenter

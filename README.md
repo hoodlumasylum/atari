@@ -31,6 +31,23 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
+## What's new in 0.6.0
+
+**Updating:** in-app update (Settings) as usual.
+
+* **New home screen.** Pill tabs along the top (the chosen one glows gold), a row of system tiles (gold frame on the chosen one), a side list with how many games each system has, and a big header for the chosen system with its name, a short description, a drawn console picture and small info chips (games, favourites, played).
+* **Games row with Filter, Sort and a grid / list switch**, then a **Recently Played** row. Everything works with a controller, the keyboard or the mouse. The grid / list choice is also in Options.
+* **Cloud Gaming tiles:** Xbox Cloud Gaming, GeForce NOW, Amazon Luna, Boosteroid, Antstream Arcade and Blacknut. Each opens full screen in the browser. You need your own account (and usually a subscription) with each service, and a good internet connection.
+* **EA app and Rockstar Games Launcher** tiles: one press installs them through Lutris (Lutris must be installed), the next press starts them. Games with anti-cheat often refuse to run on Linux.
+* All pictures are drawn by CodeAque; no company logos.
+
+![Home 1920x1080](docs/screenshot-home-1920x1080.png)
+
+### Not tested
+- Not looked at on the Dell itself; checked in screenshots at 1366x768 and 1920x1080.
+- The cloud services and the Lutris installs of the EA app and Rockstar launcher were not run for real (no accounts here).
+- Utomik is not included: it closed in January 2025.
+
 ## What's new in 0.5.8
 
 **Updating:** in-app update (Settings) as usual.

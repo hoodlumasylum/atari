@@ -79,7 +79,8 @@ def _build() -> dict[str, Target]:
     for e in EMUS.values():
         t[e.id] = _from_emu(e)
     for a in list(apps.APP_DEFS) + list(apps.HELPERS) + list(simtycoon.APPS) + list(create.APPS):    # Sim & Tycoon engines: installed only when asked
-        t[a.id] = _from_app(a)
+        if not a.lutris:                 # EA app / Rockstar: Lutris installs them itself (its own script) on the first Play
+            t[a.id] = _from_app(a)
     for x in EXTRAS:
         t[x.id] = x
     return t
@@ -101,7 +102,7 @@ def target_for(tid: str, title: str = "") -> Target | None:
 def all_ids() -> list[str]:
     """What "Install everything" installs: the emulators for the supported consoles, PC apps (with Steam) and helpers."""
     ids = [e.id for e in installer.used_emulators() if e.id not in DEFAULT_SKIP]
-    ids += [a.id for a in apps.APP_DEFS] + [a.id for a in apps.HELPERS] + ["mpv"]
+    ids += [a.id for a in apps.APP_DEFS if not a.lutris] + [a.id for a in apps.HELPERS] + ["mpv"]
     seen: list[str] = []
     for i in ids:
         if i not in seen:
