@@ -40,7 +40,7 @@ def test_install_backup_readback_and_restore(tmp_path):
     text = (th / "theme.txt").read_text()
     assert "Starting CodeAque in %d s" in text and "boot_menu" in text
     gd = (root / "etc/default/grub.d/zzz-codeaque-boot.cfg").read_text()
-    assert "GRUB_DISABLE_OS_PROBER=false" in gd and "GRUB_TIMEOUT=5" in gd and "themes/codeaque/theme.txt" in gd
+    assert "GRUB_DISABLE_OS_PROBER=true" in gd and "GRUB_TIMEOUT=5" in gd and "themes/codeaque/theme.txt" in gd
     assert os.access(root / "etc/grub.d/35_codeaque_windows", os.X_OK)
     ply = root / "usr/share/plymouth/themes/codeaque"
     assert (ply / "codeaque.plymouth").is_file() and (ply / "rain-0.png").is_file() and "ANIM = 1" in (ply / "codeaque.script").read_text()
@@ -148,7 +148,7 @@ def test_quiet_start_keeps_the_hidden_menu_and_sets_the_splash(tmp_path):
     conf = (root / "etc/plymouth/plymouthd.conf").read_text()
     assert "Theme=codeaque" in conf and "ShowDelay=0" in conf and "Theme=code\n" not in conf
     st = bootscreen.status(lay, quiet_on=True, cmdline="BOOT_IMAGE=/vmlinuz root=UUID=x ro quiet splash")
-    assert st == {"installed": True, "splash": True, "theme": "codeaque", "quiet": True, "splash_arg": True, "quiet_arg": True}
+    assert {k: st[k] for k in {"installed": True, "splash": True, "theme": "codeaque", "quiet": True, "splash_arg": True, "quiet_arg": True}} == {"installed": True, "splash": True, "theme": "codeaque", "quiet": True, "splash_arg": True, "quiet_arg": True}
     line = bootscreen.status_line(st)
     assert "installed: yes" in line and "splash active: yes" in line and "Quiet start: on" in line
     assert "no 'splash'" in bootscreen.status_line(dict(st, splash_arg=False))
@@ -182,3 +182,44 @@ def test_login_screen_branding_and_restore(tmp_path):
 
 def test_firmware_note_is_honest():
     assert "cannot be changed" in bootscreen.FIRMWARE_NOTE
+
+
+def test_only_codeaque_and_windows_and_restore_turns_mint_entries_back_on(tmp_path):
+    root = tmp_path / "root"
+    (root / "etc/default").mkdir(parents=True)
+    (root / "etc/default/grub").write_text("GRUB_DEFAULT=0\n")
+    gd = root / "etc/grub.d"
+    gd.mkdir(parents=True)
+    for n in ("10_linux", "30_os-prober"):
+        (gd / n).write_text("#!/bin/sh\n")
+        (gd / n).chmod(0o755)
+    lay = bootscreen.Layout(str(root))
+    env = fake_tools(tmp_path, root)
+    p = run(bootscreen.install_script(lay), env)
+    assert p.returncode == 0, p.stderr
+    assert not os.access(gd / "10_linux", os.X_OK) and not os.access(gd / "30_os-prober", os.X_OK)
+    assert os.access(gd / "06_codeaque", os.X_OK) and not (root / "etc/default/codeaque-recovery").exists()
+    p = run(bootscreen.install_script(lay, recovery=True), env)
+    assert p.returncode == 0 and os.access(gd / "10_linux", os.X_OK) and (root / "etc/default/codeaque-recovery").exists()
+    p = run(bootscreen.install_script(lay), env)
+    p = run(bootscreen.restore_script(lay), env)
+    assert p.returncode == 0, p.stderr
+    assert os.access(gd / "10_linux", os.X_OK) and os.access(gd / "30_os-prober", os.X_OK) and not (gd / "06_codeaque").exists()
+
+
+def test_codeaque_menu_entry_script_output(tmp_path):
+    b = tmp_path / "bin"
+    b.mkdir()
+    (b / "grub-probe").write_text("#!/bin/sh\necho 1111-UUID\n")
+    (b / "grub-mkrelpath").write_text("#!/bin/sh\necho \"$1\"\n")
+    for f in b.iterdir():
+        f.chmod(0o755)
+    script = bootscreen.MENU_ENTRY.replace("/boot/", str(tmp_path) + "/boot/")
+    (tmp_path / "boot").mkdir()
+    (tmp_path / "boot/vmlinuz").write_text("")
+    (tmp_path / "boot/initrd.img").write_text("")
+    env = dict(os.environ, PATH=f"{b}:/usr/bin:/bin", GRUB_CMDLINE_LINUX="", GRUB_CMDLINE_LINUX_DEFAULT="quiet splash")
+    out = subprocess.run(["sh", "-c", script], capture_output=True, text=True, env=env).stdout
+    assert 'menuentry "CodeAque"' in out and "root=UUID=1111-UUID ro" in out and "quiet splash" in out
+    assert "search --no-floppy --fs-uuid --set=root 1111-UUID" in out and "recovery" not in out
+    assert 'width = 48%' in bootscreen.theme_txt()

@@ -46,7 +46,7 @@ def filter_games(games: list[Game], store: Store, key: str, query: str, sort: st
 
 class GameModel(QAbstractListModel):
     ROLES = ["gid", "title", "platform", "platformName", "cover", "favorite", "playtime", "lastPlayed",
-             "note", "hue", "fit"]
+             "note", "hue", "fit", "badge"]
 
     def __init__(self, store: Store, parent=None):
         super().__init__(parent)
@@ -84,6 +84,8 @@ class GameModel(QAbstractListModel):
             return format_last_played(s.last_played(g.gid))
         if name == "note":
             return g.note
+        if name == "badge":
+            return getattr(g, "badge", "")
         if name == "hue":
             return self._hue(g)
         if name == "fit":
@@ -129,6 +131,10 @@ class GameModel(QAbstractListModel):
 
     def game_at(self, row: int) -> Game | None:
         return self._visible[row] if 0 <= row < len(self._visible) else None
+
+    def badges_updated(self) -> None:
+        if self._visible:
+            self.dataChanged.emit(self.index(0), self.index(len(self._visible) - 1), [Qt.UserRole + 1 + self.ROLES.index("badge")])
 
     def cover_updated(self, gid: str) -> None:
         """A cover file arrived for this game: refresh its tile (if it is on screen) without resetting the grid."""

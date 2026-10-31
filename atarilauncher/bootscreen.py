@@ -41,9 +41,9 @@ terminal-font: "CodeAque Regular 20"
 terminal-box: "terminal_box_*.png"
 
 + boot_menu {{
-    left = 33%
+    left = 26%
     top = 76%
-    width = 34%
+    width = 48%
     height = 14%
     item_font = "CodeAque Regular 36"
     selected_item_font = "CodeAque Regular 36"
@@ -71,13 +71,15 @@ terminal-box: "terminal_box_*.png"
 """
 
 
-def grub_defaults(quiet: bool = False) -> str:
+def grub_defaults(quiet: bool = False, recovery: bool = False) -> str:
     """quiet = Quiet boot is on: its hidden menu (Shift / Esc shows it) is kept; only the theme and the splash change."""
     menu = "" if quiet else 'GRUB_TIMEOUT_STYLE=menu\nGRUB_TIMEOUT=5\n'
     return (f'# BEGIN CodeAque boot screen (Settings > Boot). Remove with "Restore old boot screen".\n'
             'GRUB_DISTRIBUTOR="CodeAque"\n'
-            + menu +
-            'GRUB_DISABLE_OS_PROBER=false\n'
+            + menu
+            + ('GRUB_DISABLE_OS_PROBER=false\n' if recovery else
+               '# only CodeAque + Windows (CodeAque entries in /etc/grub.d/06_codeaque); recovery: Settings > Boot screen\n'
+               'GRUB_DISABLE_OS_PROBER=true\n') +
             'GRUB_GFXMODE="1920x1080,1366x768,auto"\n'
             'GRUB_GFXPAYLOAD_LINUX=keep\n'
             'GRUB_TERMINAL_OUTPUT=gfxterm\n'
@@ -85,6 +87,39 @@ def grub_defaults(quiet: bool = False) -> str:
             'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT quiet splash"\n'
             '# END CodeAque boot screen\n')
 
+
+MENU_SCRIPT = "/etc/grub.d/06_codeaque"
+MENU_ENTRY = r"""#!/bin/sh
+# CodeAque: the boot menu's "CodeAque" entry (starts this Linux Mint with its newest kernel). Added by Settings > Boot screen;
+# Restore old boot screen removes it. Runs inside update-grub, which exports GRUB_CMDLINE_LINUX(_DEFAULT).
+set -e
+K=/boot/vmlinuz; I=/boot/initrd.img
+[ -e "$K" ] || K=$(ls -1v /boot/vmlinuz-* 2>/dev/null | tail -n 1)
+[ -e "$I" ] || I=/boot/initrd.img-${K#/boot/vmlinuz-}
+[ -e "$K" ] || exit 0
+ROOTUUID=$(grub-probe --target=fs_uuid / 2>/dev/null || true)
+BOOTUUID=$(grub-probe --target=fs_uuid /boot 2>/dev/null || true)
+KREL=$(grub-mkrelpath "$K" 2>/dev/null || echo "$K")
+IREL=$(grub-mkrelpath "$I" 2>/dev/null || echo "$I")
+if [ -n "$ROOTUUID" ]; then ROOTARG="root=UUID=$ROOTUUID"; else ROOTARG="root=$(grub-probe --target=device / 2>/dev/null)"; fi
+entry() {
+  echo "menuentry \"$1\" --class $2 --id $3 {"
+  echo "    load_video"
+  echo "    set gfxpayload=keep"
+  echo "    insmod gzio"
+  echo "    insmod part_gpt"
+  echo "    insmod part_msdos"
+  echo "    insmod ext2"
+  [ -n "$BOOTUUID" ] && echo "    search --no-floppy --fs-uuid --set=root $BOOTUUID"
+  echo "    linux $KREL $ROOTARG ro $4"
+  echo "    initrd $IREL"
+  echo "}"
+}
+entry "CodeAque" codeaque codeaque "${GRUB_CMDLINE_LINUX} ${GRUB_CMDLINE_LINUX_DEFAULT}"
+if [ -e /etc/default/codeaque-recovery ]; then
+  entry "CodeAque (recovery)" recovery codeaque-recovery "recovery nomodeset ${GRUB_CMDLINE_LINUX}"
+fi
+"""
 
 WIN_ENTRY = r"""#!/bin/sh
 # CodeAque: a plain "Windows" entry (starts Windows' own boot manager; nothing on Windows is changed). Added by Settings > Boot.
@@ -96,10 +131,12 @@ menuentry "Windows" --class windows {
     insmod part_gpt
     insmod fat
     insmod chain
-    search --no-floppy --file --set=root /EFI/Microsoft/Boot/bootmgfw.efi
-    chainloader /EFI/Microsoft/Boot/bootmgfw.efi
-}
 GRUBEOF
+    U=$(grub-probe --target=fs_uuid "${f%/EFI/*}" 2>/dev/null || true)
+    if [ -n "$U" ]; then echo "    search --no-floppy --fs-uuid --set=root $U"
+    else echo "    search --no-floppy --file --set=root /EFI/Microsoft/Boot/bootmgfw.efi"; fi
+    echo "    chainloader /EFI/Microsoft/Boot/bootmgfw.efi"
+    echo "}"
     exit 0
   fi
 done
@@ -211,7 +248,12 @@ def _write(path: str, text: str, mode: str = "644") -> str:
     return f"mkdir -p {_q(str(Path(path).parent))}\nprintf %s {_q(text)} > {_q(path)}\nchmod {mode} {_q(path)}"
 
 
-def install_script(lay: Layout = Layout(), assets: Path = ASSETS, animated: bool = True, quiet: bool = False) -> str:
+LINUX_SCRIPT = "/etc/grub.d/10_linux"
+OSPROBER_SCRIPT = "/etc/grub.d/30_os-prober"
+RECOVERY_FLAG = "/etc/default/codeaque-recovery"
+
+
+def install_script(lay: Layout = Layout(), assets: Path = ASSETS, animated: bool = True, quiet: bool = False, recovery: bool = False) -> str:
     th, ply, bk = lay.p(GRUB_THEME_DIR), lay.p(PLY_DIR), lay.p(BACKUP_DIR)
     gd, ws, cfg, dg = lay.p(GRUB_D), lay.p(WIN_SCRIPT), lay.p(GRUB_CFG), lay.p("/etc/default/grub")
     lines = [
@@ -239,7 +281,14 @@ def install_script(lay: Layout = Layout(), assets: Path = ASSETS, animated: bool
         _write(ply + "/codeaque.script", PLYMOUTH_SCRIPT if animated else PLYMOUTH_STATIC),
         _write(ply + "/codeaque.plymouth", plymouth_theme()),
         "STEP=3",
-        _write(gd, grub_defaults(quiet)),
+        _write(gd, grub_defaults(quiet, recovery)),
+        _write(lay.p(MENU_SCRIPT), MENU_ENTRY, "755"),
+        (f"touch {_q(lay.p(RECOVERY_FLAG))}" if recovery else f"rm -f {_q(lay.p(RECOVERY_FLAG))}"),
+        # only "CodeAque" and "Windows": the distro's own entries (10_linux, os-prober) are switched off - not deleted - unless
+        # recovery is wanted. Their old mode is kept in the backup so Restore switches them back on.
+        f"for g in {_q(lay.p(LINUX_SCRIPT))} {_q(lay.p(OSPROBER_SCRIPT))}; do [ -e \"$g\" ] || continue; "
+        f"b={_q(bk)}/mode-$(basename \"$g\"); [ -e \"$b\" ] || stat -c %a \"$g\" > \"$b\"; "
+        + ("chmod 755 \"$g\"; done" if recovery else "chmod 644 \"$g\"; done"),
         # NVIDIA's own driver shows no splash without early mode setting
         f"if lsmod 2>/dev/null | grep -q '^nvidia_drm'; then echo 'GRUB_CMDLINE_LINUX_DEFAULT=\"$GRUB_CMDLINE_LINUX_DEFAULT nvidia-drm.modeset=1\"' >> {_q(gd)}; fi",
         _write(ws, WIN_ENTRY, "755"),
@@ -258,13 +307,15 @@ def install_script(lay: Layout = Layout(), assets: Path = ASSETS, animated: bool
         "grep -q '^\\[Daemon\\]' \"$PC\" 2>/dev/null || printf '[Daemon]\\n' >> \"$PC\"; "
         "sed -i '/^Theme=/d;/^ShowDelay=/d;/^DeviceTimeout=/d' \"$PC\"; "
         "sed -i 's/^\\[Daemon\\]$/[Daemon]\\nTheme=codeaque\\nShowDelay=0\\nDeviceTimeout=8/' \"$PC\"",
-        "if command -v update-initramfs >/dev/null 2>&1; then update-initramfs -u >/dev/null 2>&1; fi",
+        # every installed kernel, not only the running one: an older kernel would otherwise still show the Mint logo
+        "if command -v update-initramfs >/dev/null 2>&1; then update-initramfs -u -k all >/dev/null 2>&1; fi",
         f"INITRD={_q(lay.p('/boot/initrd.img-'))}$(uname -r)",
         "if [ -f \"$INITRD\" ] && command -v lsinitramfs >/dev/null 2>&1; then "
         "if lsinitramfs \"$INITRD\" | grep -q 'plymouth/themes/codeaque/codeaque.plymouth'; then echo SPLASH=yes; else echo SPLASH=no; fi; fi",
         "STEP=7",
         greeter_script(lay, assets),
         f"grep -q 'menuentry .Windows' {_q(cfg)} && echo 'WINDOWS=yes' || echo 'WINDOWS=no'",
+        f"grep -q 'menuentry .CodeAque' {_q(cfg)} && echo 'CODEAQUE_ENTRY=yes' || echo 'CODEAQUE_ENTRY=no'",
         "echo OK",
     ]
     return "\n".join(lines) + "\n"
@@ -299,14 +350,16 @@ def restore_body(lay: Layout = Layout()) -> str:
     return (f"if [ -e {_q(bk + '/greeter.saved')} ]; then if [ -f {_q(bk + '/slick-greeter.conf')} ]; then "
             f"cp -a {_q(bk + '/slick-greeter.conf')} {_q(g)}; else rm -f {_q(g)}; fi; rm -f {_q(bk + '/greeter.saved')}; fi; "
             f"rm -rf {_q(lay.p(SHARE))}; rmdir {_q(str(Path(lay.p(SHARE)).parent))} 2>/dev/null || true; "
-            f"rm -f {_q(lay.p(GRUB_D))} {_q(lay.p(WIN_SCRIPT))}; rm -rf {_q(th)} {_q(ply)}; "
+            f"rm -f {_q(lay.p(GRUB_D))} {_q(lay.p(WIN_SCRIPT))} {_q(lay.p(MENU_SCRIPT))} {_q(lay.p(RECOVERY_FLAG))}; rm -rf {_q(th)} {_q(ply)}; "
+            f"for g in {_q(lay.p(LINUX_SCRIPT))} {_q(lay.p(OSPROBER_SCRIPT))}; do b={_q(bk)}/mode-$(basename \"$g\"); "
+            f"if [ -e \"$g\" ] && [ -s \"$b\" ]; then chmod \"$(cat \"$b\")\" \"$g\"; rm -f \"$b\"; fi; done; "
             f"if [ -f {_q(bk + '/grub')} ]; then cp -a {_q(bk + '/grub')} {_q(lay.p('/etc/default/grub'))}; fi; "
             f"if [ -d {_q(bk + '/theme')} ]; then cp -a {_q(bk + '/theme')} {_q(th)}; fi; "
             f"if [ -f {_q(bk + '/plymouthd.conf')} ]; then cp -a {_q(bk + '/plymouthd.conf')} {_q(lay.p('/etc/plymouth/plymouthd.conf'))}; fi; "
             f"update-alternatives --remove default.plymouth {PLY_DIR}/codeaque.plymouth >/dev/null 2>&1 || true; "
             f"if [ -s {_q(bk + '/plymouth')} ] && command -v plymouth-set-default-theme >/dev/null 2>&1; then "
             f"plymouth-set-default-theme \"$(cat {_q(bk + '/plymouth')})\" >/dev/null 2>&1 || true; fi; "
-            "update-grub >/dev/null 2>&1 || true; command -v update-initramfs >/dev/null 2>&1 && update-initramfs -u >/dev/null 2>&1 || true")
+            "update-grub >/dev/null 2>&1 || true; command -v update-initramfs >/dev/null 2>&1 && update-initramfs -u -k all >/dev/null 2>&1 || true")
 
 
 def restore_script(lay: Layout = Layout()) -> str:
@@ -356,7 +409,22 @@ def status(lay: Layout = Layout(), quiet_on: bool | None = None, cmdline: str | 
     if quiet_on is None:
         from . import quietboot
         quiet_on = quietboot.enabled()
-    return {"installed": installed(lay), "splash": theme == "codeaque" and Path(lay.p(PLY_DIR + "/codeaque.plymouth")).is_file(),
+    try:
+        alt = Path(os.path.realpath(lay.p("/usr/share/plymouth/themes/default.plymouth"))).stem
+    except OSError:
+        alt = ""
+    try:
+        gc = Path(lay.p(GREETER)).read_text(errors="replace")
+    except OSError:
+        gc = ""
+    greeter_ok = ("greeter-background.png" in gc and "blank.png" in gc) if gc else None
+    try:
+        cfgtext = Path(lay.p(GRUB_CFG)).read_text(errors="replace")
+        entries = re.findall(r"^\s*(?:menuentry|submenu)\s+['\"]([^'\"]+)", cfgtext, re.M)
+    except OSError:
+        entries = None
+    return {"alternative": alt or "unknown", "greeter": greeter_ok, "entries": entries,
+            "installed": installed(lay), "splash": theme == "codeaque" and Path(lay.p(PLY_DIR + "/codeaque.plymouth")).is_file(),
             "theme": theme or "unknown", "quiet": bool(quiet_on), "splash_arg": "splash" in cmdline.split(),
             "quiet_arg": "quiet" in cmdline.split()}
 
@@ -365,6 +433,13 @@ def status_line(st: dict) -> str:
     yn = lambda b: "yes" if b else "no"      # noqa: E731
     line = (f"Boot screen installed: {yn(st['installed'])}  |  CodeAque splash active: {yn(st['splash'])}"
             f" (Plymouth theme: {st['theme']})  |  Quiet start: {'on' if st['quiet'] else 'off'}")
+    if st.get("alternative") and st["alternative"] != "unknown":
+        line += f"\nDefault Plymouth theme (default.plymouth, used at start AND shut-down): {st['alternative']}" + (
+            "" if st["alternative"] == "codeaque" else "  <- not CodeAque, so the Mint logo can still show. Press Install again.")
+    if st.get("greeter") is False:
+        line += "\nLogin screen: still has its own background / logo - press Install again."
+    if st.get("entries") is not None:
+        line += "\nBoot menu entries now: " + (", ".join(st["entries"]) or "(none readable)")
     if not st["splash_arg"]:
         line += "\nThis start had no 'splash' in its kernel options, so no splash could show - Install (or Quiet boot) adds it."
     return line

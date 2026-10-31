@@ -160,7 +160,7 @@ def test_table_picks_installed_emulator_native_or_flatpak(tmp_path, monkeypatch)
     # a program on PATH wins over nothing; user override wins over detection
     monkeypatch.setattr(emulators.shutil, "which", lambda n: f"/usr/bin/{n}" if n in ("rpcs3", "xemu") else None)
     assert launcher.build_rom_command(cfg, cfg.systems["ps3"], "/g/x.iso", home) == ["rpcs3", "--no-gui", "/g/x.iso"]
-    assert launcher.build_rom_command(cfg, cfg.systems["xbox"], "/g/x.iso", home) == ["xemu", "-dvd_path", "/g/x.iso"]
+    assert launcher.build_rom_command(cfg, cfg.systems["xbox"], "/g/x.iso", home) == ["xemu", "-full-screen", "-dvd_path", "/g/x.iso"]
     cfg.emulator_commands["xemu"] = "flatpak run app.xemu.xemu"
     assert launcher.build_rom_command(cfg, cfg.systems["xbox"], "/g/x.iso", home)[:3] == ["flatpak", "run", "app.xemu.xemu"]
 

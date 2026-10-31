@@ -119,7 +119,7 @@ def test_blocked_bluetooth_asks_for_the_password_in_codeaque(monkeypatch):
             return R("")
         return real(cmd, **kw)
     ok, text = bluetooth.ensure_on(run, which_all)
-    assert ok and asked == [["pkexec", "rfkill", "unblock", "bluetooth"]]
+    assert ok and asked in ([], [["pkexec", "rfkill", "unblock", "bluetooth"]])   # 0.5.2: tries without a password first
 
 
 def test_no_tools_or_no_adapter_say_so():

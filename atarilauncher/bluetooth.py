@@ -13,13 +13,14 @@ from typing import Callable
 
 from . import rootauth
 
-SCAN_SECONDS = 15
+SCAN_SECONDS = 20
 MAC = re.compile(r"^([0-9A-F]{2}:){5}[0-9A-F]{2}$", re.I)
 
 PAIRING_STEPS = [
     "Put the controller into pairing mode first (the light flashes quickly when it is ready):",
     "Xbox-style pads: switch the pad on, then hold the small pairing button on the top edge (next to the charging port) until the logo flashes fast.",
-    "PlayStation-style pads: hold the Share / Create button and the round Home button together for about 3 seconds until the light flashes.",
+    "PlayStation-style pads - PS4 DualShock 4 (shows up as \"Wireless Controller\"): hold SHARE and the PS button together for about 3 seconds, until the light bar "
+    "flashes white in quick double blinks. Then press Search. (PS5 DualSense: hold Create + PS the same way.)",
     "Switch-style Pro pads: hold the small sync button on the top edge until the lights move from side to side.",
     "Other pads: look for a button marked with the Bluetooth sign, \"pair\" or \"sync\" (often held together with Start or Home). The pad's leaflet says which.",
     "Keep the pad close to the computer, then press Search below.",
@@ -59,13 +60,30 @@ def _run(args: list[str], runner: Callable | None = None, timeout: float = 20.0)
         return 127, str(exc)
 
 
+ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|\x01|\x02")
+
+
 def parse_devices(text: str) -> list[tuple[str, str]]:
-    out = []
-    for line in text.splitlines():
+    """(MAC, name) once per device. Scan output also has "[CHG] Device <mac> RSSI: -60" lines - those are not names."""
+    names: dict[str, str] = {}
+    gone: set[str] = set()
+    for line in ANSI.sub("", text).splitlines():
         m = re.search(r"Device\s+(([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})\s*(.*)$", line)
-        if m and (m.group(1).upper(), m.group(3).strip()) not in out and "[DEL]" not in line:
-            out.append((m.group(1).upper(), m.group(3).strip()))
-    return out
+        if not m:
+            continue
+        mac, name = m.group(1).upper(), m.group(3).strip()
+        if "[DEL]" in line:
+            gone.add(mac)
+            continue
+        if "[CHG]" in line or re.match(r"^[A-Za-z]+:\s", name):
+            names.setdefault(mac, "")
+            continue
+        gone.discard(mac)
+        if name and (not names.get(mac) or names[mac].replace(":", "-") == mac.replace(":", "-")):
+            names[mac] = name
+        else:
+            names.setdefault(mac, name)
+    return [(m, n) for m, n in names.items() if m not in gone]
 
 
 def parse_info(mac: str, name: str, text: str) -> Device:
@@ -78,6 +96,18 @@ def parse_info(mac: str, name: str, text: str) -> Device:
     m = re.search(r"Battery Percentage:\s*0x[0-9a-fA-F]+\s*\((\d+)\)", text)
     d.battery = int(m.group(1)) if m else None
     return d
+
+
+def rfkill_state(runner: Callable | None = None, which: Callable = shutil.which) -> dict:
+    """{'soft': bool, 'hard': bool} for Bluetooth radios (from `rfkill list bluetooth`)."""
+    if not which("rfkill"):
+        return {"soft": False, "hard": False}
+    try:
+        p = (runner or subprocess.run)(["rfkill", "list", "bluetooth"], capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL)
+        out = p.stdout or ""
+    except (OSError, subprocess.SubprocessError):
+        return {"soft": False, "hard": False}
+    return {"soft": bool(re.search(r"Soft blocked:\s*yes", out)), "hard": bool(re.search(r"Hard blocked:\s*yes", out))}
 
 
 def adapter(runner: Callable | None = None) -> dict:
@@ -110,8 +140,20 @@ def ensure_on(runner: Callable | None = None, which: Callable = shutil.which) ->
         st = adapter(runner)
         if not st["present"]:
             return False, "No Bluetooth adapter found. This computer may not have Bluetooth (a small USB Bluetooth adapter adds it)."
-    if st["blocked"] and which("rfkill"):
-        _admin(["rfkill", "unblock", "bluetooth"], runner, which)
+    rf = rfkill_state(runner, which)
+    if rf["hard"]:
+        return False, ("Bluetooth is switched off by the laptop's own switch or key (rfkill: hard blocked). Press the wireless / "
+                       "airplane key (often Fn + a key with an aerial) or flip the switch, then search again.")
+    if (st["blocked"] or rf["soft"]) and which("rfkill"):
+        try:
+            p = (runner or subprocess.run)(["rfkill", "unblock", "bluetooth"], capture_output=True, text=True, timeout=10,
+                                           stdin=subprocess.DEVNULL)
+            plain_ok = p.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            plain_ok = False
+        if not plain_ok or rfkill_state(runner, which)["soft"] or adapter(runner)["blocked"]:
+            _admin(["rfkill", "unblock", "bluetooth"], runner, which)
+        st["blocked"] = True
     if not st["powered"] or st["blocked"]:
         rc, out = _run(["power", "on"], runner, 10)
         if "succeeded" not in out and not adapter(runner)["powered"]:
@@ -129,19 +171,71 @@ def devices(runner: Callable | None = None, extra: str = "") -> list[Device]:
     return found
 
 
-def scan(runner: Callable | None = None, seconds: int = SCAN_SECONDS) -> list[Device]:
-    """Search for `seconds` (the pads must be in pairing mode), then list everything Bluetooth knows of."""
-    _rc, out = _run(["--timeout", str(seconds), "scan", "on"], runner, seconds + 10)
+def session(steps: list[tuple[str, float]], popen: Callable | None = None, say: Callable[[str], None] | None = None) -> str:
+    """One interactive bluetoothctl kept open for the whole job: BlueZ stops a search (and forgets the pairing agent) the moment
+    the program that asked for it exits, so `bluetoothctl scan on` run on its own (0.5.0/0.5.1, stdin closed) searched for ~0 s.
+    steps = [(command, seconds to wait after it)]. Returns everything bluetoothctl printed."""
+    import threading
+    import time
+    popen = popen or subprocess.Popen
+    try:
+        p = popen(["bluetoothctl"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+    except OSError as exc:
+        return str(exc)
+    chunks: list[str] = []
+
+    def reader():
+        try:
+            for line in p.stdout:
+                chunks.append(line)
+        except (OSError, ValueError):
+            pass
+    t = threading.Thread(target=reader, daemon=True)
+    t.start()
+    try:
+        for cmd, wait in steps:
+            p.stdin.write(cmd + "\n")
+            p.stdin.flush()
+            if say and cmd.startswith("scan on"):
+                say(f"Searching for {int(wait)} seconds...")
+            time.sleep(wait)
+        p.stdin.write("quit\n")
+        p.stdin.flush()
+    except (OSError, ValueError):
+        pass
+    try:
+        p.wait(timeout=5)
+    except Exception:
+        p.kill()
+    t.join(timeout=2)
+    return "".join(chunks)
+
+
+def scan(runner: Callable | None = None, seconds: int = SCAN_SECONDS, popen: Callable | None = None,
+         say: Callable[[str], None] | None = None) -> list[Device]:
+    """Search for `seconds` with discovery held open in one bluetoothctl session (with a pairing agent), then list everything
+    Bluetooth knows of. `runner` (tests / old path): the one-shot `--timeout` form."""
+    if runner is not None and popen is None:
+        _rc, out = _run(["--timeout", str(seconds), "scan", "on"], runner, seconds + 10)
+        return devices(runner, extra=out)
+    out = session([("power on", 0.5), ("agent NoInputNoOutput", 0.3), ("default-agent", 0.3), ("pairable on", 0.3),
+                   ("scan on", float(seconds)), ("devices", 1.0), ("scan off", 0.3)], popen, say)
     return devices(runner, extra=out)
 
 
-def connect_pad(mac: str, runner: Callable | None = None, say: Callable[[str], None] | None = None) -> tuple[bool, str]:
+def connect_pad(mac: str, runner: Callable | None = None, say: Callable[[str], None] | None = None,
+                popen=None) -> tuple[bool, str]:
     """Pair, trust and connect. Returns (worked, plain text)."""
     say = say or (lambda t: None)
     if not MAC.match(mac or ""):
         return False, "That is not a Bluetooth address."
     say("Pairing... (keep the pad in pairing mode)")
-    rc, out = _run(["pair", mac], runner, 40)
+    if runner is None and (popen is not None or shutil.which("bluetoothctl")):
+        # pair inside one session with an agent, and with discovery on (BlueZ often only pairs a device it can currently see)
+        out = session([("agent NoInputNoOutput", 0.3), ("default-agent", 0.3), ("scan on", 4.0), (f"pair {mac}", 12.0)], popen)
+        rc = 0 if ("Pairing successful" in out or "AlreadyExists" in out) else 1
+    else:
+        rc, out = _run(["pair", mac], runner, 40)
     if "Pairing successful" not in out and "AlreadyExists" not in out and rc != 0:
         why = "the pad stopped searching - put it in pairing mode again and retry" if ("not available" in out or "AuthenticationTimeout" in out
                                                                                        or "ConnectionAttemptFailed" in out or rc == 124) else \
@@ -162,3 +256,45 @@ def forget(mac: str, runner: Callable | None = None) -> tuple[bool, str]:
         return False, "That is not a Bluetooth address."
     rc, out = _run(["remove", mac], runner, 15)
     return ("removed" in out or rc == 0), ("Removed. Pair it again any time." if ("removed" in out or rc == 0) else "Could not remove it.")
+
+
+# ---- reconnect without pairing again --------------------------------------------------------------------------------------------
+MAIN_CONF = "/etc/bluetooth/main.conf"
+INPUT_CONF = "/etc/bluetooth/input.conf"
+
+
+def reconnect_conf(main_text: str, input_text: str) -> tuple[str, str]:
+    """main.conf: [Policy] AutoEnable=true (the adapter is on after every start / resume, so a pad can reconnect by itself).
+    input.conf: [General] ClassicBondedOnly=false - with true (BlueZ 5.6x default), a DualShock 4 whose bond BlueZ does not fully
+    trust is refused at reconnect and has to be paired again. UserspaceHID is left as the distro set it."""
+    from .inifile import set_values
+    return (set_values(main_text, "Policy", {"AutoEnable": "true"}, "="),
+            set_values(input_text, "General", {"ClassicBondedOnly": "false"}, "="))
+
+
+def reconnect_ok(main_text: str, input_text: str) -> bool:
+    from .inifile import get_value
+    return (get_value(main_text, "Policy", "AutoEnable") or "").lower() == "true" and \
+        (get_value(input_text, "General", "ClassicBondedOnly") or "true").lower() == "false"
+
+
+def reconnect_script(new_main: str, new_input: str, main: str = MAIN_CONF, inp: str = INPUT_CONF, restart: str = "systemctl restart bluetooth") -> str:
+    import shlex
+    q = shlex.quote
+    out = ["set -e"]
+    for path, text in ((main, new_main), (inp, new_input)):
+        out.append(f"mkdir -p {q(str(__import__('pathlib').Path(path).parent))}")
+        out.append(f"[ -f {q(path)} ] && [ ! -f {q(path + '.codeaque.bak')} ] && cp -a {q(path)} {q(path + '.codeaque.bak')} || true")
+        out.append(f"printf %s {q(text)} > {q(path)}")
+    out.append(restart)
+    return "\n".join(out) + "\n"
+
+
+def trust_paired_pads(runner: Callable | None = None) -> list[str]:
+    """Mark every paired controller Trusted (so it may reconnect by itself). Returns the names changed."""
+    done = []
+    for d in devices(runner):
+        if d.paired and d.is_pad and not d.trusted:
+            _rc, out = _run(["trust", d.mac], runner, 15)
+            done.append(d.name)
+    return done

@@ -56,7 +56,16 @@ def build_rom_command(cfg: Config, system: SystemConfig, rom: str, home: Path | 
     choice = emulators.choose(cfg, system, home)
     if choice is None:
         raise LaunchError(f"No launch command is set for {system.name}. Edit {paths.config_file()}.")
-    cmd = emulators.expand(choice.emu.template, cfg, system, rom, choice.cmd, choice.core, home)
+    try:                                   # the connected pad is player 1 in this emulator - silently, before every game
+        from . import padconfig
+        files, note = padconfig.apply(choice.emu.id, choice.how, home)
+        if files:
+            from . import kiosk
+            kiosk.log_event(f"pad config {choice.emu.id}: {note}: {files}")
+    except Exception:
+        pass
+    tpl = emulators.with_fullscreen(choice.emu.id, choice.emu.template, getattr(cfg, "fullscreen_games", True))
+    cmd = emulators.expand(tpl, cfg, system, rom, choice.cmd, choice.core, home)
     if choice.how == "flatpak":  # sandboxed emulators only see folders they were given
         cmd = emulators.grant_rom_access(cmd, rom)
     return cmd

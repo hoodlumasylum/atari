@@ -13,7 +13,7 @@ from pathlib import Path
 from PySide6.QtCore import Property, QObject, QProcess, Qt, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QKeyEvent, QWindow
 
-from . import brightness, worldgames, bootscreen, create, steam, simtycoon, themes, biosfind, findgames, bluetooth, padbattery, pads, screentv, xemuconfig, branding, donate, gamedelete, gamesroot, power, rootauth, files, steamfix, downloads, golive, icons, inputfix, intro, kiosk, quietboot, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
+from . import protondb, brightness, worldgames, bootscreen, create, steam, simtycoon, themes, biosfind, findgames, bluetooth, padbattery, pads, screentv, xemuconfig, branding, donate, gamedelete, gamesroot, power, rootauth, files, steamfix, downloads, golive, icons, inputfix, intro, kiosk, quietboot, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
 from . import __version__
 from .config import Config, load_config, save_config
 from .import_model import ImportModel
@@ -93,6 +93,7 @@ class Backend(QObject):
     padBatteriesChanged = Signal()
     brightnessChanged = Signal()                # the brightness % in the top bar / Settings changed
     themeChanged = Signal()              # the battery pills in the top bar
+    _badgesReady = Signal()
     _raiseMe = Signal()                         # a background job wants CodeAque back in front (GUI thread)
     _bgDone = Signal()                          # a background job (Bluetooth, batteries) finished: refresh on the GUI thread
     _batteryRead = Signal("QVariantList")
@@ -355,6 +356,7 @@ class Backend(QObject):
         self._bgDone.connect(self._on_bg_done, Qt.QueuedConnection)
         self._raiseMe.connect(self._raise_window_if_idle, Qt.QueuedConnection)
         self._batteryRead.connect(self._on_battery_read, Qt.QueuedConnection)
+        self._badgesReady.connect(lambda: self.model.badges_updated(), Qt.QueuedConnection)
         self._pad_batt: list = []
         self._batt_low_warned: set = set()
         self._batt_busy = False
@@ -362,6 +364,15 @@ class Backend(QObject):
         self._br_lock = threading.Lock()
         if not demo and not os.environ.get("ATARI_NO_BRIGHTNESS"):
             threading.Thread(target=self._br_read, daemon=True, name="atari-brightread").start()
+        if not demo and bluetooth.available() and not os.environ.get("ATARI_NO_BATTERY"):
+            def _trust():
+                try:
+                    n = bluetooth.trust_paired_pads()
+                    if n:
+                        kiosk.log_event(f"bluetooth: trusted paired pads at start: {n}")
+                except Exception:
+                    pass
+            threading.Thread(target=_trust, daemon=True, name="atari-bttrust").start()
         self._batt_timer = QTimer(self, interval=20000)
         self._batt_timer.timeout.connect(self.refreshBatteries)
         if not os.environ.get("ATARI_NO_BATTERY") and not demo:
@@ -416,8 +427,17 @@ class Backend(QObject):
         env.insert("PYTHONPATH", pkg_parent + os.pathsep + env.value("PYTHONPATH", ""))
         proc.setProcessEnvironment(env)
         proc.readyReadStandardOutput.connect(self._read_gamepad)
+        proc.finished.connect(self._gamepad_finished)
         proc.start()
         self._gamepad_proc = proc
+
+    def _gamepad_finished(self, *_a) -> None:
+        """The pad reader stopped by itself (crash, SDL error): start it again so pads keep working (at most every 5 s)."""
+        if self._gamepad_proc is None or getattr(self, "_quitting", False):
+            return
+        kiosk.log_event("gamepad reader stopped - restarting it")
+        self._gamepad_proc = None
+        QTimer.singleShot(5000, lambda: self._gamepad_proc is None and self._start_gamepad())
 
     def stop_all_helpers(self) -> None:
         self.stop_intro()
@@ -427,6 +447,10 @@ class Backend(QObject):
     def stop_gamepad(self) -> None:
         if self._gamepad_proc is not None:
             self._gamepad_proc.readyReadStandardOutput.disconnect()
+            try:
+                self._gamepad_proc.finished.disconnect()
+            except (RuntimeError, TypeError):
+                pass
             self._gamepad_proc.terminate()
             if not self._gamepad_proc.waitForFinished(1500):
                 self._gamepad_proc.kill()
@@ -466,6 +490,10 @@ class Backend(QObject):
                 self._sdl_pads.append(name)
             self.show_toast("Controller connected: " + name)
             self._pad_page_changed()
+        elif line.startswith("#noperm"):
+            kiosk.log_event("gamepad: /dev/input/event* not readable by this user")
+            self.show_toast("Controllers cannot be read: this user has no access to /dev/input. Settings > Controllers > "
+                            "\"Let CodeAque read controllers\" fixes it (then log out and in).", 12000)
         elif line.startswith("#pad-removed"):
             if self._sdl_pads:
                 self._sdl_pads.pop()
@@ -1374,6 +1402,10 @@ class Backend(QObject):
             rows.append(self._info(busy))
         confirm = getattr(self, "_xm_confirm", False)
         tool = xemuconfig.hdd_tool()
+        rows.append({"kind": "item", "id": "xmhddready", "title": "Get a formatted hard disk (recommended)",
+                     "detail": "Downloads xemu's own ready-made 8 GB Xbox disk (already formatted; no Microsoft files, only xemu's small "
+                               "starter dashboard), checks its checksum, keeps it in xemu's folder and sets it in xemu's settings. "
+                               "Fixes games that hang on the Xbox logo because the disk was blank. Your old disk file is left alone."})
         rows.append({"kind": "item", "id": "xmhdd",
                      "title": ("Yes, install the disk tool and make the hard disk" if confirm else "Make hard disk (8 GB)"),
                      "value": "CONFIRM" if confirm else ("HAVE ONE" if have_hdd else ""), "tone": "warn" if confirm else ("ok" if have_hdd else ""),
@@ -1381,7 +1413,7 @@ class Backend(QObject):
                                + ("Makes a blank xbox_hdd.qcow2 in xemu's own folder and writes it into xemu's settings. "
                                   if tool else "First installs the free disk tool (qemu-utils; asks for your password), then makes a blank "
                                   "xbox_hdd.qcow2 in xemu's own folder and writes it into xemu's settings. ")
-                               + "A blank disk still needs formatting - see the note below."})
+                               + "Fallback only: a blank disk is NOT formatted, and games hang on it - use the row above if you can."})
         rows.append(self._info(xemuconfig.FORMAT_HELP))
         rows.append({"kind": "item", "id": "xmhddpage", "title": "Open xemu's disk page", "detail": xemuconfig.HDD_PAGE + " (in the web browser)"})
         rows.append({"kind": "item", "id": "xmbios", "title": "Add BIOS files (from a USB stick or folder)",
@@ -1444,6 +1476,21 @@ class Backend(QObject):
             else:
                 self._xm_msg = ("Nothing needed changing - the paths already work." if rep.ok else "Nothing could be filled in. " + xemuconfig.launch_problem(rep))
             kiosk.log_event("xemu repair: " + " | ".join(rep.lines()))
+            return "refresh"
+        if rid == "xmhddready":
+            if getattr(self, "_xm_busy", ""):
+                return "refresh"
+            self._xm_busy = "Downloading xemu's formatted hard disk..."
+
+            def work():
+                try:
+                    ok, msg, _p = xemuconfig.get_ready_hdd()
+                    self._xm_msg = msg
+                    kiosk.log_event(f"xemu ready hdd: {ok} {msg}")
+                finally:
+                    self._xm_busy = ""
+                    self._bgDone.emit()
+            threading.Thread(target=work, daemon=True, name="atari-xemureadyhdd").start()
             return "refresh"
         if rid == "xmhdd":
             return self._xm_make_hdd()
@@ -1758,6 +1805,11 @@ class Backend(QObject):
                      "tone": "warn" if confirm == "install" else "", "value": "CONFIRM" if confirm == "install" else "",
                      "detail": "Backs up /etc/default/grub and the old theme first, turns on the Windows search (os-prober), runs update-grub and "
                                "checks the result. Asks for the password." + (" Press again to go ahead." if confirm == "install" else "")})
+        rec = bool(self.store.get_pref("boot_recovery", False))
+        rows.append({"kind": "item", "id": "bootrecovery", "title": "Recovery entry in the boot menu: " + ("SHOWN" if rec else "HIDDEN"),
+                     "detail": "HIDDEN = the menu has only CodeAque and Windows (Linux Mint's own entries are switched off, not deleted). "
+                               "SHOWN = adds \"CodeAque (recovery)\" and Mint's Advanced options back. Takes effect at the next Install. "
+                               "In the boot menu you can always press E or C for GRUB's own editor / command line."})
         rows.append({"kind": "item", "id": "bootanim", "title": "Animated splash: " + ("ON" if anim else "OFF (still picture)"),
                      "detail": "Falling code and a soft glow. Switch off for older graphics cards; takes effect at the next Install."})
         rows.append({"kind": "item", "id": "bootrestore", "title": "Yes, restore the old boot screen" if confirm == "restore" else "Restore old boot screen",
@@ -1787,6 +1839,8 @@ class Backend(QObject):
                     self._boot_msg = ("Done. " + ("Windows is in the menu. " if "WINDOWS=yes" in p.stdout else "")
                                       + ("The splash is in the start-up files. " if "SPLASH=yes" in p.stdout else "")
                                       + ("Warning: the splash is NOT in the start-up files (initramfs) - it may not show. " if "SPLASH=no" in p.stdout else "")
+                                      + ("Menu: only CodeAque" + (" and Windows" if "WINDOWS=yes" in p.stdout else "") + ". " if "CODEAQUE_ENTRY=yes" in p.stdout else
+                                         "Warning: the CodeAque menu entry was not found in grub.cfg. " if "CODEAQUE_ENTRY=no" in p.stdout else "")
                                       + ("The login screen uses CodeAque's picture too. " if "GREETER=yes" in p.stdout else "")
                                       + "Restart the computer to see it.")
                 else:
@@ -1810,11 +1864,14 @@ class Backend(QObject):
             return "refresh"
         if rid == "bootanim":
             self.store.set_pref("boot_anim", not bool(self.store.get_pref("boot_anim", True)))
+        elif rid == "bootrecovery":
+            self.store.set_pref("boot_recovery", not bool(self.store.get_pref("boot_recovery", False)))
         elif rid == "bootinstall":
             if confirm != "install":
                 self._boot_confirm = "install"
             else:
-                run(bootscreen.install_script(animated=bool(self.store.get_pref("boot_anim", True)), quiet=quietboot.enabled()),
+                run(bootscreen.install_script(animated=bool(self.store.get_pref("boot_anim", True)), quiet=quietboot.enabled(),
+                                            recovery=bool(self.store.get_pref("boot_recovery", False))),
                     "Installing the boot screen")
         elif rid == "bootrestore":
             if confirm != "restore":
@@ -2352,6 +2409,10 @@ class Backend(QObject):
             rows.append({"kind": "item", "id": "back", "title": "Back"})
             return rows
         rows += [self._info(t) for t in bluetooth.PAIRING_STEPS]
+        rows.append({"kind": "item", "id": "btreconnect", "title": "Fix controller reconnect",
+                     "detail": "For a pad that has to be paired again every time: marks paired pads Trusted, switches Bluetooth on at every "
+                               "start (AutoEnable=true) and lets bonded PlayStation pads reconnect (input.conf ClassicBondedOnly=false). "
+                               "Backs up both files first; asks for the password."})
         if not self._bt_busy:
             rows.append({"kind": "done", "id": "btscan", "title": f"Search for controllers ({bluetooth.SCAN_SECONDS} seconds)",
                          "detail": "Switches Bluetooth on if needed (asks for the password only if Bluetooth is blocked or stopped)."})
@@ -2389,7 +2450,31 @@ class Backend(QObject):
                 self._bgDone.emit()
         threading.Thread(target=work, daemon=True, name="atari-bluetooth").start()
 
+    def _bt_reconnect_fix(self) -> None:
+        def fix():
+            names = bluetooth.trust_paired_pads()
+            try:
+                mt = Path(bluetooth.MAIN_CONF).read_text()
+            except OSError:
+                mt = ""
+            try:
+                it = Path(bluetooth.INPUT_CONF).read_text()
+            except OSError:
+                it = ""
+            msg = ("Trusted: " + ", ".join(names) + ". ") if names else ""
+            if bluetooth.reconnect_ok(mt, it):
+                self._bt_msg = msg + "Bluetooth settings were already right. Press the PS / Home button on the pad to reconnect."
+                return
+            nm, ni = bluetooth.reconnect_conf(mt, it)
+            rc = self._root_run(["pkexec", "sh", "-c", bluetooth.reconnect_script(nm, ni)], timeout=120)
+            self._bt_msg = msg + ("Done (old files kept as *.codeaque.bak). Bluetooth restarted - press the PS / Home button on the pad."
+                                  if rc == 0 else "The password box was closed - nothing was changed." if rc == -1 else "That did not work.")
+        self._bt_job("Fixing controller reconnect...", fix)
+
     def _bt_activate(self, rid: str) -> str:
+        if rid == "btreconnect":
+            self._bt_reconnect_fix()
+            return "refresh"
         if rid == "btscan":
             def scan():
                 ok, text = bluetooth.ensure_on()
@@ -2588,6 +2673,17 @@ class Backend(QObject):
                 rows.append(self._info("   " + t))
         elif left > 0:
             rows.append(self._info("   (nothing pressed yet)"))
+        from . import gamepad_helper as _gh
+        n_ev, n_ok = _gh.input_access()
+        if n_ev and n_ok < n_ev:
+            rows.append({"kind": "item", "id": "ctperm", "title": "Let CodeAque read controllers",
+                         "detail": f"Only {n_ok} of {n_ev} input devices (/dev/input/event*) can be read by this user. Adds you to the "
+                                   "'input' group (asks for your password); log out and in afterwards."})
+        rows.append({"kind": "item", "id": "ctallemus", "title": "Set up controller for all emulators",
+                     "detail": "Normally not needed: CodeAque already does this by itself before every game. Writes player 1 = the "
+                               "connected pad into RetroArch, DuckStation, PCSX2, Dolphin and xemu now."})
+        rows.append({"kind": "item", "id": "ctpadrestart", "title": "Restart the controller reader",
+                     "detail": "If a pad is connected but does not move the menus, this looks for pads again."})
         rows.append({"kind": "item", "id": "ctrefresh", "title": "Refresh"})
         rows.append(self._info("Honest note: CodeAque can write the settings and show what the pad sends, but it cannot run xemu for you here. "
                                "If the pad does not work in xemu afterwards, open xemu > Machine > Input and pick the pad there (xemu's own screen), "
@@ -2597,6 +2693,34 @@ class Backend(QObject):
         return rows
 
     def _controllers_activate(self, rid: str) -> str:
+        if rid == "ctallemus":
+            from . import padconfig
+
+            def how(e):
+                try:
+                    return emulators.find_emu(self.cfg, e)[1] or "native"
+                except Exception:
+                    return "native"
+            res = padconfig.apply_all(how_for=how)
+            done = [e for e, (files, _n) in res.items() if files]
+            notes = "; ".join(f"{e}: {n}" for e, (_f, n) in res.items())
+            self._ct_msg = ("Written for: " + ", ".join(done) + ". " if done else "Nothing needed changing. ") + notes
+            kiosk.log_event(f"pad config all: {res}")
+            return "refresh"
+        if rid == "ctpadrestart":
+            self.stop_gamepad()
+            self._start_gamepad()
+            self._ct_msg = "Controller reader restarted - press a button on the pad."
+            return "refresh"
+        if rid == "ctperm":
+            def work():
+                user = os.environ.get("USER") or Path.home().name
+                rc = self._root_run(["pkexec", "usermod", "-aG", "input", user], timeout=120)
+                self._ct_msg = ("Done - log out and back in (or restart) so it takes effect." if rc == 0 else
+                                "The password box was closed - nothing was changed." if rc == -1 else "That did not work.")
+                self._bgDone.emit()
+            threading.Thread(target=work, daemon=True, name="atari-inputgroup").start()
+            return "refresh"
         if rid.startswith("ctxemu:"):
             found = pads.detect()
             try:
@@ -3159,6 +3283,28 @@ class Backend(QObject):
                     if self._lib.unknown and not self._demo else "")
             self.show_toast(f"Library updated: {n} game" + ("" if n == 1 else "s") + more)
         self._schedule_covers()
+        self._schedule_badges()
+
+    def _schedule_badges(self) -> None:
+        """Modern Games: ProtonDB / anti-cheat badge on every Steam game, in the background (cached a week)."""
+        if self._demo or os.environ.get("ATARI_NO_BADGES"):
+            return
+        games = [g for g in self._all if g.platform == "steam" and g.steam_appid]
+        if not games:
+            return
+
+        def work():
+            try:
+                b = protondb.Badges(paths.data_dir() / "protondb.json").badges([g.steam_appid for g in games])
+                for g in games:
+                    g.badge = b.get(g.steam_appid, "")
+                    if g.badge == protondb.WINDOWS and "anti-cheat" not in g.note:
+                        g.note = (g.note + " " if g.note else "") + ("Its anti-cheat refuses Linux, so it won't run here - "
+                                                                     "press Play to restart into Windows for it.")
+                self._badgesReady.emit()
+            except Exception as exc:  # pragma: no cover
+                kiosk.log_event(f"badges: {exc}")
+        threading.Thread(target=work, daemon=True, name="atari-badges").start()
 
     def _rebuild_filters(self) -> None:
         counts: dict[str, int] = {}
@@ -3393,6 +3539,10 @@ class Backend(QObject):
             return
         if g.gid == "studio:open":
             self.studioRequested.emit()
+            return
+        if getattr(g, "badge", "") == protondb.WINDOWS:
+            self._ac_game = g
+            self.pageRequested.emit("anticheat")
             return
         if g.gid == "tool:recordings":
             self.pageRequested.emit("recordings")
@@ -4693,6 +4843,11 @@ class Backend(QObject):
         self.playSound("select")
 
     @Slot()
+    def toggleFullscreenGames(self) -> None:
+        self.cfg.fullscreen_games = not self.cfg.fullscreen_games
+        self._save_prefs()
+
+    @Slot()
     def toggleEscExit(self) -> None:
         self.cfg.esc_exit = not self.cfg.esc_exit
         self._save_prefs()
@@ -5143,6 +5298,8 @@ class Backend(QObject):
         rows.append({"kind": "music", "title": "Music (soft background loop)",
                      "value": "ON" if self.cfg.music else "OFF",
                      "detail": "Quiet and off by default. It stops while a game is running."})
+        rows.append({"kind": "fsgames", "title": "Open games full screen", "value": "ON" if self.cfg.fullscreen_games else "OFF",
+                     "detail": "Emulators (RetroArch, DuckStation, PCSX2, PPSSPP, Dolphin, xemu, DOSBox ...) start full screen. OFF = in a window."})
         rows.append({"kind": "brightnesspage", "title": "Brightness", "value": f"{self._br_level}%" if self._br_level >= 0 else "",
                      "detail": "Screen brightness, for when the laptop's brightness keys do nothing. Also on the home screen (the sun)."})
         rows.append({"kind": "volume", "title": "Volume", "value": f"{int(round(self.cfg.volume * 100))}%",
@@ -5328,7 +5485,7 @@ class Backend(QObject):
                 "winchoose": "WHICH PROGRAM STARTS THE GAME?", "winwork": "OPENING THE ARCHIVE",
                 "install": "INSTALL", "installmenu": "INSTALL EMULATORS & APPS", "steam": "STEAM",
                 "recordings": "RECORDINGS", "coverpick": "PICK A COVER", "nocovers": "COVERS NOT FOUND",
-                "addgames": "ADD GAMES", "kiosk": "CODEAQUE-ONLY MODE", "startmode": "START MODE", "xemusetup": "XBOX (XEMU) SETTINGS", "controllers": "CONTROLLERS", "brightness": "BRIGHTNESS", "btpair": "PAIR A BLUETOOTH CONTROLLER", "biosfind": "FIND MY BIOS FILES", "theme": "THEME", "simtycoon": "SIM & TYCOON", "create": "CREATE", "worldgames": "WORLD GAMES", "boot": "BOOT SCREEN", "simpick": "ADD TO SIM & TYCOON", "findgames": "FIND MY GAMES", "screentv": "SCREEN TO TV", "quietboot": "QUIET BOOT", "power": "POWER", "downloads": "DOWNLOADS", "golive": "GO LIVE", "robloxfix": "FIX ROBLOX",
+                "addgames": "ADD GAMES", "kiosk": "CODEAQUE-ONLY MODE", "startmode": "START MODE", "xemusetup": "XBOX (XEMU) SETTINGS", "controllers": "CONTROLLERS", "brightness": "BRIGHTNESS", "anticheat": "NEEDS WINDOWS", "btpair": "PAIR A BLUETOOTH CONTROLLER", "biosfind": "FIND MY BIOS FILES", "theme": "THEME", "simtycoon": "SIM & TYCOON", "create": "CREATE", "worldgames": "WORLD GAMES", "boot": "BOOT SCREEN", "simpick": "ADD TO SIM & TYCOON", "findgames": "FIND MY GAMES", "screentv": "SCREEN TO TV", "quietboot": "QUIET BOOT", "power": "POWER", "downloads": "DOWNLOADS", "golive": "GO LIVE", "robloxfix": "FIX ROBLOX",
                 "dlsystem": "WHICH SYSTEM IS THIS FILE FOR?", "files": "MY FILES", "fileact": "WHAT TO DO WITH IT", "deletegame": "DELETE GAME", "about": "ABOUT CODEAQUE"}.get(name, name.upper())
 
     @Slot(str, result=str)
@@ -5587,6 +5744,20 @@ class Backend(QObject):
             return self._xemu_rows()
         if name == "brightness":
             return self._br_rows()
+        if name == "anticheat":
+            g = getattr(self, "_ac_game", None)
+            rows = [self._info(f"{g.title if g else 'This game'} uses an anti-cheat that refuses Linux, so it won't run here "
+                               "(Steam Play / Proton cannot get past it). It runs on Windows.")]
+            if create.windows_entry():
+                rows.append({"kind": "done", "id": "acwin", "title": "Play on Windows (restart into Windows once)",
+                             "value": "CONFIRM" if getattr(self, "_cr_confirm", False) else "",
+                             "detail": "Starts Windows for the next start only; the computer comes back to CodeAque after that. "
+                                       "Asks for the password. Save anything open first."})
+            else:
+                rows.append(self._info("No Windows was found on this computer."))
+            rows.append({"kind": "item", "id": "actry", "title": "Try on Linux anyway", "detail": "It will most likely stop at its anti-cheat."})
+            rows.append({"kind": "item", "id": "back", "title": "Back"})
+            return rows
         if name == "controllers":
             return self._controllers_rows()
         if name == "btpair":
@@ -5788,6 +5959,13 @@ class Backend(QObject):
             return "back" if rid == "back" else ""
         if name == "brightness":
             return self._br_activate(rid)
+        if name == "anticheat":
+            if rid == "acwin":
+                return self._create_activate("crwin") or "refresh"
+            if rid == "actry" and getattr(self, "_ac_game", None) is not None and not self._running:
+                self._launch_game(self._ac_game)
+                return "close"
+            return ""
         if rid == "biosfind" and name != "biosfind":
             return "page:biosfind"
         if rid == "findgames" and name != "findgames":

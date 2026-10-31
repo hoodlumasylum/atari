@@ -30,6 +30,46 @@ BUTTON_MAP = {
     "dpad_up": "up", "dpad_down": "down", "dpad_left": "left", "dpad_right": "right",
 }
 DIRECTIONS = {"up", "down", "left", "right"}
+
+# Pads SDL does not know as a "game controller" (no mapping for this exact version - e.g. a DualShock 4 over Bluetooth with the
+# newer hid_playstation driver) are read as plain joysticks. Linux drivers (hid_playstation, hid_sony, xpad, hid_nintendo) order
+# the buttons by their evdev codes: SOUTH, EAST, NORTH, WEST, TL, TR, TL2, TR2, SELECT, START, MODE, THUMBL, THUMBR.
+RAW_BUTTONS = ["a", "b", "y", "x", "leftshoulder", "rightshoulder", "lefttrigger", "righttrigger", "back", "start", "guide",
+               "leftstick", "rightstick"]
+PLAYSTATION_WORDS = ("wireless controller", "dualshock", "dualsense", "playstation", "sony")
+
+
+def raw_button_name(index: int) -> str:
+    """A plain joystick's button number -> the same name SDL gives a mapped pad (DS4: 0 Cross=a, 1 Circle=b, 2 Triangle=y,
+    3 Square=x, 8 Share=back, 9 Options=start, 10 PS=guide)."""
+    return RAW_BUTTONS[index] if 0 <= index < len(RAW_BUTTONS) else ""
+
+
+def hat_directions(x: int, y: int) -> set[str]:
+    out = set()
+    if x < 0:
+        out.add("left")
+    elif x > 0:
+        out.add("right")
+    if y > 0:
+        out.add("up")        # SDL hats: +1 = up
+    elif y < 0:
+        out.add("down")
+    return out
+
+
+def input_access(dev: str = "/dev/input") -> tuple[int, int]:
+    """(event devices, of them readable by this user). 0 readable of several = no permission (see the Controllers page)."""
+    import glob
+    import os
+    ev = glob.glob(os.path.join(dev, "event*"))
+    return len(ev), sum(1 for e in ev if os.access(e, os.R_OK))
+
+
+def hidraw_readable(dev: str = "/dev") -> bool:
+    import glob
+    import os
+    return any(os.access(h, os.R_OK | os.W_OK) for h in glob.glob(os.path.join(dev, "hidraw*")))
 AXIS_ON = 0.5
 
 
@@ -100,6 +140,13 @@ def main() -> int:
     os.environ["SDL_AUDIODRIVER"] = "dummy"
     os.environ["SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS"] = "1"
     os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
+    if not hidraw_readable():
+        # SDL's own PlayStation/Switch drivers talk to /dev/hidraw*, which a normal user usually cannot open: then a DualShock 4
+        # can show up but send nothing. Use the kernel's driver (evdev) instead, which works with the normal seat permissions.
+        os.environ.setdefault("SDL_JOYSTICK_HIDAPI", "0")
+    n_ev, n_ok = input_access()
+    if n_ev and not n_ok:
+        print("#noperm", flush=True)
     try:
         import pygame
         from pygame._sdl2 import controller
@@ -109,7 +156,10 @@ def main() -> int:
 
     pygame.display.init()
     controller.init()
+    pygame.joystick.init()
     pads: dict[int, "controller.Controller"] = {}
+    raws: dict[int, object] = {}            # plain joysticks (no SDL mapping), by instance id
+    hats: dict[int, set] = {}
     rep = Repeater()
     stick_dir: dict[int, str | None] = {}
     axes: dict[tuple[int, int], float] = {}
@@ -118,10 +168,40 @@ def main() -> int:
         try:
             if controller.is_controller(index):
                 c = controller.Controller(index)
-                pads[c.as_joystick().get_instance_id()] = c
-                print(f"#pad {c.name}", flush=True)
+                iid = c.as_joystick().get_instance_id()
+                if iid not in pads:
+                    pads[iid] = c
+                    print(f"#pad {c.name}", flush=True)
+            else:
+                j = pygame.joystick.Joystick(index)
+                iid = j.get_instance_id()
+                if iid not in raws and iid not in pads:
+                    raws[iid] = j
+                    print(f"#pad {j.get_name()} (basic)", flush=True)
         except Exception as exc:
             print(f"#error {exc}", flush=True)
+
+    def press(bname: str) -> None:
+        special = chord.button(bname, True)
+        if special:
+            if special in ("quitapp", "record"):
+                print(special, flush=True)
+            return
+        action = BUTTON_MAP.get(bname)
+        if action in DIRECTIONS:
+            for a in rep.press(action, time.monotonic()):
+                print(a, flush=True)
+        elif action:
+            print(action, flush=True)
+
+    def release(bname: str) -> None:
+        if chord.button(bname, False):
+            return
+        action = BUTTON_MAP.get(bname)
+        if action in DIRECTIONS:
+            rep.release(action)
+
+    last_rescan = time.monotonic()
 
     for i in range(controller.get_count()):
         open_pad(i)
@@ -143,6 +223,36 @@ def main() -> int:
             elif t == pygame.CONTROLLERDEVICEREMOVED:
                 pads.pop(ev.instance_id, None)
                 print("#pad-removed", flush=True)
+            elif t == getattr(pygame, "JOYDEVICEADDED", -1):
+                open_pad(ev.device_index)
+            elif t == getattr(pygame, "JOYDEVICEREMOVED", -1):
+                if raws.pop(getattr(ev, "instance_id", -1), None) is not None:
+                    print("#pad-removed", flush=True)
+            elif t == pygame.JOYBUTTONDOWN and ev.instance_id in raws:
+                bname = raw_button_name(ev.button)
+                print(f"#btn {bname or ev.button}", flush=True)
+                press(bname)
+            elif t == pygame.JOYBUTTONUP and ev.instance_id in raws:
+                release(raw_button_name(ev.button))
+            elif t == pygame.JOYHATMOTION and ev.instance_id in raws:
+                new = hat_directions(*ev.value)
+                old = hats.get(ev.instance_id, set())
+                for d in old - new:
+                    release("dpad_" + d)
+                for d in new - old:
+                    press("dpad_" + d)
+                hats[ev.instance_id] = new
+            elif t == pygame.JOYAXISMOTION and ev.instance_id in raws and ev.axis in (0, 1):
+                axes[(ev.instance_id, -1 - ev.axis)] = ev.value
+                new = stick_direction(axes.get((ev.instance_id, -1), 0.0), axes.get((ev.instance_id, -2), 0.0))
+                old = stick_dir.get(ev.instance_id)
+                if new != old:
+                    if old:
+                        rep.release(old)
+                    if new:
+                        print(new, flush=True)
+                        rep.press(new, time.monotonic())
+                    stick_dir[ev.instance_id] = new
             elif t == pygame.CONTROLLERBUTTONDOWN:
                 bname = btn_names.get(ev.button, "")
                 print(f"#btn {bname or ev.button}", flush=True)
@@ -183,6 +293,14 @@ def main() -> int:
                         print(new, flush=True)
                         rep.press(new, time.monotonic())
                     stick_dir[ev.instance_id] = new
+        if time.monotonic() - last_rescan > 3.0:     # belt and braces: a pad that SDL never announced (no udev events in the session)
+            last_rescan = time.monotonic()
+            try:
+                if pygame.joystick.get_count() > len(pads) + len(raws):
+                    for i in range(pygame.joystick.get_count()):
+                        open_pad(i)
+            except Exception:
+                pass
         for a in rep.tick(time.monotonic()):
             print(a, flush=True)
         if os.getppid() != parent:  # the launcher went away

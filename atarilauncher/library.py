@@ -30,6 +30,7 @@ class Game:
     meta: dict = field(default_factory=dict)  # optional genre / players / release / rating
     missing: str = ""  # program that is not installed yet: appinstall target id ("id" or "id|core"); shown as INSTALL
     fit: bool = False  # the picture is an app icon / logo: show it whole on a coloured tile instead of cropping it
+    badge: str = ""  # Modern Games: "Works great" / "Should work" / "May not work" / "Won't run on Linux, needs Windows"
     launch: str = ""  # for imported Heroic / Lutris games: the link that starts it (heroic://launch/..., lutris:rungameid/N)
 
 

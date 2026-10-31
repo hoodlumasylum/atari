@@ -186,7 +186,7 @@ def test_xemu_launch_command_for_an_iso():
     cfg.systems["xbox"].command = ""
     cfg.emulator_commands["xemu"] = "xemu"
     cmd = launcher.build_rom_command(cfg, cfg.systems["xbox"], "/g/Shenmue II (USA).iso")
-    assert cmd == ["xemu", "-dvd_path", "/g/Shenmue II (USA).iso"]
+    assert cmd == ["xemu", "-full-screen", "-dvd_path", "/g/Shenmue II (USA).iso"]
     assert set(cfg.systems["xbox"].extensions) >= {"iso", "xiso"}
 
 

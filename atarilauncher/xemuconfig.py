@@ -468,6 +468,76 @@ def create_empty_hdd(home: Path | None = None, which: Callable = shutil.which, r
     return True, f"Made an empty {HDD_SIZE} disk image (it only uses space as games need it): {dest}."
 
 
+# xemu's own pre-built 8 GB disk (linked from xemu.app/docs/required-files): already FATX-formatted, no Microsoft files - only
+# xemu's small unsigned starter dashboard. Pinned: the zip and the disk inside must match these SHA-256 sums (checked 31 Oct 2026).
+READY_HDD_URL = "https://github.com/xemu-project/xemu-hdd-image/releases/download/1.0/xbox_hdd.qcow2.zip"
+READY_HDD_ZIP_SHA256 = "d9f5a4c1224ff24cf9066067bda70cc8b9c874ea22b9c542eb2edbfc4621bb39"
+READY_HDD_SHA256 = "eb35d069715dfc0d37cfac086a0b73a89a02e8f12519cd8eda82ad479d1a4eed"
+READY_HDD_NAME = "xbox_hdd_formatted.qcow2"
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for b in iter(lambda: f.read(1 << 20), b""):
+            h.update(b)
+    return h.hexdigest()
+
+
+def _download(url: str, dest: Path) -> None:
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "CodeAque"})
+    with urllib.request.urlopen(req, timeout=60) as r, open(dest, "wb") as f:
+        shutil.copyfileobj(r, f)
+
+
+def get_ready_hdd(home: Path | None = None, which: Callable = shutil.which, fetch: Callable = _download) -> tuple[bool, str, Path | None]:
+    """Download xemu's formatted disk, check both checksums, keep it as xbox_hdd_formatted.qcow2 in xemu's folder (never over another
+    file) and point hdd_path at it. The old disk (if any) is left where it is. -> (ok, message, path)."""
+    import tempfile
+    import zipfile
+    folder = data_folders(home, which)[0]
+    dest = folder / READY_HDD_NAME
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        if not (dest.is_file() and _sha256(dest) == READY_HDD_SHA256):
+            if dest.exists():
+                return False, f"{dest} exists but is not xemu's ready-made disk - nothing was changed.", None
+            with tempfile.TemporaryDirectory(dir=folder) as td:
+                z = Path(td) / "hdd.zip"
+                fetch(READY_HDD_URL, z)
+                if _sha256(z) != READY_HDD_ZIP_SHA256:
+                    return False, "The download did not match xemu's published disk (checksum) - nothing was changed.", None
+                with zipfile.ZipFile(z) as zf:
+                    member = next((n for n in zf.namelist() if n.endswith(".qcow2") and "/" not in n.strip("/")), None)
+                    if member is None:
+                        return False, "The download had no disk image in it - nothing was changed.", None
+                    tmp = Path(td) / "disk.qcow2"
+                    with zf.open(member) as src, open(tmp, "wb") as out:
+                        shutil.copyfileobj(src, out)
+                if _sha256(tmp) != READY_HDD_SHA256:
+                    return False, "The disk inside the download did not match its checksum - nothing was changed.", None
+                os.replace(tmp, dest)
+    except (OSError, zipfile.BadZipFile) as exc:
+        return False, f"Could not get the ready-made disk: {exc}", None
+    except Exception as exc:  # network errors (urllib)
+        return False, f"Could not download the ready-made disk (is the internet on?): {exc}", None
+    wrote = []
+    for toml in config_files(home, which) or [folder / "xemu.toml"]:
+        try:
+            text = toml.read_text() if toml.exists() else ""
+            _atomic_write(toml, set_files_section(text, {"hdd_path": str(dest)}))
+            if read_files_section(toml.read_text()).get("hdd_path") == str(dest):
+                wrote.append(str(toml))
+        except OSError:
+            continue
+    if not wrote:
+        return False, f"Got the disk ({dest}) but could not write it into xemu's settings - pick it in xemu: Machine > System.", dest
+    return True, (f"Ready: a formatted 8 GB Xbox hard disk (xemu's own, checksum verified) at {dest}, set in " + ", ".join(wrote)
+                  + ". Close and reopen xemu if it was running."), dest
+
+
 HDD_PAGE = "https://xemu.app/docs/required-files/"
 FORMAT_HELP = ("A new blank disk is not formatted yet, and xemu cannot format it by itself (the Xbox shows an error such as "
                "\"Your Xbox requires service\" / error 05 or 07, or xemu stops at a black screen). Three ways, from easiest: "

@@ -323,6 +323,42 @@ def status_line(cfg, system, home: Path | None = None) -> tuple[bool, str, str]:
     return False, "Not installed", (install_hint(system, home))
 
 
+# How each emulator is told to open full screen (Settings > Open games full screen). Tokens go right after the program.
+FULLSCREEN: dict[str, tuple] = {
+    "retroarch": ("-f",), "duckstation": ("-fullscreen",), "pcsx2": ("-fullscreen",), "ppsspp": ("--fullscreen",),
+    "dolphin": ("-C", "Dolphin.Display.Fullscreen=True"), "cemu": ("-f",), "ryujinx": ("--fullscreen",), "switchfork": ("-f",),
+    "azahar": ("-f",), "melonds": ("-f",), "mgba": ("-f",), "xemu": ("-full-screen",), "mednafen": ("-video.fs", "1"),
+    "flycast": ("-config", "window:fullscreen=yes"), "rmg": ("-f",), "mupen64plus": ("--fullscreen",), "dosbox": ("-fullscreen",),
+    "scummvm": ("-f",), "fsuae": ("--fullscreen",), "vice": ("-fullscreen",), "rpcs3": (), "desmume": (),
+}
+WINDOWED: dict[str, tuple] = {"mame": ("-window",), "mednafen": ("-video.fs", "0"), "dolphin": ("-C", "Dolphin.Display.Fullscreen=False"),
+                              "flycast": ("-config", "window:fullscreen=no")}
+
+
+def with_fullscreen(emu_id: str, template: str, on: bool) -> str:
+    """The template with this emulator's full-screen words added (on) or taken out / swapped for windowed ones (off)."""
+    toks = shlex.split(template)
+    fs = FULLSCREEN.get(emu_id, ())
+    if on and fs and any(toks[i:i + len(fs)] == list(fs) for i in range(len(toks))):
+        return template                       # already there (keep the emulator's own order)
+    # take any full-screen words out first (they are re-added in one place)
+    out, i = [], 0
+    while i < len(toks):
+        if fs and toks[i:i + len(fs)] == list(fs):
+            i += len(fs)
+            continue
+        if emu_id == "mednafen" and toks[i] == "-video.fs":
+            i += 2
+            continue
+        out.append(toks[i])
+        i += 1
+    add = list(fs) if on else list(WINDOWED.get(emu_id, ()))
+    if add:
+        at = out.index("{exe}") + 1 if "{exe}" in out else 1
+        out[at:at] = add
+    return shlex.join(out)
+
+
 def expand(template: str, cfg, system, rom: str, exe: list[str], core: str = "", home: Path | None = None) -> list[str]:
     """Fill a launch template: {exe} (or {retroarch}/{rpcs3}/{xemu}/{<emulator id>}) and the {rom...} words."""
     from . import paths  # noqa: F401

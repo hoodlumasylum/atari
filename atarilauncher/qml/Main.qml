@@ -57,7 +57,7 @@ Window {
                  short: backend.showAllSystems ? "Show fewer systems" : "Show all systems",
                  glyph: "grid", c1: "#2a3050", c2: "#10121d", count: -1 })
         tileList = t
-        var s = [{ key: "all", label: "All Games", icon: "grid" }]
+        var s = [{ key: "all", label: "All Games", icon: "grid" }, { key: "__modern", label: "Modern Games", icon: "pad" }]
         for (var j = 0; j < src.length; j++) s.push({ key: src[j].key, label: src[j].short, icon: src[j].glyph })
         s.push({ key: "__more", label: backend.showAllSystems ? "Show fewer systems" : "Show all systems", icon: "more" })
         s.push({ key: "favorites", label: "Favourites", icon: "heart" })
@@ -114,6 +114,7 @@ Window {
         else if (s.key === "__sim") openPage("simtycoon")
         else if (s.key === "__create") openPage("create")
         else if (s.key === "__world") openPage("worldgames")
+        else if (s.key === "__modern") selectFilter("steam", true)
         else if (s.key === "__theme") openPage("theme")
         else if (s.key === "__more") backend.toggleShowAllSystems()
         else selectFilter(s.key, true)
@@ -581,6 +582,7 @@ Window {
         else if (r.kind === "introremove") { backend.removeIntro(); refreshSetup(true) }
         else if (r.kind === "intropreview") backend.previewIntro()
         else if (r.kind === "bigpicture") { backend.toggleSteamBigPicture(); refreshSetup(true) }
+        else if (r.kind === "fsgames") { backend.toggleFullscreenGames(); refreshSetup(true) }
         else if (r.kind === "escexit") { backend.toggleEscExit(); refreshSetup(true) }
         else if (r.kind === "anim") { backend.toggleAnimations(); refreshSetup(true) }
         else if (r.kind === "covers") { backend.downloadCoversNow(); refreshSetup(true) }

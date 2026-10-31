@@ -31,6 +31,15 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
+## What's new in 0.5.2
+
+- **Controllers just work:** PS4 DualShock 4 moves the menus (also when switched on later); before every game CodeAque writes player 1's pad into PCSX2, DuckStation, Dolphin, RetroArch and xemu by itself. Bluetooth search really searches now (DS4 tip: hold SHARE + PS), paired pads are trusted, and "Fix controller reconnect" stops re-pairing.
+- **Xbox:** one-tap formatted hard disk (xemu's own, checksum verified); full disc dumps are detected and converted to XISO when extract-xiso is there.
+- **Games open full screen** (Settings switch, ON by default) in every emulator.
+- **Modern Games:** Steam games with ProtonDB badges; anti-cheat games say so and offer Play on Windows.
+- **Boot menu:** only CodeAque and Windows (recovery switch), wider entries, Mint splash removed from every kernel; status shows the active Plymouth theme.
+- **Top bar:** search no longer overlaps ADD GAMES; the bar shrinks to fit.
+
 ## What's new in 0.5.1
 
 * **Steam at boot now really stays hidden.** *Cause in 0.5.0:* in CodeAque-only mode CodeAque's own Steam watcher saw the Steam it had just started at boot as "a Steam CodeAque did not start" and asked it to open Big Picture - and Steam's "Start in Big Picture mode" setting (which CodeAque had switched on in earlier versions) did the same - so Steam came up full screen in front. Now: the boot start is marked as CodeAque's own (never asked for Big Picture), "Start in Big Picture mode" is switched off while Steam is closed when "Start Steam at boot (hidden)" is on (the Steam tile still opens Big Picture), and for the first 2 minutes any Steam window that appears is minimised (or hidden, when there is no window manager) with `xdotool` / `wmctrl`, and CodeAque is put back in front - once more when Steam has finished loading. The installer now adds `xdotool` and `wmctrl`. `steam -silent` goes to the real Steam (native or Flatpak) unchanged.
@@ -159,7 +168,7 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 - **If the in-app updater cannot be trusted on your connection, one command does the same by hand** (resumes if it drops, checks the SHA256 against the release's own list, keeps your settings and games):
 
   ```bash
-  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.5.1.tar.gz https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.1/atari-0.5.1.tar.gz && curl -fsSL https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.1/SHA256SUMS.txt | grep ' atari-0.5.1.tar.gz$' | sha256sum -c - && tar xzf atari-0.5.1.tar.gz && cd atari-0.5.1 && ./install.sh --yes
+  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.5.2.tar.gz https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.2/atari-0.5.2.tar.gz && curl -fsSL https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.2/SHA256SUMS.txt | grep ' atari-0.5.2.tar.gz$' | sha256sum -c - && tar xzf atari-0.5.2.tar.gz && cd atari-0.5.2 && ./install.sh --yes
   ```
 
 ## What's new in 0.4.1
@@ -381,13 +390,13 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.5.1.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/codeaque/releases/latest).
+1. Download **`atari-0.5.2.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/codeaque/releases/latest).
 2. Open a **Terminal** and type:
 
    ```bash
    cd ~/Downloads
-   tar xzf atari-0.5.1.tar.gz
-   cd atari-0.5.1
+   tar xzf atari-0.5.2.tar.gz
+   cd atari-0.5.2
    ./install.sh
    ```
 
