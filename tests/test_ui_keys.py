@@ -242,30 +242,39 @@ def test_mouse_click_rows_and_buttons_everywhere(app, tmp_path, monkeypatch):
         ui.close()
 
 
-def test_home_banner_remove_and_repair(app, tmp_path, monkeypatch):
+def test_home_pad_toast_small_dismissable_and_repair_in_controllers(app, tmp_path, monkeypatch):
+    """0.6.1: a slim note only for a pad that WAS connected and dropped; X / keyboard / mouse hide it; Settings toggle;
+    Remove and re-pair stays in Settings > Controllers."""
     from PySide6.QtQuick import QQuickItem
     ui = Ui(app, tmp_path, monkeypatch, config_exists=True)
     try:
         called = []
         monkeypatch.setattr(ui.backend, "_bt_activate", lambda rid: called.append(rid) or "refresh")
-        ui.backend._on_pads_waiting([{"mac": "AA:BB:CC:DD:EE:01", "name": "Wireless Controller"}])
-        pump(app, 200)
         ui.win.resize(1366, 768)
-        pump(app, 300)
+        pad = {"mac": "AA:BB:CC:DD:EE:01", "name": "Wireless Controller"}
+        ui.backend._on_pads_waiting([pad])           # paired but never seen connected: no note
+        pump(app, 200)
         ban = ui.win.findChild(QQuickItem, "padWaitBanner")
-        import os
-        if os.environ.get("SHOT"):
-            ui.win.grabWindow().save(os.environ["SHOT"])
-        assert ban.property("x") >= 0 and ban.property("x") + ban.property("width") <= 1366
-        assert ui.mode == "library" and ban is not None and ban.property("visible")
+        assert ban is not None and not ban.property("visible")
+        ui.backend._on_pads_waiting([])
+        ui.backend._pads_was_connected.add(pad["mac"])  # it was connected ... and drops
+        ui.backend._on_pads_waiting([pad])
+        pump(app, 300)
+        assert ui.mode == "library" and ban.property("visible")
+        assert ban.property("height") <= 50 and ban.property("x") + ban.property("width") <= 1366
+        monkeypatch.setattr(ui.backend, "keyFromPad", lambda: True)
+        ui.key(Qt.Key_Right, 100)                    # a pad press keeps it
+        assert ban.property("visible")
+        monkeypatch.setattr(ui.backend, "keyFromPad", lambda: False)
+        ui.key(Qt.Key_Left, 100)                     # the keyboard hides it
+        assert not ban.property("visible")
         rows = ui.backend._controllers_rows()
         assert any(r.get("id") == "btrepair:AA:BB:CC:DD:EE:01" for r in rows)
-        assert any("press the PS button" in r.get("title", "").lower() + r.get("detail", "").lower() + str(r.get("text", "")).lower()
-                   or "PS button" in str(r) for r in rows)
-        ui.key(Qt.Key_R, 200)
-        assert called == ["btrepair:AA:BB:CC:DD:EE:01"]
-        ui.backend._on_pads_waiting([])
-        pump(app, 100)
-        assert not ban.property("visible")
+        # the Settings toggle is remembered
+        assert any(r["kind"] == "padreminder" and r["value"] == "ON" for r in ui.backend.setupRows())
+        ui.backend.togglePadReminder()
+        assert ui.backend.cfg.pad_reminder is False
+        from atarilauncher import config as _c
+        assert _c.load_config(ui.backend.cfg.path).pad_reminder is False
     finally:
         ui.close()

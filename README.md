@@ -31,6 +31,24 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
+## What's new in 0.6.1
+
+**Updating:** in-app update (Settings) as usual.
+
+* **Sleeker home screen.** The highlighted game's own picture fills the whole screen behind the menus, blurred and darkened. It fades across when you move and drifts a little sideways. Games without a picture get a soft emerald and gold glow in the game's colour.
+* **See-through "glass" panels** with softer rounded corners, fine light edges and soft shadows. The top bar is much slimmer, the hint bar is thinner, the covers are bigger and there is more space around everything.
+* **Smooth movement:** the focused cover and system tile grow a little and glow, with eased animations.
+* **Settings > Reduce effects** (AUTO / ON / OFF) turns off the blur, the shadows and the big picture. AUTO switches them off by itself on weak graphics chips (software drawing, older Intel HD, Atom and similar). The old *Reduce animations* setting still stops everything moving.
+* **Grid / list with the pad:** press the right stick (R3), or V on the keyboard. It is shown in the hint bar.
+* **Pad reminder is now a small note** at the top right, with an X to close it. It shows only when a pad that was connected earlier drops. It hides as soon as you use the keyboard or the mouse. *Settings > Show pad reminder* turns it off, and the choice is remembered. Remove and re-pair is in Settings > Controllers.
+
+![Home 1920x1080](docs/screenshot-home-1920x1080.png)
+
+### Not tested
+- Not looked at on the Dell itself, so the speed (60 fps) and the AUTO detection are not checked on real hardware. Screenshots here are drawn by the computer's processor, not a graphics chip.
+- The demo games have no pictures, so the screenshots show the glow rather than blurred game art. The fade between two pictures is checked by an automatic test.
+- The pad reminder only knows pads that were connected while CodeAque was running. A pad that dropped before CodeAque started shows no note; Settings > Controllers still lists it.
+
 ## What's new in 0.6.0
 
 **Updating:** in-app update (Settings) as usual.

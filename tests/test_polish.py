@@ -223,7 +223,9 @@ def test_waves_background_pauses_when_animations_are_reduced_or_a_game_runs(app,
     try:
         from PySide6.QtQuick import QQuickItem
         wave_item = next(i for i in ui.win.findChildren(QQuickItem) if i.metaObject().className().startswith("WaveBackground"))
-        assert wave_item.property("active") is True
+        # 0.6.1: on the home screen the blurred game-art backdrop replaces the waves, so they do not draw there at all
+        bd = ui.win.findChild(QQuickItem, "homeBackdrop")
+        assert bd.property("visible") is True and wave_item.property("active") is False
         ui.backend.toggleAnimations()
         pump(app, 50)
         assert ui.backend.animations is False
