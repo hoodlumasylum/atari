@@ -95,11 +95,29 @@ def describe(percent: int | None, status: str, level: str = "") -> tuple[str, bo
     return (f"Charging {percent}%" if charging else f"{percent}%"), percent <= LOW and not charging, charging
 
 
-def for_pads(found: list[pads.Pad], sys_root: str = "/sys", upower: dict | None = None) -> list[dict]:
-    """One entry per connected pad that has something to show: {'name', 'text', 'low', 'charging', 'percent', 'known'}."""
+def _match(name: str, table: dict | None):
+    """table[name], also when the names differ a little ("Xbox Wireless Controller" vs "Microsoft Xbox Wireless Controller")."""
+    if not table:
+        return None
+    if name in table:
+        return table[name]
+    n = name.lower()
+    for k, v in table.items():
+        kl = str(k).lower()
+        if kl and (kl in n or n in kl):
+            return v
+    return None
+
+
+def for_pads(found: list[pads.Pad], sys_root: str = "/sys", upower: dict | None = None, bluez: dict | None = None) -> list[dict]:
+    """One entry per connected pad that has something to show: {'name', 'text', 'low', 'charging', 'percent', 'known'}.
+    Sources in order: the kernel (/sys/class/power_supply), UPower, BlueZ ("Battery Percentage" from bluetoothctl). A Bluetooth pad
+    that BlueZ says is connected is listed even when the kernel's gamepad list missed it (0.5.0 showed nothing then)."""
     bats = sysfs_batteries(sys_root)
     rows = []
     for p in found:
+        up = _match(p.name, upower)
+        bz = _match(p.name, bluez)
         dev = pad_device_path(p, sys_root)
         hit = None
         for b in bats:
@@ -109,13 +127,24 @@ def for_pads(found: list[pads.Pad], sys_root: str = "/sys", upower: dict | None 
         if hit is not None:
             text, low, charging = describe(hit.percent, hit.status, hit.level)
             pct = hit.percent
-        elif upower and p.name in upower:
-            pct, state = upower[p.name]
+        elif up is not None:
+            pct, state = up
             text, low, charging = describe(pct, {"charging": "Charging", "fully-charged": "Full"}.get(state, state))
+        elif bz is not None:
+            pct = bz
+            text, low, charging = describe(pct, "")
         elif p.how == "Bluetooth":
             pct, (text, low, charging) = None, describe(None, "")
         else:
             continue                                      # a wired pad without a battery report: nothing to show
         rows.append({"name": p.name, "text": text, "low": low, "charging": charging, "percent": -1 if pct is None else pct,
                      "known": pct is not None or text not in ("Battery unknown",)})
+    listed = [r["name"].lower() for r in rows]
+    for name, pct in (bluez or {}).items():
+        n = str(name).lower()
+        if any(n in x or x in n for x in listed):
+            continue
+        text, low, charging = describe(pct, "") if pct is not None else describe(None, "")
+        rows.append({"name": name, "text": text, "low": low, "charging": charging, "percent": -1 if pct is None else pct,
+                     "known": pct is not None})
     return rows

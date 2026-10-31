@@ -42,7 +42,7 @@ say "Checking system libraries"
 if [ "$SYSPKGS" = 0 ]; then
     echo "Skipping system packages (already set up)."
 elif command -v apt-get >/dev/null 2>&1; then
-    PKGS="python3 python3-venv python3-pip libxcb-cursor0 libxkbcommon-x11-0 libegl1 libgl1 libfontconfig1 libdbus-1-3 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1"
+    PKGS="python3 python3-venv python3-pip xdotool wmctrl libxcb-cursor0 libxkbcommon-x11-0 libegl1 libgl1 libfontconfig1 libdbus-1-3 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1"
     MISSING=""
     for p in $PKGS; do dpkg -s "$p" >/dev/null 2>&1 || MISSING="$MISSING $p"; done
     if [ -n "$MISSING" ]; then
@@ -54,7 +54,7 @@ elif command -v apt-get >/dev/null 2>&1; then
         echo "All needed packages are already installed."
     fi
 elif command -v dnf >/dev/null 2>&1; then
-    PKGS="python3 python3-pip xcb-util-cursor xcb-util-image xcb-util-keysyms xcb-util-renderutil xcb-util-wm libxkbcommon-x11 mesa-libEGL mesa-libGL fontconfig dbus-libs"
+    PKGS="python3 python3-pip xdotool wmctrl xcb-util-cursor xcb-util-image xcb-util-keysyms xcb-util-renderutil xcb-util-wm libxkbcommon-x11 mesa-libEGL mesa-libGL fontconfig dbus-libs"
     MISSING=""
     for p in $PKGS; do rpm -q "$p" >/dev/null 2>&1 || MISSING="$MISSING $p"; done
     if [ -n "$MISSING" ]; then

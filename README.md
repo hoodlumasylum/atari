@@ -31,6 +31,18 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
+## What's new in 0.5.1
+
+* **Steam at boot now really stays hidden.** *Cause in 0.5.0:* in CodeAque-only mode CodeAque's own Steam watcher saw the Steam it had just started at boot as "a Steam CodeAque did not start" and asked it to open Big Picture - and Steam's "Start in Big Picture mode" setting (which CodeAque had switched on in earlier versions) did the same - so Steam came up full screen in front. Now: the boot start is marked as CodeAque's own (never asked for Big Picture), "Start in Big Picture mode" is switched off while Steam is closed when "Start Steam at boot (hidden)" is on (the Steam tile still opens Big Picture), and for the first 2 minutes any Steam window that appears is minimised (or hidden, when there is no window manager) with `xdotool` / `wmctrl`, and CodeAque is put back in front - once more when Steam has finished loading. The installer now adds `xdotool` and `wmctrl`. `steam -silent` goes to the real Steam (native or Flatpak) unchanged.
+* **Quiet boot + CodeAque splash work together.** Installing the boot screen while Quiet boot is on keeps the hidden menu (Shift / Esc shows it) and only changes the theme and splash; `quiet splash` stays in the kernel options; the CodeAque Plymouth theme is set as the default (plymouthd.conf `Theme=codeaque`, `ShowDelay=0` so a fast start still shows it, and the default.plymouth link), `update-initramfs` runs and CodeAque checks the splash really is inside the start-up files. With NVIDIA's own driver, `nvidia-drm.modeset=1` is added (without it no splash can show). Turning Quiet boot on later also uses the CodeAque splash when it is installed. **Settings > Boot screen** has a status line: installed yes/no, CodeAque splash active yes/no (and which Plymouth theme), Quiet start on/off, and a warning when this start had no `splash` in its kernel options. *If you installed the 0.5.0 boot screen, press Install CodeAque boot screen once more.*
+* **No Linux Mint logo at start, restart or shut-down:** Install CodeAque boot screen makes the CodeAque splash the default Plymouth theme (default.plymouth link + `plymouth-set-default-theme` + plymouthd.conf, then `update-initramfs -u`), so the same splash shows when shutting down and restarting; the login screen (LightDM's slick greeter, also shown when switching between the desktop and CodeAque-only mode) gets CodeAque's picture and no Mint logo (only when that greeter is installed; its old file is backed up). **Restore old boot screen** puts all of it back. The Dell logo in the first second comes from the computer's own firmware and cannot be changed by CodeAque.
+* **Themes are easy to find:** a **Theme** entry in the left list (also in CodeAque-only mode), and Theme is now the first line in Settings.
+* **World Games** (left list): Japan / China / Korea tabs with your games from each region (found by the region tag in the file name, like `(Japan)`, `(J)`, `(Korea)`, `(China)`) and a short list of games their makers give away for free, each with year, system, CodeAque's own description and the official Steam page: Yume Nikki (Japan); NARAKA: BLADEPOINT and Marvel Rivals (China); MapleStory, Lost Ark and Eternal Return (Korea - the first two use a kernel anti-cheat and may not run on Linux). No ROM / ISO sites, no art.
+
+- **Brightness**: Settings > Brightness and a quick slider (sun) on the home screen; brightnessctl, then /sys/class/backlight, then xrandr; one-tap **Fix brightness** (acpi_backlight=native, then vendor; backup + Undo). Untested on the Dell.
+- **Controller pill always on the home screen** ("No controller - tap to pair"), battery from kernel / UPower / BlueZ. Untested with a real pad.
+- **Xbox:** Make hard disk (installs qemu-utils if needed, blank 8 GB disk, how to format it), Flatpak BIOS paths made permanent, Find BIOS files in Downloads.
+
 ## What's new in 0.5.0
 
 * **Pair a Bluetooth controller** (Controllers page): plain steps for putting common pads into pairing mode, then **Search** (15 seconds), a list with controllers first, and one press to **pair, trust and connect** (BlueZ's `bluetoothctl`, the same as the desktop's Bluetooth settings). The administrator password is asked in CodeAque's own box only if Bluetooth is blocked or its service is stopped. Paired pads can be reconnected or forgotten.
@@ -52,7 +64,7 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 * **Xbox: "Failed to open flash file ''" fixed.** *Cause:* xemu writes its own `xemu.toml` with **empty** file paths the first time it starts, and CodeAque only wrote the paths when no `xemu.toml` existed - so the paths stayed empty. Now CodeAque checks and fills in the `[sys.files]` paths (`bootrom_path`, `flashrom_path`, `eeprom_path`, `hdd_path`) after **Add BIOS files**, again **just before every Xbox game starts**, and on demand with **Settings > Emulators > Xbox: check and repair xemu settings**. A path you chose yourself that still works is never changed; the other settings in the file are left alone; a copy of the old file is kept once (`xemu.toml.codeaque-backup`). It handles the Flatpak file (`~/.var/app/app.xemu.xemu/data/xemu/xemu/xemu.toml`), the normal/AppImage one (`~/.local/share/xemu/xemu/xemu.toml`) and a portable `xemu.toml` next to the program.
 * **BIOS names and sizes.** `Complex_4627.bin`, `Complex 4627`, `complex-4627-v1.03.BIN`, Cerbios, `MCPX v1.0.rom` ... are recognised (copied under the standard name), the sizes xemu needs are checked (boot ROM 512 bytes; BIOS 256 KB / 512 KB / 1 MB), and a single unnamed file of the right size next to the other Xbox files is offered as the BIOS (marked "unusual file - check it"). A missing boot ROM, BIOS or disk image is named in plain words - on the repair page and instead of xemu's own empty dialog when you press Play.
-* **Create empty hard-disk image (8 GB)** button (needs `qemu-img`, `sudo apt install qemu-utils`); never replaces a file; the Xbox formats the blank disk itself. Nothing is bundled.
+* **Make hard disk (8 GB)** button, always shown: installs `qemu-utils` if needed (asks for your password), makes a blank `xbox_hdd.qcow2` in xemu's folder and writes `hdd_path`. A blank disk must still be formatted (xemu's free ready-made disk, your own Xbox's disk, or XboxHDM / FATXplorer); the page explains. Temporary Flatpak `/run/user/.../doc/...` BIOS paths are copied into xemu's folder automatically. Nothing is bundled or downloaded.
 * **File viewer ("My files"):** every folder now shows **where you are** (breadcrumb), **Up**, and **All places**. The list of places has **Downloads, Games, Videos, each games folder (~/Games/Atari, ~/Games/Code, ~/Games/CodeAque) with its console folders, and the BIOS / emulator / CodeAque data folders** (xemu, RetroArch, DuckStation ... look-only: nothing there can be renamed or deleted). Links to folders (for example a games folder on another drive) were hidden before and now open; broken links stay hidden.
 * **Controllers page** (left list under **Settings**, and **Settings > Controllers**): lists the gamepads Linux found (name, USB / Bluetooth, ids), a **Test buttons** mode that shows each button and stick you press live (the pad does not move CodeAque's menus for those 20 seconds), and **Set up pad for xemu**, which writes the pad as **player 1** (an Xbox controller) into xemu's settings (`[input.bindings] port1_driver` / `port1`, and `[input] auto_bind = true`, with the old file saved once as `xemu.toml.codeaque-backup`). The page says plainly what it could not try: there is no xemu on the build computer, so the binding is not tested with a real xemu and real pads. xemu may use a newer SDL whose pad id differs slightly; that is why xemu's own automatic binding is left on.
 * **Steam games: no more stuck "loading".** A game that is **already running** is no longer asked for again (Steam ignores that, and CodeAque sat on "loading"): CodeAque brings the game's window to the front (needs `xdotool` or `wmctrl`, X11) and tracks it. While a game is running, the Now Playing screen has **Back to the game** and **Stop waiting - back to CodeAque** (Esc / B); the old "CodeAque was minimised" flag is reset on each launch; waiting for a game to start now gives up after 150 s with a plain message (Cancel is there all along).
@@ -147,7 +159,7 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 - **If the in-app updater cannot be trusted on your connection, one command does the same by hand** (resumes if it drops, checks the SHA256 against the release's own list, keeps your settings and games):
 
   ```bash
-  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.5.0.tar.gz https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.0/atari-0.5.0.tar.gz && curl -fsSL https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.0/SHA256SUMS.txt | grep ' atari-0.5.0.tar.gz$' | sha256sum -c - && tar xzf atari-0.5.0.tar.gz && cd atari-0.5.0 && ./install.sh --yes
+  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.5.1.tar.gz https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.1/atari-0.5.1.tar.gz && curl -fsSL https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.1/SHA256SUMS.txt | grep ' atari-0.5.1.tar.gz$' | sha256sum -c - && tar xzf atari-0.5.1.tar.gz && cd atari-0.5.1 && ./install.sh --yes
   ```
 
 ## What's new in 0.4.1
@@ -369,13 +381,13 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.5.0.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/codeaque/releases/latest).
+1. Download **`atari-0.5.1.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/codeaque/releases/latest).
 2. Open a **Terminal** and type:
 
    ```bash
    cd ~/Downloads
-   tar xzf atari-0.5.0.tar.gz
-   cd atari-0.5.0
+   tar xzf atari-0.5.1.tar.gz
+   cd atari-0.5.1
    ./install.sh
    ```
 

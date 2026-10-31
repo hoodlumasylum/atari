@@ -198,11 +198,57 @@ Item {
                 color: "#d6d9e6"; font.pixelSize: 14 * tb.u
             }
         }
+        Rectangle {   // quick brightness: drag (or tap) along the bar; the sun opens Settings > Brightness
+            id: brPill
+            objectName: "brightnessPill"
+            anchors.verticalCenter: parent.verticalCenter
+            height: 34 * tb.u
+            width: 170 * tb.u
+            radius: height / 2
+            color: "#40000000"
+            property int shown: backend.brightness >= 0 ? backend.brightness : 70
+            Text { id: sun; x: 10 * tb.u; anchors.verticalCenter: parent.verticalCenter; text: "\u2600"; color: "#e8c15a"; font.pixelSize: 18 * tb.u }
+            Rectangle {
+                id: brTrack
+                x: 36 * tb.u; width: parent.width - 80 * tb.u; height: 6 * tb.u; radius: 3 * tb.u
+                anchors.verticalCenter: parent.verticalCenter
+                color: "#55ffffff"
+                Rectangle { width: parent.width * brPill.shown / 100; height: parent.height; radius: parent.radius; color: "#e8c15a" }
+                Rectangle { x: parent.width * brPill.shown / 100 - width / 2; anchors.verticalCenter: parent.verticalCenter
+                            width: 14 * tb.u; height: width; radius: width / 2; color: "white" }
+            }
+            Text { anchors.right: parent.right; anchors.rightMargin: 8 * tb.u; anchors.verticalCenter: parent.verticalCenter
+                   text: brPill.shown + "%"; color: "#d6d9e6"; font.pixelSize: 13 * tb.u }
+            MouseArea {
+                anchors.fill: brTrack; anchors.margins: -12 * tb.u
+                property int pending: -1
+                function at(mx) { return Math.max(5, Math.min(100, Math.round((mx - 12 * tb.u) / brTrack.width * 100))) }
+                onPressed: function (m) { pending = at(m.x); brPill.shown = pending }
+                onPositionChanged: function (m) { pending = at(m.x); brPill.shown = pending }
+                onReleased: { if (pending >= 0) backend.setBrightness(pending); pending = -1 }
+            }
+            Connections { target: backend; function onBrightnessChanged() { brPill.shown = backend.brightness >= 0 ? backend.brightness : 70 } }
+        }
         Row {   // a small battery pill for each connected controller that reports one (or "Battery unknown" for a wireless pad)
             objectName: "padBatteries"
             anchors.verticalCenter: parent.verticalCenter
             spacing: 6 * tb.u
-            visible: backend.padBatteries.length > 0
+            Rectangle {     // always there: with no pad, a way to pair one
+                objectName: "noPadPill"
+                visible: backend.padBatteries.length === 0
+                height: 34 * tb.u
+                width: noPadRow.implicitWidth + 20 * tb.u
+                radius: height / 2
+                color: "#40000000"
+                Row {
+                    id: noPadRow
+                    anchors.centerIn: parent
+                    spacing: 6 * tb.u
+                    Icon { name: "pad"; size: 18 * tb.u; color: "#9aa0b4"; anchors.verticalCenter: parent.verticalCenter }
+                    Text { anchors.verticalCenter: parent.verticalCenter; text: "No controller - tap to pair"; color: "#c9cdda"; font.pixelSize: 14 * tb.u }
+                }
+                MouseArea { anchors.fill: parent; onClicked: backend.openControllerPill() }
+            }
             Repeater {
                 model: backend.padBatteries
                 Rectangle {
@@ -215,6 +261,7 @@ Item {
                     color: modelData.low ? "#a01822" : "#40000000"
                     border.width: modelData.low ? 2 * tb.u : 0
                     border.color: "white"
+                    MouseArea { anchors.fill: parent; onClicked: backend.openControllerPill() }
                     Row {
                         id: battRow
                         anchors.centerIn: parent

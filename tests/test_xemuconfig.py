@@ -210,7 +210,7 @@ def test_create_empty_hdd_needs_the_tool_and_never_overwrites(home):
         (d / "xbox_hdd.qcow2").write_bytes(b"QFI\xfb" + b"\0" * 200)
         return subprocess.CompletedProcess(cmd, 0, "", "")
     ok, text = xemuconfig.create_empty_hdd(home, lambda n: "/usr/bin/qemu-img" if n == "qemu-img" else None, runner)
-    assert ok and calls == [["/usr/bin/qemu-img", "create", "-f", "qcow2", str(d / "xbox_hdd.qcow2"), "8G"]] and "not formatted" in text
+    assert ok and calls == [["/usr/bin/qemu-img", "create", "-f", "qcow2", str(d / "xbox_hdd.qcow2"), "8G"]] and "disk image" in text
     ok, text = xemuconfig.create_empty_hdd(home, lambda n: "/usr/bin/qemu-img", runner)
     assert not ok and "already exists" in text and len(calls) == 1
     (d / "xbox_hdd.qcow2").unlink()
@@ -248,26 +248,44 @@ def test_repair_page_shows_exact_paths_and_repairs(app, tmp_path, monkeypatch, h
         vals = {r["title"].split(":")[0]: r["value"] for r in rows if r.get("id") == "xmrow"}
         assert set(vals.values()) == {"OK"}
         assert b.pageActivate("xemusetup", "xmbios") == "import:bios"
-        assert "xmhdd" not in [r.get("id") for r in rows]                     # the disk exists: no need for the button
+        assert [r.get("value") for r in rows if r.get("id") == "xmhdd"] == ["HAVE ONE"]   # always shown; says a disk is set
     finally:
         ui.close()
 
 
-def test_hdd_button_only_when_the_disk_is_missing_and_a_tool_exists(app, tmp_path, monkeypatch, home):
+def test_make_hard_disk_is_one_tap_and_installs_the_tool_after_a_confirm(app, tmp_path, monkeypatch, home):
+    import time
+    from atarilauncher import rootauth
     d = data_dir(home)
     put(d / "mcpx_1.0.bin", 512)
     put(d / "Complex_4627.bin", FLASH)
     ui = make_ui(app, tmp_path, monkeypatch, home)
     try:
         b = ui.backend
-        monkeypatch.setattr(xemuconfig, "hdd_tool", lambda which=None: "")
-        assert "xmhdd" not in [r.get("id") for r in b.pageRows("xemusetup")]
-        assert "qemu-utils" in " ".join(r["title"] for r in b.pageRows("xemusetup"))
-        monkeypatch.setattr(xemuconfig, "hdd_tool", lambda which=None: "/usr/bin/qemu-img")
-        assert "xmhdd" in [r.get("id") for r in b.pageRows("xemusetup")]
+        have = {"tool": ""}
+        monkeypatch.setattr(xemuconfig, "hdd_tool", lambda which=None: have["tool"])
+        assert "xmhdd" in [r.get("id") for r in b.pageRows("xemusetup")]          # always there
+        assert b.pageActivate("xemusetup", "xmhdd") == "refresh"                  # 1st tap: confirm
+        assert "CONFIRM" in [r.get("value") for r in b.pageRows("xemusetup")]
+        ran = []
+        monkeypatch.setattr(rootauth, "prepare", lambda cmd, which=None, runner=None: (cmd, None, None))
+
+        def fake_run(cmd, **kw):
+            ran.append(cmd)
+            have["tool"] = "/usr/bin/qemu-img"
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        monkeypatch.setattr(subprocess, "run", fake_run)
         monkeypatch.setattr(xemuconfig, "create_empty_hdd", lambda *a, **k: (True, "Made an empty 8G disk image"))
         assert b.pageActivate("xemusetup", "xmhdd") == "refresh"
+        for _ in range(100):
+            app.processEvents()
+            if "Made an empty" in " ".join(r["title"] for r in b.pageRows("xemusetup")):
+                break
+            time.sleep(0.05)
+        assert ran and ran[0][:4] == ["pkexec", "apt-get", "install", "-y"] and "qemu-utils" in ran[0]
         assert "Made an empty" in " ".join(r["title"] for r in b.pageRows("xemusetup"))
+        assert "XboxHDM" in " ".join(r["title"] for r in b.pageRows("xemusetup"))
+        assert b.pageActivate("xemusetup", "biosfind") == "page:biosfind"
     finally:
         ui.close()
 

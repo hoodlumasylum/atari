@@ -231,9 +231,9 @@ def test_mouse_click_rows_and_buttons_everywhere(app, tmp_path, monkeypatch):
         # a click on a settings row (Steam toggle, 2nd row) works and keeps the page open
         QMetaObject.invokeMethod(ui.win, "openSetup")
         pump(ui.app, 100)
-        before = ui.backend.setupRows()[1]["value"]
-        ui.click(w / 2, 196)           # second row = Steam on/off
-        assert ui.mode == "setup" and ui.backend.setupRows()[1]["value"] != before
+        before = ui.backend.setupRows()[2]["value"]   # row 1 is Theme (kept at the top so it is easy to find)
+        ui.click(w / 2, 262)                          # third row = Steam on/off
+        assert ui.mode == "setup" and ui.backend.setupRows()[2]["value"] != before
         # the Emulators page and its BACK button
         ui.key(Qt.Key_Escape)
         assert ui.mode == "library"

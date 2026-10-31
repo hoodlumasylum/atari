@@ -63,7 +63,9 @@ Window {
         s.push({ key: "favorites", label: "Favourites", icon: "heart" })
         s.push({ key: "recent", label: "Recent", icon: "clock" })
         s.push({ key: "__sim", label: "Sim & Tycoon", icon: "grid" })
+        s.push({ key: "__world", label: "World Games", icon: "grid" })
         s.push({ key: "__create", label: "Create", icon: "grid" })
+        s.push({ key: "__theme", label: "Theme", icon: "gear" })
         s.push({ key: "__settings", label: "Settings", icon: "gear" })
         s.push({ key: "__controllers", label: "Controllers", icon: "pad" })
         sideList = s
@@ -111,6 +113,8 @@ Window {
         else if (s.key === "__controllers") openPage("controllers")
         else if (s.key === "__sim") openPage("simtycoon")
         else if (s.key === "__create") openPage("create")
+        else if (s.key === "__world") openPage("worldgames")
+        else if (s.key === "__theme") openPage("theme")
         else if (s.key === "__more") backend.toggleShowAllSystems()
         else selectFilter(s.key, true)
     }
@@ -556,6 +560,7 @@ Window {
         else if (r.kind === "steampage") openPage("steam")
         else if (r.kind === "startmodepage") openPage("startmode")
         else if (r.kind === "controllerspage") openPage("controllers")
+        else if (r.kind === "brightnesspage") openPage("brightness")
         else if (r.kind === "screentvpage") openPage("screentv")
         else if (r.kind === "findgamespage") openPage("findgames")
         else if (r.kind === "themepage") openPage("theme")

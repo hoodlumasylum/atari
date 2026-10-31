@@ -133,3 +133,52 @@ def test_boot_and_create_pages_confirm_first(app, tmp_path, monkeypatch):
         assert b.pageActivate("create", "cruepick") == "browse:unreal"
     finally:
         ui.close()
+
+
+def test_quiet_start_keeps_the_hidden_menu_and_sets_the_splash(tmp_path):
+    assert "GRUB_TIMEOUT_STYLE" not in bootscreen.grub_defaults(quiet=True) and "quiet splash" in bootscreen.grub_defaults(quiet=True)
+    assert "GRUB_TIMEOUT_STYLE=menu" in bootscreen.grub_defaults(quiet=False)
+    root = tmp_path / "root"
+    (root / "etc/default").mkdir(parents=True)
+    (root / "etc/plymouth").mkdir(parents=True)
+    (root / "etc/plymouth/plymouthd.conf").write_text("[Daemon]\nTheme=code\nShowDelay=5\n")
+    lay = bootscreen.Layout(str(root))
+    p = run(bootscreen.install_script(lay, quiet=True), fake_tools(tmp_path, root))
+    assert p.returncode == 0 and "OK" in p.stdout, p.stderr
+    conf = (root / "etc/plymouth/plymouthd.conf").read_text()
+    assert "Theme=codeaque" in conf and "ShowDelay=0" in conf and "Theme=code\n" not in conf
+    st = bootscreen.status(lay, quiet_on=True, cmdline="BOOT_IMAGE=/vmlinuz root=UUID=x ro quiet splash")
+    assert st == {"installed": True, "splash": True, "theme": "codeaque", "quiet": True, "splash_arg": True, "quiet_arg": True}
+    line = bootscreen.status_line(st)
+    assert "installed: yes" in line and "splash active: yes" in line and "Quiet start: on" in line
+    assert "no 'splash'" in bootscreen.status_line(dict(st, splash_arg=False))
+    run(bootscreen.restore_script(lay), fake_tools(tmp_path / "b", root) if (tmp_path / "b").mkdir() is None else None)
+    assert "Theme=code\n" in (root / "etc/plymouth/plymouthd.conf").read_text()
+
+
+def test_quiet_boot_uses_the_codeaque_splash_when_installed():
+    from atarilauncher import quietboot
+    s = quietboot.enable_script(logo=bootscreen.ASSETS / "code-glow.png")
+    assert "PT=codeaque" in s and 'plymouth-set-default-theme "$PT"' in s
+
+
+def test_login_screen_branding_and_restore(tmp_path):
+    root = tmp_path / "root"
+    (root / "etc/default").mkdir(parents=True)
+    (root / "usr/share/slick-greeter").mkdir(parents=True)
+    g = root / "etc/lightdm/slick-greeter.conf"
+    g.parent.mkdir(parents=True)
+    g.write_text("[Greeter]\nbackground=/usr/share/backgrounds/linuxmint/default_background.jpg\ntheme-name=Mint-Y\n")
+    lay = bootscreen.Layout(str(root))
+    env = fake_tools(tmp_path, root)
+    p = run(bootscreen.install_script(lay), env)
+    assert p.returncode == 0 and "GREETER=yes" in p.stdout, p.stderr
+    text = g.read_text()
+    assert "greeter-background.png" in text and "logo=/usr/share/codeaque/boot/blank.png" in text and "theme-name=Mint-Y" in text
+    assert "linuxmint" not in text and (root / "usr/share/codeaque/boot/blank.png").is_file()
+    assert run(bootscreen.restore_script(lay), env).returncode == 0
+    assert "linuxmint/default_background.jpg" in g.read_text() and not (root / "usr/share/codeaque").exists()
+
+
+def test_firmware_note_is_honest():
+    assert "cannot be changed" in bootscreen.FIRMWARE_NOTE

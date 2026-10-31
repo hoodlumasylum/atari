@@ -286,7 +286,34 @@ def _valid(key: str, value: str) -> str:
         return f"cannot be read ({exc.strerror or exc})"
 
 
-def _check_one(toml: Path, found: dict[str, Found], write: bool) -> tuple[list[Row], bool, str]:
+def is_portal_path(value: str) -> bool:
+    """A Flatpak document-portal path (/run/user/1000/doc/<id>/file): what xemu's Flatpak file picker hands back. It only exists while
+    the portal keeps it (it can be gone after a restart), so CodeAque copies such files into xemu's own folder and uses that path."""
+    v = str(value or "")
+    return v.startswith("/run/user/") and "/doc/" in v
+
+
+def keep_portal_file(key: str, value: str, folder: Path) -> Path | None:
+    """Copy a portal file into folder (standard name; never over a different existing file). The new path, or None."""
+    try:
+        src = Path(value)
+        if not src.is_file():
+            return None
+        folder.mkdir(parents=True, exist_ok=True)
+        dest = folder / CANONICAL.get(key, src.name)
+        if dest.exists():
+            if dest.stat().st_size == src.stat().st_size:
+                return dest
+            dest = folder / src.name
+            if dest.exists():
+                return dest if dest.stat().st_size == src.stat().st_size else None
+        shutil.copy2(src, dest)
+        return dest
+    except OSError:
+        return None
+
+
+def _check_one(toml: Path, found: dict[str, Found], write: bool, folder: Path | None = None) -> tuple[list[Row], bool, str]:
     """Check (and with write=True fix) one xemu.toml. Returns (rows, wrote, note)."""
     try:
         text = toml.read_text(encoding="utf-8") if toml.is_file() else ""
@@ -311,6 +338,16 @@ def _check_one(toml: Path, found: dict[str, Found], write: bool) -> tuple[list[R
     new: dict[str, str] = {}
     for key in KEYS:
         value = cur.get(key, "")
+        if is_portal_path(value) and folder is not None and not _valid(key, value):
+            kept = keep_portal_file(key, value, folder) if write else None
+            if kept is not None:
+                new[key] = str(kept)
+                rows.append(Row(key, LABEL[key], str(kept), "fixed", f"was a temporary Flatpak path ({value}); copied to {kept} and set"))
+                continue
+            if not write:
+                rows.append(Row(key, LABEL[key], value, "todo", "is a temporary Flatpak path that can vanish after a restart - "
+                                "Repair copies the file into xemu's folder"))
+                continue
         why = _valid(key, value)
         if not why:
             rows.append(Row(key, LABEL[key], value, "ok", "OK (kept)"))
@@ -349,7 +386,7 @@ def check(home: Path | None = None, which: Callable = shutil.which, repair: bool
         found = find_files(home, which)
         configs = config_files(home, which)
         for toml in configs:
-            rows, wrote, note = _check_one(toml, found, repair)
+            rows, wrote, note = _check_one(toml, found, repair, data_folders(home, which)[0])
             rep.configs.append(str(toml))
             if wrote:
                 rep.written.append(str(toml))
@@ -428,8 +465,16 @@ def create_empty_hdd(home: Path | None = None, which: Callable = shutil.which, r
         except OSError:
             pass
         return False, "The disk-image tool failed: " + ((getattr(r, "stderr", "") or "").strip()[:200] or f"code {getattr(r, 'returncode', '?')}")
-    return True, (f"Made an empty {HDD_SIZE} disk image (it only uses space as games need it): {dest}. It is not formatted yet - the Xbox "
-                  "formats it itself the first time you start a game or the dashboard. Press Repair xemu settings to use it.")
+    return True, f"Made an empty {HDD_SIZE} disk image (it only uses space as games need it): {dest}."
+
+
+HDD_PAGE = "https://xemu.app/docs/required-files/"
+FORMAT_HELP = ("A new blank disk is not formatted yet, and xemu cannot format it by itself (the Xbox shows an error such as "
+               "\"Your Xbox requires service\" / error 05 or 07, or xemu stops at a black screen). Three ways, from easiest: "
+               "(1) xemu's own free ready-made 8 GB disk (no Microsoft files in it; linked on xemu's Required Files page - press "
+               "\"Open xemu's disk page\", download it yourself, then Find my BIOS files or Add BIOS files puts it in place); "
+               "(2) a copy of your own Xbox's hard disk; (3) format the blank disk with XboxHDM or FATXplorer (other people's tools, "
+               "for Windows). CodeAque never downloads it for you.")
 
 
 # ------------------------------------------------------------------ player 1 controller

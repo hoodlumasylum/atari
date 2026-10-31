@@ -258,8 +258,18 @@ class Guard:
         """CodeAque started Steam in Big Picture itself: no nudges for this Steam process."""
         self.handled = True
 
+    def silent_start(self, now: float, seconds: float = 600.0) -> None:
+        """CodeAque started Steam hidden (`steam -silent` at boot): never ask THAT Steam for Big Picture (0.5.0 did, which put Steam
+        in front of CodeAque). Kept even while the Steam process is not visible yet."""
+        self.quiet_until = now + seconds
+        self.handled = True
+
     def tick(self, running: bool, now: float) -> bool:
         """True when a nudge should be sent now."""
+        if now < getattr(self, "quiet_until", 0.0):
+            if running:
+                self.seen_at, self.handled = self.seen_at or now, True
+            return False
         if not running:
             self.seen_at, self.done, self.handled = None, 0, False
             return False
@@ -273,10 +283,38 @@ class Guard:
         return False
 
 
-def apply(cfg, home: Path | None = None, running: Callable[[], bool] | None = None, proton: bool = True) -> list[str]:
+def set_startup_normal(home: Path | None = None, running: Callable[[], bool] | None = None) -> tuple[bool, str]:
+    """Undo "Start Steam in Big Picture Mode" (StartupMode 1 -> 0): with it on, even `steam -silent` opens Big Picture full screen
+    in front of CodeAque. Used when "Start Steam at boot (hidden)" is on; the Steam tile still opens Big Picture (-gamepadui)."""
+    home = home or Path.home()
+    running = running or steam_mod.steam_running
+    path = next((p for p in registry_candidates(home) if p.is_file()), None)
+    if path is None:
+        return False, "Steam has no registry.vdf yet."
+    try:
+        data = parse(path.read_text(encoding="utf-8", errors="replace"))
+        node = data
+        for part in ("Registry", "HKCU", "Software", "Valve", "Steam"):
+            node = child(node, part)
+            if node is None:
+                return False, "Steam starts normally (not in Big Picture)."
+        k = _key(node, "StartupMode")
+        if not k or node[k] != "1":
+            return False, "Steam starts normally (not in Big Picture)."
+        if running():
+            return False, "Steam is open right now; it will start hidden from the next start."
+        node[k] = "0"
+        _write_checked(path, data)
+        return True, "Steam no longer opens Big Picture by itself at start (so it can stay hidden); the Steam tile still opens Big Picture."
+    except (OSError, VdfError) as exc:
+        return False, f"Could not change Steam's start-up setting ({exc})."
+
+
+def apply(cfg, home: Path | None = None, running: Callable[[], bool] | None = None, proton: bool = True,
+          bigpicture_start: bool = True) -> list[str]:
     """Everything that can be done before Steam starts. Returns plain sentences (also for the log)."""
     out: list[str] = []
-    ok, text = set_startup_bigpicture(home, running)
+    ok, text = (set_startup_bigpicture if bigpicture_start else set_startup_normal)(home, running)
     out.append(text)
     if proton and getattr(cfg, "steam_proton_default", True):
         ok2, text2 = set_default_proton(home, getattr(cfg, "steam_root", ""), running)

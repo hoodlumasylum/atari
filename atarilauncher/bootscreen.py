@@ -14,6 +14,7 @@ What Install does (as root, after you confirm, in CodeAque's password box):
 It never touches partitions, the disk layout or firmware settings. Not tested on a real computer's boot (only with fake tools here)."""
 from __future__ import annotations
 
+import os
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
@@ -70,11 +71,12 @@ terminal-box: "terminal_box_*.png"
 """
 
 
-def grub_defaults() -> str:
+def grub_defaults(quiet: bool = False) -> str:
+    """quiet = Quiet boot is on: its hidden menu (Shift / Esc shows it) is kept; only the theme and the splash change."""
+    menu = "" if quiet else 'GRUB_TIMEOUT_STYLE=menu\nGRUB_TIMEOUT=5\n'
     return (f'# BEGIN CodeAque boot screen (Settings > Boot). Remove with "Restore old boot screen".\n'
             'GRUB_DISTRIBUTOR="CodeAque"\n'
-            'GRUB_TIMEOUT_STYLE=menu\n'
-            'GRUB_TIMEOUT=5\n'
+            + menu +
             'GRUB_DISABLE_OS_PROBER=false\n'
             'GRUB_GFXMODE="1920x1080,1366x768,auto"\n'
             'GRUB_GFXPAYLOAD_LINUX=keep\n'
@@ -209,7 +211,7 @@ def _write(path: str, text: str, mode: str = "644") -> str:
     return f"mkdir -p {_q(str(Path(path).parent))}\nprintf %s {_q(text)} > {_q(path)}\nchmod {mode} {_q(path)}"
 
 
-def install_script(lay: Layout = Layout(), assets: Path = ASSETS, animated: bool = True) -> str:
+def install_script(lay: Layout = Layout(), assets: Path = ASSETS, animated: bool = True, quiet: bool = False) -> str:
     th, ply, bk = lay.p(GRUB_THEME_DIR), lay.p(PLY_DIR), lay.p(BACKUP_DIR)
     gd, ws, cfg, dg = lay.p(GRUB_D), lay.p(WIN_SCRIPT), lay.p(GRUB_CFG), lay.p("/etc/default/grub")
     lines = [
@@ -237,7 +239,9 @@ def install_script(lay: Layout = Layout(), assets: Path = ASSETS, animated: bool
         _write(ply + "/codeaque.script", PLYMOUTH_SCRIPT if animated else PLYMOUTH_STATIC),
         _write(ply + "/codeaque.plymouth", plymouth_theme()),
         "STEP=3",
-        _write(gd, grub_defaults()),
+        _write(gd, grub_defaults(quiet)),
+        # NVIDIA's own driver shows no splash without early mode setting
+        f"if lsmod 2>/dev/null | grep -q '^nvidia_drm'; then echo 'GRUB_CMDLINE_LINUX_DEFAULT=\"$GRUB_CMDLINE_LINUX_DEFAULT nvidia-drm.modeset=1\"' >> {_q(gd)}; fi",
         _write(ws, WIN_ENTRY, "755"),
         "STEP=4",
         "update-grub >/dev/null 2>&1",
@@ -245,18 +249,61 @@ def install_script(lay: Layout = Layout(), assets: Path = ASSETS, animated: bool
         f"grep -q {_q('theme')} {_q(cfg)} && grep -q CodeAque {_q(cfg)}",
         "STEP=6",
         "if command -v plymouth-set-default-theme >/dev/null 2>&1; then plymouth-set-default-theme codeaque >/dev/null 2>&1 || true; fi",
+        f"if command -v update-alternatives >/dev/null 2>&1 && [ -d /etc/alternatives ] && [ {_q(lay.root)} = / ]; then "
+        f"update-alternatives --install /usr/share/plymouth/themes/default.plymouth default.plymouth {PLY_DIR}/codeaque.plymouth 310 >/dev/null 2>&1 || true; "
+        f"update-alternatives --set default.plymouth {PLY_DIR}/codeaque.plymouth >/dev/null 2>&1 || true; fi",
+        # show the splash at once (a fast SSD otherwise reaches CodeAque before the default delay ends)
+        f"PC={_q(lay.p('/etc/plymouth/plymouthd.conf'))}; mkdir -p \"$(dirname \"$PC\")\"; "
+        f"[ -f {_q(bk + '/plymouthd.conf')} ] || {{ [ -f \"$PC\" ] && cp -a \"$PC\" {_q(bk + '/plymouthd.conf')}; }} || true; "
+        "grep -q '^\\[Daemon\\]' \"$PC\" 2>/dev/null || printf '[Daemon]\\n' >> \"$PC\"; "
+        "sed -i '/^Theme=/d;/^ShowDelay=/d;/^DeviceTimeout=/d' \"$PC\"; "
+        "sed -i 's/^\\[Daemon\\]$/[Daemon]\\nTheme=codeaque\\nShowDelay=0\\nDeviceTimeout=8/' \"$PC\"",
         "if command -v update-initramfs >/dev/null 2>&1; then update-initramfs -u >/dev/null 2>&1; fi",
+        f"INITRD={_q(lay.p('/boot/initrd.img-'))}$(uname -r)",
+        "if [ -f \"$INITRD\" ] && command -v lsinitramfs >/dev/null 2>&1; then "
+        "if lsinitramfs \"$INITRD\" | grep -q 'plymouth/themes/codeaque/codeaque.plymouth'; then echo SPLASH=yes; else echo SPLASH=no; fi; fi",
+        "STEP=7",
+        greeter_script(lay, assets),
         f"grep -q 'menuentry .Windows' {_q(cfg)} && echo 'WINDOWS=yes' || echo 'WINDOWS=no'",
         "echo OK",
     ]
     return "\n".join(lines) + "\n"
 
 
+SHARE = "/usr/share/codeaque/boot"
+GREETER = "/etc/lightdm/slick-greeter.conf"
+
+
+def greeter_script(lay: Layout = Layout(), assets: Path = ASSETS) -> str:
+    """The login screen (LightDM's slick greeter, Mint's default): CodeAque's art as the background and no distro logo. Only when the
+    slick greeter is installed; the old file is backed up first (or noted as missing, so Restore deletes ours)."""
+    sh, g, bk = lay.p(SHARE), lay.p(GREETER), lay.p(BACKUP_DIR)
+    return (f"if [ -d {_q(lay.p('/usr/share/slick-greeter'))} ] || command -v slick-greeter >/dev/null 2>&1 || [ -f {_q(g)} ]; then "
+            f"mkdir -p {_q(sh)} {_q(str(Path(g).parent))}; "
+            f"cp {_q(str(assets / 'background-1920x1080.png'))} {_q(sh + '/greeter-background.png')}; "
+            f"cp {_q(str(assets / 'blank.png'))} {_q(sh + '/blank.png')}; "
+            f"if [ ! -e {_q(bk + '/greeter.saved')} ]; then if [ -f {_q(g)} ]; then cp -a {_q(g)} {_q(bk + '/slick-greeter.conf')}; fi; "
+            f"touch {_q(bk + '/greeter.saved')}; fi; "
+            f"[ -f {_q(g)} ] || printf '[Greeter]\\n' > {_q(g)}; "
+            f"grep -q '^\\[Greeter\\]' {_q(g)} || printf '[Greeter]\\n' >> {_q(g)}; "
+            f"sed -i '/^background=/d;/^logo=/d;/^other-monitors-logo=/d;/^draw-grid=/d;/^background-color=/d' {_q(g)}; "
+            # slick-greeter.conf has one [Greeter] section: our keys go at its end
+            f"printf '%s\\n' 'background={SHARE}/greeter-background.png' 'background-color=#050807' 'logo={SHARE}/blank.png' "
+            f"'other-monitors-logo={SHARE}/blank.png' 'draw-grid=false' >> {_q(g)}; "
+            "echo GREETER=yes; else echo GREETER=no; fi")
+
+
 def restore_body(lay: Layout = Layout()) -> str:
     th, ply, bk = lay.p(GRUB_THEME_DIR), lay.p(PLY_DIR), lay.p(BACKUP_DIR)
-    return (f"rm -f {_q(lay.p(GRUB_D))} {_q(lay.p(WIN_SCRIPT))}; rm -rf {_q(th)} {_q(ply)}; "
+    g = lay.p(GREETER)
+    return (f"if [ -e {_q(bk + '/greeter.saved')} ]; then if [ -f {_q(bk + '/slick-greeter.conf')} ]; then "
+            f"cp -a {_q(bk + '/slick-greeter.conf')} {_q(g)}; else rm -f {_q(g)}; fi; rm -f {_q(bk + '/greeter.saved')}; fi; "
+            f"rm -rf {_q(lay.p(SHARE))}; rmdir {_q(str(Path(lay.p(SHARE)).parent))} 2>/dev/null || true; "
+            f"rm -f {_q(lay.p(GRUB_D))} {_q(lay.p(WIN_SCRIPT))}; rm -rf {_q(th)} {_q(ply)}; "
             f"if [ -f {_q(bk + '/grub')} ]; then cp -a {_q(bk + '/grub')} {_q(lay.p('/etc/default/grub'))}; fi; "
             f"if [ -d {_q(bk + '/theme')} ]; then cp -a {_q(bk + '/theme')} {_q(th)}; fi; "
+            f"if [ -f {_q(bk + '/plymouthd.conf')} ]; then cp -a {_q(bk + '/plymouthd.conf')} {_q(lay.p('/etc/plymouth/plymouthd.conf'))}; fi; "
+            f"update-alternatives --remove default.plymouth {PLY_DIR}/codeaque.plymouth >/dev/null 2>&1 || true; "
             f"if [ -s {_q(bk + '/plymouth')} ] && command -v plymouth-set-default-theme >/dev/null 2>&1; then "
             f"plymouth-set-default-theme \"$(cat {_q(bk + '/plymouth')})\" >/dev/null 2>&1 || true; fi; "
             "update-grub >/dev/null 2>&1 || true; command -v update-initramfs >/dev/null 2>&1 && update-initramfs -u >/dev/null 2>&1 || true")
@@ -285,3 +332,43 @@ def read_back(lay: Layout = Layout()) -> list[str]:
     m = re.search(r"set timeout=(\d+)", text)
     out.append("Countdown: " + (m.group(1) + " s" if m else "unknown"))
     return out
+
+
+def status(lay: Layout = Layout(), quiet_on: bool | None = None, cmdline: str | None = None) -> dict:
+    """What the Boot screen page shows on its status line: installed, splash active, quiet start, and this start's kernel options."""
+    try:
+        conf = Path(lay.p("/etc/plymouth/plymouthd.conf")).read_text(errors="replace")
+    except OSError:
+        conf = ""
+    import re
+    m = re.search(r"^Theme=(\S+)", conf, re.M)
+    theme = m.group(1) if m else ""
+    if not theme:
+        try:
+            theme = Path(os.path.realpath(lay.p("/etc/alternatives/default.plymouth"))).stem
+        except OSError:
+            theme = ""
+    if cmdline is None:
+        try:
+            cmdline = Path("/proc/cmdline").read_text()
+        except OSError:
+            cmdline = ""
+    if quiet_on is None:
+        from . import quietboot
+        quiet_on = quietboot.enabled()
+    return {"installed": installed(lay), "splash": theme == "codeaque" and Path(lay.p(PLY_DIR + "/codeaque.plymouth")).is_file(),
+            "theme": theme or "unknown", "quiet": bool(quiet_on), "splash_arg": "splash" in cmdline.split(),
+            "quiet_arg": "quiet" in cmdline.split()}
+
+
+def status_line(st: dict) -> str:
+    yn = lambda b: "yes" if b else "no"      # noqa: E731
+    line = (f"Boot screen installed: {yn(st['installed'])}  |  CodeAque splash active: {yn(st['splash'])}"
+            f" (Plymouth theme: {st['theme']})  |  Quiet start: {'on' if st['quiet'] else 'off'}")
+    if not st["splash_arg"]:
+        line += "\nThis start had no 'splash' in its kernel options, so no splash could show - Install (or Quiet boot) adds it."
+    return line
+
+
+FIRMWARE_NOTE = ("The Dell logo at the very first second comes from the computer's own firmware (BIOS) and cannot be changed by CodeAque. "
+                 "After it, the CodeAque splash replaces the Linux Mint logo at start, restart and shut-down.")

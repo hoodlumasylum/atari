@@ -90,7 +90,7 @@ def test_setup_flow_saves_config_and_scans(tmp_path, monkeypatch):
     b = be.Backend(cfg=cfg, store=Store(tmp_path / "s.json"), enable_gamepad=False)
     assert b.firstRun and b.emptyMessage().startswith("No games yet")
     rows = b.setupRows()
-    assert rows[0]["kind"] == "done" and rows[1]["kind"] == "steam" and rows[-1]["kind"] == "done"
+    assert rows[0]["kind"] == "done" and rows[1]["kind"] == "themepage" and rows[2]["kind"] == "steam" and rows[-1]["kind"] == "done"
     assert any(r.get("id") == "snes" for r in rows)
     # folder browser data
     listing = b.listDir(str(tmp_path / "ROMs"))

@@ -317,7 +317,7 @@ def test_real_battery_read_runs_in_the_background(app, tmp_path, monkeypatch):
     s = make_sys(tmp_path, cap="70")
     monkeypatch.setattr(pads, "detect", lambda path=None: [pad()])
     orig = padbattery.for_pads
-    monkeypatch.setattr(padbattery, "for_pads", lambda found, sys_root="/sys", upower=None: orig(found, s, upower))
+    monkeypatch.setattr(padbattery, "for_pads", lambda found, sys_root="/sys", upower=None, bluez=None: orig(found, s, upower, bluez))
     monkeypatch.setattr(padbattery, "upower_batteries", lambda *a, **k: {})
     ui = make_ui(app, tmp_path, monkeypatch, tmp_path / "home")
     try:
@@ -364,3 +364,45 @@ def test_screen_to_tv_without_x11_explains(app, tmp_path, monkeypatch):
         assert "needs an X11 session" in t and "tvonly" not in [r.get("id") for r in ui.backend.pageRows("screentv")]
     finally:
         ui.close()
+
+
+def inside_window(win, it):
+    p = it.mapToScene(it.boundingRect().topLeft()) if hasattr(it, "mapToScene") else None
+    from PySide6.QtCore import QPointF
+    p = it.mapToItem(win.contentItem(), QPointF(0, 0))
+    return 0 <= p.x() and p.x() + it.width() <= win.width() + 1 and 0 <= p.y() <= win.height()
+
+
+def test_no_pad_pill_shows_on_home_and_opens_pairing(app, tmp_path, monkeypatch):
+    ui = make_ui(app, tmp_path, monkeypatch, tmp_path / "home")
+    try:
+        b = ui.backend
+        b.set_pad_batteries([])
+        pump(app, 150)
+        pill = items(ui.win, "noPadPill")
+        assert len(pill) == 1 and inside_window(ui.win, pill[0])
+        asked = []
+        b.pageRequested.connect(asked.append)
+        b.openControllerPill()
+        assert asked == ["btpair"]
+        b.set_pad_batteries([{"name": "Pad", "text": "80%", "low": False, "charging": False, "percent": 80, "known": True}])
+        pump(app, 150)
+        assert not items(ui.win, "noPadPill") and all(inside_window(ui.win, p) for p in items(ui.win, "padBattery"))
+        b.openControllerPill()
+        assert asked[-1] == "controllers"
+        assert all(inside_window(ui.win, p) for p in items(ui.win, "brightnessPill"))
+    finally:
+        ui.close()
+
+
+def test_bluez_battery_used_when_kernel_and_upower_say_nothing(tmp_path):
+    (tmp_path / "class" / "power_supply").mkdir(parents=True)
+    bt = pads.Pad("Xbox Wireless Controller", 5, 0x045E, 0x0B13, 0x0500, "js0", "event6")
+    rows = padbattery.for_pads([bt], str(tmp_path), upower={}, bluez={"Xbox Wireless Controller": 64})
+    assert rows[0]["text"].endswith("64%") and rows[0]["known"]
+    # fuzzy name match with UPower
+    rows = padbattery.for_pads([bt], str(tmp_path), upower={"Microsoft Xbox Wireless Controller": (30, "discharging")})
+    assert "30%" in rows[0]["text"]
+    # a BlueZ-connected pad the kernel list missed still gets a pill
+    rows = padbattery.for_pads([], str(tmp_path), bluez={"DualSense Wireless Controller": 12})
+    assert rows and rows[0]["low"] and rows[0]["name"].startswith("DualSense")

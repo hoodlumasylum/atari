@@ -76,6 +76,9 @@ BY_ID[SUPPORT.id] = SUPPORT
 UNREAL = WebApp("unrealpage", "Unreal Engine for Linux (Epic's page)", "https://www.unrealengine.com/en-US/linux", browse=True,
                 note="Epic's official download page. Sign in there with your own free Epic account.")
 BY_ID[UNREAL.id] = UNREAL
+XEMU_HDD = WebApp("xemuhdd", "xemu: Required Files (free ready-made hard disk)", "https://xemu.app/docs/required-files/", browse=True,
+                  note="xemu's own page. Its ready-made 8 GB disk has no Microsoft files in it; download it there yourself.")
+BY_ID[XEMU_HDD.id] = XEMU_HDD
 
 
 @dataclass(frozen=True)
