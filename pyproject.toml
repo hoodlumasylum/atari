@@ -1,6 +1,6 @@
 [project]
 name = "atari-launcher"
-version = "0.5.7"
+version = "0.5.8"
 description = "Console-style game launcher for Linux (Steam + retro ROMs). Personal project; unaffiliated with any trademark owner."
 requires-python = ">=3.9"
 license = { text = "MIT" }

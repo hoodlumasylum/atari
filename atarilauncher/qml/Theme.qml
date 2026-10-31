@@ -50,8 +50,40 @@ QtObject {
         "cube": "<path d='M12 2.5l8.5 4.8v9.4L12 21.5l-8.5-4.8V7.3z' /><path d='M12 12L3.5 7.3M12 12l8.5-4.7M12 12v9.5' />",
         "monitor": "<rect x='2.5' y='4' width='19' height='12.5' rx='2' /><path d='M8 20.5h8M12 16.5v4' /><path fill='@C' d='M10.2 7.5v5.5l4.6-2.75z' />",
         "bars": "<path d='M6.5 21 9.2 3M12 21V3M17.5 21 14.8 3' stroke-width='3' />",
-        "back": "<path d='M15 5l-7 7 7 7' />"
+        "back": "<path d='M15 5l-7 7 7 7' />",
+        "music": "<path d='M9 18V5.5l11-2.5v12.5' /><circle cx='6.5' cy='18' r='2.6' /><circle cx='17.5' cy='15.5' r='2.6' />",
+        "chat": "<path d='M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-4.5 3.5V17.5H4A1.5 1.5 0 0 1 2.5 16V7A1.5 1.5 0 0 1 4 5.5z' /><circle cx='8' cy='11.5' r='1' fill='@C' /><circle cx='12' cy='11.5' r='1' fill='@C' /><circle cx='16' cy='11.5' r='1' fill='@C' />",
+        "globe": "<circle cx='12' cy='12' r='9' /><path d='M3 12h18M12 3c2.6 2.5 3.8 5.5 3.8 9s-1.2 6.5-3.8 9c-2.6-2.5-3.8-5.5-3.8-9S9.4 5.5 12 3z' />",
+        "live": "<circle cx='12' cy='12' r='2.6' fill='@C' /><path d='M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4M4.9 4.9a10 10 0 0 0 0 14.2M19.1 4.9a10 10 0 0 1 0 14.2' />",
+        "mic": "<rect x='9' y='2.5' width='6' height='11' rx='3' /><path d='M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7' />",
+        "app": "<rect x='3' y='4' width='18' height='16' rx='2.5' /><path d='M3 8.5h18' /><circle cx='6' cy='6.3' r='.7' fill='@C' /><circle cx='8.4' cy='6.3' r='.7' fill='@C' /><path d='M8 13h8M8 16.5h5' />"
     })
+
+    // An original picture for an app tile (no company logos): what kind of thing it is.
+    function glyphFor(gid) {
+        var kind = gid.split(":")[0], id = gid.substring(kind.length + 1)
+        if (kind === "web") {
+            if (/live$/.test(id)) return "live"
+            if (id === "spotify") return "music"
+            if (id === "bandlab") return "mic"
+            if (id === "instagram" || id === "facebook" || id === "tiktok") return "chat"
+            if (id === "browser" || id === "support" || id === "unrealpage" || id === "xemuhdd") return "globe"
+            return "monitor"
+        }
+        if (kind === "app") {
+            if (/steam|heroic|lutris|bottles|umu|wine|proton|roblox|sober/.test(id)) return "pad"
+            if (/obs|record/.test(id)) return "live"
+            if (/chrome|firefox|browser/.test(id)) return "globe"
+            if (/kodi|vlc|mpv|plex|jellyfin/.test(id)) return "monitor"
+            if (/audac|lmms|ardour|music|spot/.test(id)) return "music"
+            if (/discord|chat/.test(id)) return "chat"
+            return "app"
+        }
+        return ""
+    }
+    readonly property color gold: "#e8c25a"
+    readonly property color emerald: "#0f6b4f"
+    readonly property color emeraldDark: "#062a1f"
 
     function svg(name, color, stroke) {
         var body = icons[name] !== undefined ? icons[name] : icons["pad"]

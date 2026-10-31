@@ -152,7 +152,7 @@ def test_library_uses_cached_icons_and_marks_them_to_fit(tmp_path, monkeypatch):
     cfg.steam_enabled = False
     res = library.build_library(cfg, home=tmp_path, metadata={})
     by = {g.gid: g for g in res.games}
-    assert by["web:youtube"].cover == str(root / "web_youtube.png") and by["web:youtube"].fit
+    assert by["web:youtube"].cover == ""          # 0.5.8: no website logos on tiles - CodeAque's own vector picture instead
     assert by["free:cs2"].cover == str(root / "free_cs2.jpg") and not by["free:cs2"].fit      # real Steam art fills the tile
     assert by["web:netflix"].cover == "" and not by["web:netflix"].fit                         # offline / not fetched: coloured initials
     assert by["studio:open"].cover == ""
@@ -163,7 +163,7 @@ def test_cover_qml_draws_initials_when_there_is_no_icon():
     assert "monogram" in qml and "Image.Ready" in qml and "cv.fit" in qml
 
 
-def test_backend_downloads_icons_in_the_background_and_updates_the_tile(fake, tmp_path, monkeypatch):
+def test_backend_never_puts_app_logos_on_tiles(fake, tmp_path, monkeypatch):
     pytest.importorskip("PySide6")
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtCore import QCoreApplication
@@ -185,7 +185,15 @@ def test_backend_downloads_icons_in_the_background_and_updates_the_tile(fake, tm
     b.startIcons()
     game = next(g for g in b._all if g.gid == "app:heroic")
     end = time.time() + 15
-    while time.time() < end and not game.cover:
+    b._on_icon_arrived("app:heroic", str(tmp_path / "x.png"), True)
+    end = time.time() + 1
+    while time.time() < end:
         app.processEvents()
         time.sleep(0.05)
-    assert game.cover == str(tmp_path / "ic" / "app_heroic.png") and game.fit
+    assert game.cover == ""
+
+
+def test_tiles_use_original_vector_pictures_drawn_at_screen_density():
+    q = Path(__file__).resolve().parent.parent / "atarilauncher" / "qml"
+    theme, icon, cover = (q / "Theme.qml").read_text(), (q / "Icon.qml").read_text(), (q / "Cover.qml").read_text()
+    assert "function glyphFor" in theme and "devicePixelRatio" in icon and "devicePixelRatio" in cover and "Math.max(512" in cover

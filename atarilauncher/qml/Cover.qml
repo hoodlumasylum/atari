@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Window
 
 // Game art: the picture if there is one, otherwise a clean generated tile (gradient + monogram).
 Item {
@@ -11,6 +12,7 @@ Item {
     property real radius: 8
     property bool fit: false       // true = show the whole picture (letterboxed) instead of cropping
     property alias status: img.status
+    property string glyph: ""      // an app tile: an original vector picture + its name instead of a downloaded logo
     readonly property string monogram: {
         var words = title.replace(/[^A-Za-z0-9 ]/g, " ").trim().split(/\s+/).filter(function (w) { return w.length > 0 })
         if (words.length === 0) return "?"
@@ -23,8 +25,38 @@ Item {
         visible: img.status !== Image.Ready || cv.fit
         clip: true
         gradient: Gradient {
-            GradientStop { position: 0.0; color: Qt.hsla(cv.hue, 0.55, 0.34, 1) }
-            GradientStop { position: 1.0; color: Qt.hsla((cv.hue + 0.08) % 1, 0.6, 0.11, 1) }
+            GradientStop { position: 0.0; color: cv.glyph !== "" ? Theme.emerald : Qt.hsla(cv.hue, 0.55, 0.34, 1) }
+            GradientStop { position: 1.0; color: cv.glyph !== "" ? Theme.emeraldDark : Qt.hsla((cv.hue + 0.08) % 1, 0.6, 0.11, 1) }
+        }
+        Rectangle {   // thin gold frame on app tiles
+            visible: cv.glyph !== ""
+            anchors.fill: parent; anchors.margins: 4 * cv.u
+            radius: Math.max(0, cv.radius - 3 * cv.u)
+            color: "transparent"; border.color: "#99e8c25a"; border.width: 1.5 * cv.u
+        }
+        Icon {
+            objectName: "tileGlyph"
+            visible: cv.glyph !== "" && img.status !== Image.Ready
+            name: cv.glyph
+            color: Theme.gold
+            stroke: 1.6
+            size: Math.min(cv.width * 0.42, cv.height * 0.5)
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.verticalCenterOffset: -cv.height * 0.09
+        }
+        Text {
+            visible: cv.glyph !== "" && img.status !== Image.Ready
+            anchors.top: parent.verticalCenter
+            anchors.topMargin: cv.height * 0.2
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: parent.width - 14 * cv.u
+            horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideRight
+            text: cv.title
+            color: Theme.gold
+            font.pixelSize: Math.max(11, Math.min(cv.width * 0.12, cv.height * 0.13))
+            font.bold: true
         }
         Rectangle {  // soft highlight band
             width: parent.width * 1.4
@@ -35,7 +67,7 @@ Item {
             color: "#14ffffff"
         }
         Text {
-            visible: img.status !== Image.Ready
+            visible: img.status !== Image.Ready && cv.glyph === ""
             anchors.centerIn: parent
             anchors.verticalCenterOffset: -cv.height * 0.04
             text: cv.monogram
@@ -46,7 +78,7 @@ Item {
             font.letterSpacing: 2 * cv.u
         }
         Text {
-            visible: img.status !== Image.Ready && cv.label !== ""
+            visible: img.status !== Image.Ready && cv.label !== "" && cv.glyph === ""
             anchors.bottom: parent.bottom
             anchors.bottomMargin: cv.height * 0.07
             anchors.horizontalCenter: parent.horizontalCenter
@@ -67,8 +99,11 @@ Item {
         asynchronous: true
         cache: true
         fillMode: cv.fit ? Image.PreserveAspectFit : Image.PreserveAspectCrop
-        sourceSize.width: 520
-        sourceSize.height: 520
+        // decoded at the tile's real size on this screen (at least 512 px) - a picture is never decoded small and stretched
+        sourceSize.width: Math.max(512, Math.ceil(cv.width * Math.max(1, Screen.devicePixelRatio) * 1.25))
+        sourceSize.height: Math.max(512, Math.ceil(cv.height * Math.max(1, Screen.devicePixelRatio) * 1.25))
+        smooth: true
+        mipmap: true
         visible: status === Image.Ready
     }
 }

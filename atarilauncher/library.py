@@ -245,7 +245,9 @@ def build_library(cfg: Config, home: Path | None = None, covers_root: Path | Non
 def apply_icons(games: list, home: Path | None = None, icons_root: Path | None = None) -> None:
     """Give app tiles (web apps, PC apps, free games) their icon: the installed app's own, else the downloaded copy."""
     for g in games:
-        if g.cover or g.rom_path or g.gid.partition(":")[0] not in ("web", "app", "free"):
+        # 0.5.8: web apps and PC apps get CodeAque's own vector picture (no company logos, never a blurry favicon);
+        # free games keep their game art
+        if g.cover or g.rom_path or g.gid.partition(":")[0] != "free":
             continue
         spec = icons.spec_for(g.gid)
         if spec is None:

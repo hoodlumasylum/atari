@@ -5532,7 +5532,7 @@ class Backend(QObject):
         if not self._covers_allowed() or self._icon_busy:
             return
         specs = [s for s in (icons.spec_for(g.gid) for g in self._all
-                             if g.gid.partition(":")[0] in ("web", "app", "free") and not g.rom_path) if s is not None]
+                             if g.gid.partition(":")[0] == "free" and not g.rom_path) if s is not None]
         if not specs:
             return
         self._icon_busy = True
@@ -5558,6 +5558,8 @@ class Backend(QObject):
 
     @Slot(str, str, bool)
     def _on_icon_arrived(self, gid: str, path: str, fit: bool) -> None:
+        if gid.partition(":")[0] in ("web", "app"):
+            return                               # app tiles use CodeAque's own vector pictures
         for g in self._all:
             if g.gid == gid and (not g.cover or g.cover != path):
                 if g.cover and not g.fit and gid.partition(":")[0] != "free":

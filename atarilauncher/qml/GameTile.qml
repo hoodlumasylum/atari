@@ -62,6 +62,7 @@ Item {
             title: tile.title
             label: tile.platformName
             hue: tile.hue
+            glyph: Theme.glyphFor(tile.gid)
         }
         Rectangle {  // frame
             anchors.fill: parent

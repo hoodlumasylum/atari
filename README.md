@@ -31,6 +31,18 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
+## What's new in 0.5.8
+
+**Updating:** in-app update (Settings) as usual.
+
+* **Streaming and app tiles are sharp now.** The Netflix tile (and YouTube, Disney+, Spotify, Instagram, Steam and the other app tiles) used each website's small downloaded icon, stretched up to the tile's size, so it looked blurry. They now use CodeAque's own drawn (vector) pictures in gold on emerald, with the name underneath, for example a screen with a play button and "Netflix". They stay sharp at any screen size.
+* **No company logos:** these tiles no longer download or show any website's or app's logo. Game art (game covers, free games) is unchanged.
+* **All small icons** (top bar, system tiles, menus) are now drawn at your screen's real pixel density with extra head-room, so they stay crisp when the screen is scaled up or a tile grows when selected.
+* **Game covers** are now loaded at the tile's real size on your screen (at least 512 px) instead of a fixed size.
+
+### Not tested
+- Not looked at on the Dell itself. Checked in screenshots here at normal and double (2x) scaling.
+
 ## What's new in 0.5.7
 
 **Updating:** in-app update (Settings) as usual. About 15 seconds after it starts, CodeAque asks for your password once to update its Bluetooth helper.
@@ -335,7 +347,7 @@ Plan for a future CodeAque Live USB: [docs/live-usb-plan.md](docs/live-usb-plan.
 - **If the in-app updater cannot be trusted on your connection, one command does the same by hand** (resumes if it drops, checks the SHA256 against the release's own list, keeps your settings and games):
 
   ```bash
-  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.5.7.tar.gz https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.7/atari-0.5.7.tar.gz && curl -fsSL https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.7/SHA256SUMS.txt | grep ' atari-0.5.7.tar.gz$' | sha256sum -c - && tar xzf atari-0.5.7.tar.gz && cd atari-0.5.7 && ./install.sh --yes
+  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.5.8.tar.gz https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.8/atari-0.5.8.tar.gz && curl -fsSL https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.8/SHA256SUMS.txt | grep ' atari-0.5.8.tar.gz$' | sha256sum -c - && tar xzf atari-0.5.8.tar.gz && cd atari-0.5.8 && ./install.sh --yes
   ```
 
 ## What's new in 0.4.1
@@ -557,13 +569,13 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.5.7.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/codeaque/releases/latest).
+1. Download **`atari-0.5.8.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/codeaque/releases/latest).
 2. Open a **Terminal** and type:
 
    ```bash
    cd ~/Downloads
-   tar xzf atari-0.5.7.tar.gz
-   cd atari-0.5.7
+   tar xzf atari-0.5.8.tar.gz
+   cd atari-0.5.8
    ./install.sh
    ```
 

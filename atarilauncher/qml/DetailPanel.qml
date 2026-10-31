@@ -28,6 +28,7 @@ Rectangle {
         radius: 10 * dp.u
         source: dp.has ? dp.game.art : ""
         title: dp.has ? dp.game.title : ""
+        glyph: dp.has ? Theme.glyphFor(dp.game.gid) : ""
         label: dp.has ? dp.game.platformName : ""
         hue: dp.has ? dp.game.hue : 0.6
         fit: dp.has && dp.game.art !== "" && !dp.game.wideArt
