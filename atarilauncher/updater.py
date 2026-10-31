@@ -28,8 +28,10 @@ from typing import Callable
 
 from . import __version__
 
-REPO = "hoodlumasylum/atari"
+REPO = "hoodlumasylum/codeaque"
+OLD_REPO = "hoodlumasylum/atari"         # the name before 0.5.0: GitHub forwards it to the new name; kept as a fallback
 API_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
+API_URLS = (API_URL, f"https://api.github.com/repos/{OLD_REPO}/releases/latest")
 USER_AGENT = f"Code-Launcher/{__version__} (+https://github.com/{REPO}; update check)"
 CHECK_EVERY = 24 * 3600
 MAX_DOWNLOAD = 600 * 1024 * 1024
@@ -124,14 +126,22 @@ def _net_error(exc: Exception) -> UpdateError:
 
 def fetch_latest(api_url: str | None = None, timeout: float = 10.0) -> Release | None:
     """The latest published release, or None when it has no installable package."""
-    url = api_url or os.environ.get("ATARI_UPDATE_API") or API_URL
-    try:
-        with _open(url, timeout, "application/vnd.github+json") as resp:
-            data = json.loads(resp.read(2_000_000).decode("utf-8", "replace"))
-    except (urllib.error.URLError, OSError, TimeoutError) as exc:
-        raise _net_error(exc)
-    except ValueError:
-        raise UpdateError("The update server sent something unexpected. Try again later.")
+    given = api_url or os.environ.get("ATARI_UPDATE_API")
+    urls = [given] if given else list(API_URLS)
+    data, last = None, None
+    for url in urls:                      # the new repository name first, the old one (GitHub forwards it) if that fails
+        try:
+            with _open(url, timeout, "application/vnd.github+json") as resp:
+                data = json.loads(resp.read(2_000_000).decode("utf-8", "replace"))
+            break
+        except (urllib.error.URLError, OSError, TimeoutError) as exc:
+            last = exc
+        except ValueError:
+            last = ValueError()
+    if data is None:
+        if isinstance(last, ValueError):
+            raise UpdateError("The update server sent something unexpected. Try again later.")
+        raise _net_error(last if last is not None else OSError())
     if not isinstance(data, dict) or data.get("draft") or data.get("prerelease"):
         return None
     version = str(data.get("tag_name") or "").lstrip("vV")

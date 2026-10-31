@@ -25,12 +25,16 @@ from typing import Callable
 from . import emulators, paths, steam
 
 PLATFORM = "windows"
-PLATFORM_NAME = "Windows / PC"
+PLATFORM_NAME = "PC Games"
+INSTALLER_NAME = "PC Games Installer"
 ARCHIVE_EXT = (".zip", ".7z", ".rar", ".tar.gz", ".tgz", ".tar.xz", ".tar.bz2")
 IMAGE_EXT = (".png", ".jpg", ".jpeg", ".webp")
 PROTONUP_ID = "net.davidotek.pupgui2"          # ProtonUp-Qt on Flathub
-UMU_HINT = ("Windows games need a helper program. Easiest: Settings > Emulators > Install emulators and apps "
-            "(it installs umu-launcher, Wine and ProtonUp-Qt for you).")
+UMU_HINT = ("PC games need CodeAque's PC game support, which is not installed yet. Press \"Install PC game support\" "
+            "(Settings > Emulators, or the PC Games Installer page).")
+ANTICHEAT_NOTE = ("Games with an online anti-cheat (many shooters and competitive online games) may not start on Linux at all - "
+                  "that is the game maker's choice, not something CodeAque can fix.")
+SUPPORT_SPECS = ["umu"]              # installed only when you press Install (umu-launcher downloads Proton the first time a game starts)
 
 
 class WinError(Exception):
@@ -99,13 +103,19 @@ def _save(games: list[WinGame]) -> None:
     tmp.replace(f)
 
 
-def add_game(name: str, exe: str, cover: str = "") -> WinGame:
-    games = load_games()
+def next_id(name: str) -> str:
+    """The id (and so the private game folder, its "prefix") the next game with this name gets."""
     base = slugify(name)
-    ids = {g.id for g in games}
+    ids = {g.id for g in load_games()}
     gid, n = base, 2
     while gid in ids:
         gid, n = f"{base}-{n}", n + 1
+    return gid
+
+
+def add_game(name: str, exe: str, cover: str = "", gid: str = "") -> WinGame:
+    games = load_games()
+    gid = gid if gid and gid not in {g.id for g in games} else next_id(name)
     if cover:  # copy the picture next to CodeAque's own covers so it survives the original being moved
         try:
             dest = paths.user_covers_dir() / "windows" / (gid + Path(cover).suffix.lower())
@@ -351,3 +361,57 @@ def build_launch(cfg, game: WinGame, home: Path | None = None, which=shutil.whic
             cmd = r.cmd + [str(exe)]
         env = {"WINEPREFIX": str(prefix), "STEAM_COMPAT_DATA_PATH": str(prefix)}
     return cmd, env, exe.parent, r.label
+
+
+# ------------------------------------------------------------------ PC Games Installer (setup.exe)
+def is_installer(path: str | Path) -> bool:
+    return bool(_INSTALLER.search(Path(path).name))
+
+
+def prefix_for(gid: str, prefix_root: Path | None = None) -> Path:
+    return (prefix_root or prefixes_dir()) / slugify(gid)
+
+
+def _drive_c(prefix: Path) -> Path:
+    return prefix / "pfx" / "drive_c" if (prefix / "pfx").is_dir() else prefix / "drive_c"
+
+
+def installed_exes(prefix: Path) -> list[ExeCandidate]:
+    """Programs inside a game's private Windows folder, best guess first (Windows' own folders left out)."""
+    c = _drive_c(prefix)
+    out: list[ExeCandidate] = []
+    for sub in ("Program Files", "Program Files (x86)", "GOG Games", "Games", "users"):
+        d = c / sub
+        if d.is_dir():
+            for cand in find_exes(d, max_depth=5):
+                if not _INSTALLER.search(cand.path.name):
+                    out.append(cand)
+    return sorted(out, key=lambda x: -x.score)
+
+
+def run_installer(cfg, setup: Path, name: str, home: Path | None = None, which=shutil.which, prefix_root: Path | None = None,
+                  runner: Callable | None = None, timeout: float = 6 * 3600) -> tuple[WinGame | None, str]:
+    """Run a game's setup.exe in the new game's own private Windows folder, wait until it closes, then add the game it installed.
+    -> (the game added, or None; plain text)."""
+    setup = Path(setup)
+    if not setup.is_file():
+        return None, "The installer file is missing."
+    gid = next_id(name)
+    before = {str(c.path) for c in installed_exes(prefix_for(gid, prefix_root))}
+    try:
+        cmd, env, cwd, _label = build_launch(cfg, WinGame(gid, name, str(setup)), home, which, prefix_root)
+    except WinError as exc:
+        return None, str(exc)
+    full_env = dict(os.environ)
+    full_env.update(env)
+    run = runner or subprocess.run
+    try:
+        run(cmd, env=full_env, cwd=str(cwd), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, f"The installer could not be started ({exc})."
+    new = [c for c in installed_exes(prefix_for(gid, prefix_root)) if str(c.path) not in before]
+    if not new:
+        return None, ("The installer closed, but no game program was found in the game's folder. If it did install, add the game with "
+                      "Add a PC game and pick its program.")
+    g = add_game(name, str(new[0].path), gid=gid)
+    return g, f"Installed and added {name} (program: {new[0].path.name})."

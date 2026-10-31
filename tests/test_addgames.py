@@ -38,9 +38,9 @@ def test_add_games_opens_a_wizard_with_three_big_buttons_and_back(app, tmp_path,
         open_menu_item(ui, "add")
         assert ui.mode == "page" and page(ui) == "addgames"
         rows = ui.backend.pageRows("addgames")
-        assert [r.get("id") for r in rows if r["kind"] != "info"] == ["usb", "folder", "windows", "bios", "downloads", "finish", "back"]
+        assert [r.get("id") for r in rows if r["kind"] != "info"] == [x for x in ["usb", "folder", "findgames", "biosfind", "windows", "bios", "downloads", "finish", "back"]]
         shown = on_screen(ui)
-        for label in ("From a USB stick", "From a folder on this computer", "A Windows game (.exe or .zip)", "Back"):
+        for label in ("From a USB stick", "From a folder on this computer", "PC Games Installer (a PC game: .exe, setup.exe or .zip)", "Back"):
             assert label in shown, shown
         assert "Found: STICK" in " ".join(shown)                   # it says the stick was seen
         ui.key(Qt.Key_Escape)                                      # Esc / B = back out of the wizard
@@ -81,7 +81,7 @@ def test_windows_game_button_opens_the_file_picker_and_back_returns(app, tmp_pat
     ui = Ui(app, tmp_path, monkeypatch, config_exists=False)
     try:
         open_menu_item(ui, "add")
-        click_text(ui, "A Windows game (.exe or .zip)")
+        click_text(ui, "PC Games Installer (a PC game: .exe, setup.exe or .zip)")
         assert ui.mode == "browse" and ui.win.property("browseTarget").toVariant()["files"] == "exe"
         ui.key(Qt.Key_Escape)
         assert ui.mode == "page" and page(ui) == "addgames"

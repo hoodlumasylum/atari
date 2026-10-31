@@ -12,6 +12,7 @@ Window {
 
     // everything is drawn in "units" that scale with the window (1 unit = 1 pixel at 1920x1080)
     Binding { target: Theme; property: "anim"; value: backend.animations }
+    Binding { target: Theme; property: "pal"; value: backend.themeColors }
     readonly property real u: Math.max(0.4, Math.min(width / 1920, height / 1080))
 
     // library | search | menu | sort | setup | browse | emulators | controls | update | import
@@ -61,6 +62,8 @@ Window {
         s.push({ key: "__more", label: backend.showAllSystems ? "Show fewer systems" : "Show all systems", icon: "more" })
         s.push({ key: "favorites", label: "Favourites", icon: "heart" })
         s.push({ key: "recent", label: "Recent", icon: "clock" })
+        s.push({ key: "__sim", label: "Sim & Tycoon", icon: "grid" })
+        s.push({ key: "__create", label: "Create", icon: "grid" })
         s.push({ key: "__settings", label: "Settings", icon: "gear" })
         s.push({ key: "__controllers", label: "Controllers", icon: "pad" })
         sideList = s
@@ -106,6 +109,8 @@ Window {
         if (!s) return
         if (s.key === "__settings") openSetup()
         else if (s.key === "__controllers") openPage("controllers")
+        else if (s.key === "__sim") openPage("simtycoon")
+        else if (s.key === "__create") openPage("create")
         else if (s.key === "__more") backend.toggleShowAllSystems()
         else selectFilter(s.key, true)
     }
@@ -245,6 +250,7 @@ Window {
         else if (a === "browse:gamecover") openBrowser({ kind: "gamecover", files: "image", gid: backend.pickGid() }, backend.winBrowseStart())
         else if (a === "browse:wincover") openBrowser({ kind: "wincover", files: "image" }, backend.winBrowseStart())
         else if (a === "osk:winname") openOsk("winname")
+        else if (a === "browse:unreal") openBrowser({ kind: "unreal", files: "unreal" }, backend.homeDir())
         else if (a === "import:games") openImport("page", "games")
         else if (a === "import:bios") openImport("page", "bios")
         else if (a === "import:biospick") { openImport("page", "bios"); backend.importBiosFromPick("") }
@@ -550,6 +556,12 @@ Window {
         else if (r.kind === "steampage") openPage("steam")
         else if (r.kind === "startmodepage") openPage("startmode")
         else if (r.kind === "controllerspage") openPage("controllers")
+        else if (r.kind === "screentvpage") openPage("screentv")
+        else if (r.kind === "findgamespage") openPage("findgames")
+        else if (r.kind === "themepage") openPage("theme")
+        else if (r.kind === "bootpage") openPage("boot")
+        else if (r.kind === "steamboot") { backend.toggleSteamBoot(); refreshSetup(true) }
+        else if (r.kind === "biosfindpage") openPage("biosfind")
         else if (r.kind === "kioskpage") openPage("kiosk")
         else if (r.kind === "quietbootpage") openPage("quietboot")
         else if (r.kind === "bootreport") backend.saveBootReport()
@@ -599,6 +611,7 @@ Window {
         else if (r.kind === "install" || r.kind === "app") backend.installEmulators()
         else if (r.kind === "bios") openImport("emus", "bios")
         else if (r.kind === "xemupage") openPage("xemusetup")
+        else if (r.kind === "biosfindpage") openPage("biosfind")
         else if (r.kind === "controls") openControls("emulators")
         else if (r.kind === "back") leaveEmus()
     }
@@ -631,6 +644,7 @@ Window {
             if (browseTarget.kind === "winfile") handleAction(backend.winPicked(r.path))
             else if (browseTarget.kind === "gamecover") handleAction(backend.coverFromFile(browseTarget.gid, r.path))
             else if (browseTarget.kind === "biospack") { backend.startImportScan(r.path); mode = "import" }
+            else if (browseTarget.kind === "unreal") { backend.setUnrealEditor(r.path); openPage("create") }
             else if (browseTarget.kind === "introfile") { backend.introPicked(r.path); refreshSetup(true); mode = "setup" }
             else handleAction(backend.winPickedCover(r.path))
         }
@@ -661,6 +675,7 @@ Window {
             if (backend.running) {
                 if ((backend.runningCancelable || backend.runningPlaying) && (e.key === Qt.Key_Escape || e.key === Qt.Key_B || e.key === Qt.Key_Backspace)) backend.cancelLaunch()
                 else if (backend.runningPlaying && isEnter(e.key)) backend.showGame()
+                else if (backend.runningSteam && (e.key === Qt.Key_C || e.key === Qt.Key_Y || e.key === Qt.Key_F10)) backend.copySteamLog()
                 return
             }
             var snd = win.keySound(e)
@@ -680,6 +695,18 @@ Window {
             if (snd !== "" && !backend.running) backend.playSound(snd)
         }
 
+        Rectangle {        // the theme's background gradient (the standard theme: plain, as before)
+            objectName: "themeGradient"
+            anchors.fill: parent
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: Theme.gradTop }
+                GradientStop { position: 1.0; color: Theme.gradBottom }
+            }
+        }
+        Rain {
+            anchors.fill: parent
+            active: Theme.rain && Theme.anim && !backend.running && win.visibility !== Window.Minimized
+        }
         WaveBackground {
             anchors.fill: parent
             active: !backend.running && win.visibility !== Window.Minimized
@@ -1672,6 +1699,15 @@ Window {
                     color: "#26ffffff"; border.color: Theme.dim; border.width: 2
                     Text { anchors.centerIn: parent; text: "Stop waiting - back to CodeAque  (Esc / B)"; color: "white"; font.pixelSize: 24 * win.u; font.bold: true }
                     MouseArea { anchors.fill: parent; onClicked: backend.cancelLaunch() }
+                }
+                Rectangle {
+                    objectName: "copySteamLog"
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    visible: backend.runningSteam
+                    width: 420 * win.u; height: 56 * win.u; radius: height / 2
+                    color: "#1affffff"; border.color: Theme.dim; border.width: 2
+                    Text { anchors.centerIn: parent; text: "Copy Steam log  (Y / C)"; color: "white"; font.pixelSize: 22 * win.u }
+                    MouseArea { anchors.fill: parent; onClicked: backend.copySteamLog() }
                 }
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter

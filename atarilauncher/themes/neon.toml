@@ -1,0 +1,23 @@
+name = "Neon"
+description = "Bright cyber colours: pink and cyan on deep violet."
+order = 3
+rain = false
+wave_opacity = 0.7
+
+[colors]
+bg = "#07020f"
+panel = "#120827"
+card = "#1a0d36"
+line = "#35206a"
+text = "#f7f3ff"
+dim = "#b9a8e6"
+faint = "#7a68a8"
+accent = "#ff2bd6"
+focus = "#00f0ff"
+accent_dark = "#4a0a44"
+yellow = "#faff00"
+green = "#39ff88"
+blue = "#00c3ff"
+overlay = "#ee07020f"
+grad_top = "#2a0a4a"
+grad_bottom = "#07020f"

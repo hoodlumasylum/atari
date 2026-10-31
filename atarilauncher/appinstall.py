@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import sober, apps, covers, installer, paths, rootauth
+from . import create, simtycoon, sober, apps, covers, installer, paths, rootauth
 from .emulators import EMUS, flatpak_installed
 
 CHROME_DEB_URL = "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb"
@@ -78,7 +78,7 @@ def _build() -> dict[str, Target]:
     t: dict[str, Target] = {}
     for e in EMUS.values():
         t[e.id] = _from_emu(e)
-    for a in list(apps.APP_DEFS) + list(apps.HELPERS):
+    for a in list(apps.APP_DEFS) + list(apps.HELPERS) + list(simtycoon.APPS) + list(create.APPS):    # Sim & Tycoon engines: installed only when asked
         t[a.id] = _from_app(a)
     for x in EXTRAS:
         t[x.id] = x

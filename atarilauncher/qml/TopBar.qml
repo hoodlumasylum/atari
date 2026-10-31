@@ -198,6 +198,39 @@ Item {
                 color: "#d6d9e6"; font.pixelSize: 14 * tb.u
             }
         }
+        Row {   // a small battery pill for each connected controller that reports one (or "Battery unknown" for a wireless pad)
+            objectName: "padBatteries"
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 6 * tb.u
+            visible: backend.padBatteries.length > 0
+            Repeater {
+                model: backend.padBatteries
+                Rectangle {
+                    required property var modelData
+                    objectName: "padBattery"
+                    property string label: modelData.text
+                    height: 34 * tb.u
+                    width: battRow.implicitWidth + 20 * tb.u
+                    radius: height / 2
+                    color: modelData.low ? "#a01822" : "#40000000"
+                    border.width: modelData.low ? 2 * tb.u : 0
+                    border.color: "white"
+                    Row {
+                        id: battRow
+                        anchors.centerIn: parent
+                        spacing: 6 * tb.u
+                        Icon { name: "pad"; size: 18 * tb.u; color: modelData.charging ? Theme.green : "#d6d9e6"; anchors.verticalCenter: parent.verticalCenter }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: (modelData.low ? "LOW " : "") + modelData.text
+                            color: modelData.known ? "white" : "#9aa0b4"
+                            font.pixelSize: 14 * tb.u
+                            font.bold: modelData.low
+                        }
+                    }
+                }
+            }
+        }
         Text {
             id: clock
             anchors.verticalCenter: parent.verticalCenter

@@ -1,0 +1,24 @@
+# CodeAque Gold - the standard look (default). One file per theme: copy this file, change the name and colours, done.
+name = "CodeAque Gold"
+description = "The standard CodeAque look."
+order = 1
+rain = false
+wave_opacity = 0.55
+
+[colors]
+bg = "#08090e"
+panel = "#0f111a"
+card = "#151826"
+line = "#272b3d"
+text = "#f3f4f8"
+dim = "#9aa1b6"
+faint = "#5c6279"
+accent = "#e0202a"
+focus = "#ff3a43"
+accent_dark = "#5a0b11"
+yellow = "#f2c230"
+green = "#3fae49"
+blue = "#2f7de1"
+overlay = "#ee06070b"
+grad_top = "#08090e"
+grad_bottom = "#08090e"

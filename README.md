@@ -31,6 +31,25 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
+## What's new in 0.5.0
+
+* **Pair a Bluetooth controller** (Controllers page): plain steps for putting common pads into pairing mode, then **Search** (15 seconds), a list with controllers first, and one press to **pair, trust and connect** (BlueZ's `bluetoothctl`, the same as the desktop's Bluetooth settings). The administrator password is asked in CodeAque's own box only if Bluetooth is blocked or its service is stopped. Paired pads can be reconnected or forgotten.
+* **Controller battery in the top bar:** a small pill per connected pad - the percentage, "Charging 40%", "Full", or "Battery unknown" for a wireless pad that does not report it (wired pads without a report are not shown). At 15% or less the pill turns red and CodeAque says once "Controller battery low". Read from `/sys/class/power_supply`, with UPower as the second source; checked every 20 seconds.
+* **Screen to TV** (Settings > Screen to TV): HDMI cable steps; shows which screens are plugged in; **Same picture on both screens**, **TV only** and **This screen only** (X11 with `xrandr`; a change undoes itself after 15 seconds unless you press **Keep this**); wireless steps for Miracast (opens GNOME Network Displays when installed) and Chromecast (from Chrome / Chromium).
+* **Steam games stuck on "Starting Steam... 26 s" fixed.** CodeAque no longer waits for Steam's window process before asking for the game: if Steam is running it asks straight away (`steam://rungameid/<id>`); if Steam is starting it asks after at most 12 s, and then **asks again every 8 seconds** (up to 8 times) until the game's process appears. Steam is started with `-silent` (Big Picture `-gamepadui` in CodeAque-only mode or when that setting is on). Steam is now also recognised by its process name and `~/.steam/steam.pid` (its helpers rewrite their command lines, which hid a running Steam). Every step goes to `session.log`, and the Now Playing screen has **Copy Steam log** (Y / C): CodeAque's Steam steps plus the end of Steam's own logs, copied to the clipboard and saved as `~/CodeAque-steam-log.txt`.
+* **Start Steam at boot (hidden)** (Settings, on by default when Steam is installed): when CodeAque starts (CodeAque-only mode and desktop) it runs `steam -silent`, so Steam signs in with **its own** remembered login and waits in the background without taking the screen; games then open with just `steam://rungameid`. CodeAque never sees or stores a Steam password. If Steam has no remembered login, CodeAque shows "Open Steam once to log in" instead.
+* **Every Steam game uses the fixed start** (Heavy Rain, Marvel Rivals, all others). For **Marvel Rivals**, if it does not start, CodeAque shows the known fix: Steam launch option `SteamDeck=1 %command%` (from ProtonDB / Steam community reports).
+* **Start Steam at boot (hidden)** (Settings, on by default when Steam is installed): when CodeAque starts (CodeAque-only mode and desktop) it runs `steam -silent`, so Steam signs in with **its own** remembered login and waits in the background without taking the screen; games then open with just `steam://rungameid`. CodeAque never sees or stores a Steam password. If Steam has no remembered login, CodeAque shows "Open Steam once to log in" instead.
+* **Every Steam game uses the fixed start** (Heavy Rain, Marvel Rivals, all others). For **Marvel Rivals**, if it does not start, CodeAque shows the known fix: Steam launch option `SteamDeck=1 %command%` (from ProtonDB / Steam community reports).
+* **Create** (left list): **Unreal Engine** - a guided page with the official Linux download page (you sign in there with your free Epic account), finds an unpacked `UnrealEditor` (or pick it yourself) and starts it; with an honest note that it needs a strong computer (best on the new RTX laptop). Nothing is downloaded by CodeAque. **Roblox Studio** - says plainly it has no Linux version; when this computer also has Windows in its boot menu, **Reboot into Windows** (once, after you confirm). **Godot** (free, open source) - installed only when you press Install.
+* **Boot screen** (Settings > Boot screen): **Install CodeAque boot screen** - a start-up menu made from CodeAque's boot art with plain gold **CodeAque** (default, starts by itself after 5 s) and **Windows**, the distro's Advanced options as a small last line for recovery, and a new splash: falling code made of our own symbols, a slow glow on the eyes, logo and ankh, a live green / gold progress bar and fade-in / fade-out; **Animated splash: OFF** gives a still picture for older graphics cards. It backs up `/etc/default/grub`, the old theme and the old splash choice first, turns on the Windows search (os-prober), runs `update-grub`, reads `grub.cfg` back, and puts everything back by itself if a step fails. **Restore old boot screen** undoes it. It never touches partitions, the disk layout or Windows. (The four-pane window shape in the art was replaced by an original ankh made of code symbols; the baked-in text and bar are live now.)
+* **Find my BIOS files** (Settings, Emulators, and the missing-BIOS message): one press looks through Downloads (also inside .zip / .7z / .rar) by name, size and checksum, shows each file and where it goes, and copies on Yes (also updating `xemu.toml`). Nothing is downloaded.
+* **Find my games** (Settings and Add Games): looks through Downloads, Desktop, Documents, USB drives, game folders and archives for **your own games and backups**, works out the console per file (extension, header, size, disc images, Xbox folders, multi-disc sets kept together), lists them by system with the destination, and moves or copies (your choice) into `~/Games/CodeAque/<system>`, then rescans. Unknown files and duplicates are skipped and listed. No downloads of any kind.
+* **PC Games Installer:** Windows game folders are recognised and the main program is picked (setup, uninstall, redistributables and crash reporters are skipped; you can change the pick). A `setup.exe` can be run through the PC Games Installer and the installed game is then added. Each game has its own folder for Windows settings. The support files are installed only when you press Install (password in CodeAque's box). Anti-cheat warning included. (Advanced: this uses umu / Proton / Wine behind the scenes.)
+* **Themes** (Settings > Theme): CodeAque Gold (default), Midnight, Neon, Light and Hoodlum Asylum (dark teal / purple with gold and a rain effect you can switch off). Applies at once and is remembered; every theme is checked for readable text and a visible controller highlight; one file per theme, and your own files in `~/.config/atari/themes/`.
+* **Sim & Tycoon** (left list): your simulation and management games from Steam, PC Games, DOS and consoles (by title or genre), plus any you add or hide yourself. **Theme Hospital** is the featured game at the top, played with CorsixTH using **your own** Theme Hospital files, found automatically (GOG, EA / Origin, Heroic, ~/Games, Downloads, PC Games folders, Steam); without them it says "You need your own Theme Hospital files". Optional open-source engines, installed only when you press Install: CorsixTH (MIT), OpenRCT2 (GPL-3.0, your RCT2 files), OpenTTD (GPL-2.0, free with OpenGFX / OpenSFX / OpenMSX), Augustus (AGPL-3.0, your Caesar III files). No game data, logos or art included.
+* **The project moved to github.com/hoodlumasylum/codeaque.** The updater checks the new address first and the old one as a fallback; old links redirect; the `atari` / `code` / `codeaque` commands and file names are unchanged.
+
 ## What's new in 0.4.9
 
 * **Xbox: "Failed to open flash file ''" fixed.** *Cause:* xemu writes its own `xemu.toml` with **empty** file paths the first time it starts, and CodeAque only wrote the paths when no `xemu.toml` existed - so the paths stayed empty. Now CodeAque checks and fills in the `[sys.files]` paths (`bootrom_path`, `flashrom_path`, `eeprom_path`, `hdd_path`) after **Add BIOS files**, again **just before every Xbox game starts**, and on demand with **Settings > Emulators > Xbox: check and repair xemu settings**. A path you chose yourself that still works is never changed; the other settings in the file are left alone; a copy of the old file is kept once (`xemu.toml.codeaque-backup`). It handles the Flatpak file (`~/.var/app/app.xemu.xemu/data/xemu/xemu/xemu.toml`), the normal/AppImage one (`~/.local/share/xemu/xemu/xemu.toml`) and a portable `xemu.toml` next to the program.
@@ -130,7 +149,7 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 - **If the in-app updater cannot be trusted on your connection, one command does the same by hand** (resumes if it drops, checks the SHA256 against the release's own list, keeps your settings and games):
 
   ```bash
-  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.4.9.tar.gz https://github.com/hoodlumasylum/atari/releases/download/v0.4.9/atari-0.4.9.tar.gz && curl -fsSL https://github.com/hoodlumasylum/atari/releases/download/v0.4.9/SHA256SUMS.txt | grep ' atari-0.4.9.tar.gz$' | sha256sum -c - && tar xzf atari-0.4.9.tar.gz && cd atari-0.4.9 && ./install.sh --yes
+  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.5.0.tar.gz https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.0/atari-0.5.0.tar.gz && curl -fsSL https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.0/SHA256SUMS.txt | grep ' atari-0.5.0.tar.gz$' | sha256sum -c - && tar xzf atari-0.5.0.tar.gz && cd atari-0.5.0 && ./install.sh --yes
   ```
 
 ## What's new in 0.4.1
@@ -150,7 +169,7 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 ### New name: Code
 The project is now called **Code** (it was "Atari"). New logo, window title, menu entry, Settings, Help, installer and updater messages.
 **Nothing breaks when you update:** the old `atari` command, `~/.config/atari`, `~/.local/share/atari`, `~/Games/Atari`, the `atari.desktop` menu / autostart entry,
-Code-only mode files and the GitHub address (`hoodlumasylum/atari`) all stay as they are, so an existing install updates in place with all
+Code-only mode files and the update address all keep working (from 0.5.0 the GitHub project is `hoodlumasylum/codeaque`; the old address `hoodlumasylum/atari` forwards to it), so an existing install updates in place with all
 settings, favourites and games. A new `code` command is added too - **unless** that name is already taken (Visual Studio Code uses it), in which case
 `atari` and `code-launcher` still start Code. Release files are still called `atari-<version>.tar.gz` so older copies can update.
 - **Branding:** `docs/branding/` has the logo, a banner and a **one-colour sticker version** (SVG + 4000 px PNG, black on transparent) for metal transfer stickers.
@@ -352,13 +371,13 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.4.9.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/atari/releases/latest).
+1. Download **`atari-0.5.0.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/codeaque/releases/latest).
 2. Open a **Terminal** and type:
 
    ```bash
    cd ~/Downloads
-   tar xzf atari-0.4.9.tar.gz
-   cd atari-0.4.9
+   tar xzf atari-0.5.0.tar.gz
+   cd atari-0.5.0
    ./install.sh
    ```
 

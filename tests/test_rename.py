@@ -73,7 +73,7 @@ def test_an_existing_code_only_install_is_still_recognised_and_removable(tmp_pat
 
 
 def test_the_updater_still_finds_atari_named_assets_and_the_old_repo(monkeypatch):
-    assert "hoodlumasylum/atari" in updater.API_URL if hasattr(updater, "API_URL") else "hoodlumasylum/atari" in Path(updater.__file__).read_text()
+    assert "hoodlumasylum/codeaque" in updater.API_URL and any("hoodlumasylum/atari/" in u for u in updater.API_URLS)
     rel = updater._parse_release if hasattr(updater, "_parse_release") else None
     src = Path(updater.__file__).read_text()
     assert 'f"atari-{version}.tar.gz"' in src                                  # copies of 0.3.x look for exactly this name

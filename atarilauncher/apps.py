@@ -87,7 +87,7 @@ APP_DEFS: list[AppDef] = [
 BY_ID = {a.id: a for a in APP_DEFS}
 # installed by the install-everything script, but not shown as tiles
 HELPERS: list[AppDef] = [
-    AppDef("wine", "Wine (Windows compatibility)", "", ("wine",), "Runs Windows programs (fallback for Windows games).",
+    AppDef("wine", "PC Games support (fallback runtime)", "", ("wine",), "Runs Windows games when umu is missing. (Advanced: this is Wine.)",
            apt="wine"),
     AppDef("chrome", "Google Chrome (for YouTube, Netflix and other web apps)", "com.google.Chrome",
            ("google-chrome-stable", "google-chrome"), "Streaming web apps open in it. Has Widevine for Netflix & co."),
@@ -99,7 +99,7 @@ HELPERS: list[AppDef] = [
     AppDef("7zip", "7-Zip (opens .7z / .rar game archives)", "", ("7z", "7zz", "7za"), "Opens .7z and .rar archives.",
            apt="p7zip-full"),
     AppDef("unrar", "unrar (opens .rar archives)", "", ("unrar",), "Opens .rar archives (the file viewer's Extract button).", apt="unrar"),
-    AppDef("umu", "umu-launcher (runs Windows games with Proton)", "", ("umu-run",),
+    AppDef("umu", "PC Games support (umu-launcher)", "", ("umu-run",),
            "CodeAque's first choice for Windows games. Installed from its official GitHub release."),
 ]
 

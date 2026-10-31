@@ -13,7 +13,7 @@ from pathlib import Path
 from PySide6.QtCore import Property, QObject, QProcess, Qt, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QKeyEvent, QWindow
 
-from . import pads, xemuconfig, branding, donate, gamedelete, gamesroot, power, rootauth, files, steamfix, downloads, golive, icons, inputfix, intro, kiosk, quietboot, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
+from . import bootscreen, create, steam, simtycoon, themes, biosfind, findgames, bluetooth, padbattery, pads, screentv, xemuconfig, branding, donate, gamedelete, gamesroot, power, rootauth, files, steamfix, downloads, golive, icons, inputfix, intro, kiosk, quietboot, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
 from . import __version__
 from .config import Config, load_config, save_config
 from .import_model import ImportModel
@@ -90,6 +90,10 @@ class Backend(QObject):
     uiPrefsChanged = Signal()
     robloxFixDone = Signal(object, str)         # (steps, verdict) from the Roblox fix thread
     pageChanged = Signal()                      # the rows of the help / fix / Windows pages changed
+    padBatteriesChanged = Signal()
+    themeChanged = Signal()              # the battery pills in the top bar
+    _bgDone = Signal()                          # a background job (Bluetooth, batteries) finished: refresh on the GUI thread
+    _batteryRead = Signal("QVariantList")
     studioRequested = Signal()                  # the Studio tile / menu entry: the screen opens the Studio
     pageRequested = Signal(str)                 # a worker wants the screen to show this page ('close' = go to the library)
     winEvent = Signal(str, str, object)         # Windows game archive progress (from the worker thread)
@@ -331,6 +335,38 @@ class Backend(QObject):
         if self._first_run:
             self._prefill_first_run()
         self.rescan(initial=True)
+        # Bluetooth pairing, controller batteries, Screen to TV
+        self._win_busy = False
+        self._win_msg = ""
+        self._bf_busy = ""
+        self._bf_res = None
+        self._bf_msg = ""
+        self._fg_busy = ""
+        self._fg_res = None
+        self._fg_msg = ""
+        self._fg_move = False
+        self._bt_busy = ""
+        self._bt_msg = ""
+        self._bt_found: list = []
+        self._bt_searched = False
+        self._seen_pages: dict[str, float] = {}
+        self._bgDone.connect(self._on_bg_done, Qt.QueuedConnection)
+        self._batteryRead.connect(self._on_battery_read, Qt.QueuedConnection)
+        self._pad_batt: list = []
+        self._batt_low_warned: set = set()
+        self._batt_busy = False
+        self._batt_timer = QTimer(self, interval=20000)
+        self._batt_timer.timeout.connect(self.refreshBatteries)
+        if not os.environ.get("ATARI_NO_BATTERY") and not demo:
+            self._batt_timer.start()
+            QTimer.singleShot(1500, self.refreshBatteries)
+        if not demo and not os.environ.get("ATARI_NO_STEAM_AUTOSTART"):
+            QTimer.singleShot(3500, self._steam_autostart)
+        self._tv_msg = ""
+        self._tv_undo: list = []
+        self._tv_until = 0.0
+        self._tv_timer = QTimer(self, interval=1000)
+        self._tv_timer.timeout.connect(self._tv_tick)
         if enable_gamepad:
             self._start_gamepad()
             self._start_hotkey()
@@ -1356,6 +1392,849 @@ class Backend(QObject):
             return "import:bios"
         return ""
 
+    # ----- controller batteries (top bar) ------------------------------------------------------
+    @Property("QVariantList", notify=padBatteriesChanged)
+    def padBatteries(self):
+        return self._pad_batt
+
+    @Slot()
+    def refreshBatteries(self) -> None:
+        if self._batt_busy:
+            return
+        self._batt_busy = True
+
+        def work():
+            rows = []
+            try:
+                found = pads.detect()
+                up = None
+                if any(p.how == "Bluetooth" for p in found):
+                    up = padbattery.upower_batteries()
+                rows = padbattery.for_pads(found, upower=up)
+            except Exception:  # pragma: no cover - never let a battery read touch CodeAque
+                rows = []
+            self._batteryRead.emit(rows)
+        threading.Thread(target=work, daemon=True, name="atari-battery").start()
+
+    @Slot("QVariantList")
+    def _on_battery_read(self, rows) -> None:
+        self._batt_busy = False
+        self.set_pad_batteries(list(rows))
+
+    def set_pad_batteries(self, rows: list) -> None:
+        for r in rows:
+            if r.get("low") and r["name"] not in self._batt_low_warned:
+                self._batt_low_warned.add(r["name"])
+                self.show_toast(f"Controller battery low ({r['text']}): {r['name']}. Charge it soon.", 10000)
+            elif not r.get("low"):
+                self._batt_low_warned.discard(r["name"])
+        if rows != self._pad_batt:
+            self._pad_batt = rows
+            self.padBatteriesChanged.emit()
+
+    # ----- helpers for pages that update while open ----------------------------------------------
+    def _page_seen(self, name: str) -> None:
+        self._seen_pages[name] = time.monotonic()
+
+    def _page_visible(self, name: str) -> bool:
+        return time.monotonic() - self._seen_pages.get(name, -100.0) < 2.5
+
+    @Slot()
+    def _on_bg_done(self) -> None:
+        if any(self._page_visible(n) for n in ("btpair", "screentv", "winform", "biosfind", "findgames", "simtycoon", "boot")) or self._ct_page_visible():
+            self.pageChanged.emit()
+
+    # ----- Themes ------------------------------------------------------------------------------
+    @Property("QVariantMap", notify=themeChanged)
+    def themeColors(self):
+        t = themes.get(self.store.get_pref("theme", themes.DEFAULT))
+        return t.qml(bool(self.store.get_pref("theme_rain", True)))
+
+    @Slot(str)
+    def setTheme(self, theme_id: str) -> None:
+        t = themes.get(theme_id)
+        self.store.set_pref("theme", t.id)
+        self.themeChanged.emit()
+
+    @Slot()
+    def toggleRain(self) -> None:
+        self.store.set_pref("theme_rain", not bool(self.store.get_pref("theme_rain", True)))
+        self.themeChanged.emit()
+
+    def _theme_rows(self) -> list:
+        cur = themes.get(self.store.get_pref("theme", themes.DEFAULT))
+        rows: list = [self._info("Changes the colours, the background and the buttons. It applies straight away and is remembered.")]
+        for t in themes.all_themes():
+            rows.append({"kind": "item", "id": "th:" + t.id, "title": t.name, "value": "SELECTED" if t.id == cur.id else "",
+                         "tone": "ok" if t.id == cur.id else "", "detail": t.description})
+        if cur.rain:
+            on = bool(self.store.get_pref("theme_rain", True))
+            rows.append({"kind": "item", "id": "thrain", "title": "Rain effect: " + ("ON" if on else "OFF"),
+                         "detail": "The soft rain behind the menus. Press to switch. (Also off with Reduce animations.)"})
+        rows.append(self._info("More themes: put a file in ~/.config/atari/themes/ (copy one of CodeAque's theme files and change the colours)."))
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    def _theme_activate(self, rid: str) -> str:
+        if rid.startswith("th:"):
+            self.setTheme(rid[3:])
+            return "refresh"
+        if rid == "thrain":
+            self.toggleRain()
+            return "refresh"
+        return ""
+
+    # ----- Settings > Boot (CodeAque boot screen) ----------------------------------------------
+    def _boot_rows(self) -> list:
+        self._page_seen("boot")
+        on = bootscreen.installed()
+        anim = bool(self.store.get_pref("boot_anim", True))
+        win = create.windows_entry()
+        rows: list = [self._info("The screen you see when the computer starts: a CodeAque menu with \"CodeAque\" (starts by itself after 5 s) "
+                                 "and \"Windows\", then the CodeAque splash on the way in. It never changes partitions or Windows itself. "
+                                 "Not yet tried on a real computer's start - if anything looks wrong, use Restore.")]
+        rows.append({"kind": "item", "id": "bootstate", "title": "Now: " + ("CodeAque boot screen" if on else "the computer's old boot screen"),
+                     "value": "ON" if on else "OFF", "tone": "ok" if on else "",
+                     "detail": "\n".join(bootscreen.read_back()) + ("\nWindows found in the boot menu." if win else "\nNo Windows entry found yet (it is looked for when you install).")})
+        busy = getattr(self, "_boot_busy", "")
+        if busy:
+            rows.append(self._info(busy))
+        msg = getattr(self, "_boot_msg", "")
+        if msg:
+            rows.append(self._info(msg))
+        confirm = getattr(self, "_boot_confirm", "")
+        rows.append({"kind": "item", "id": "bootinstall", "title": "Yes, install it now" if confirm == "install" else "Install CodeAque boot screen",
+                     "tone": "warn" if confirm == "install" else "", "value": "CONFIRM" if confirm == "install" else "",
+                     "detail": "Backs up /etc/default/grub and the old theme first, turns on the Windows search (os-prober), runs update-grub and "
+                               "checks the result. Asks for the password." + (" Press again to go ahead." if confirm == "install" else "")})
+        rows.append({"kind": "item", "id": "bootanim", "title": "Animated splash: " + ("ON" if anim else "OFF (still picture)"),
+                     "detail": "Falling code and a soft glow. Switch off for older graphics cards; takes effect at the next Install."})
+        rows.append({"kind": "item", "id": "bootrestore", "title": "Yes, restore the old boot screen" if confirm == "restore" else "Restore old boot screen",
+                     "tone": "warn" if confirm == "restore" else "", "value": "CONFIRM" if confirm == "restore" else "",
+                     "detail": "Puts back the backed-up files and runs update-grub." + (" Press again to go ahead." if confirm == "restore" else "")})
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    def _boot_run(self, script: str, what: str) -> None:
+        self._boot_busy, self._boot_msg = what + " (this can take a minute)...", ""
+
+        def work():
+            import tempfile
+            try:
+                with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as fh:
+                    fh.write(script)
+                    path = fh.name
+                os.chmod(path, 0o644)
+                full, secret, early = rootauth.prepare(["pkexec", "bash", path])
+                if early is not None:
+                    self._boot_msg = "The password box was closed - nothing was changed."
+                    return
+                p = subprocess.run(full, capture_output=True, text=True, timeout=900,
+                                   **({"input": secret.decode()} if secret else {"stdin": subprocess.DEVNULL}))
+                kiosk.log_event(f"boot screen: {what}: exit {p.returncode}: {(p.stdout + p.stderr).strip()[-400:]}")
+                if p.returncode == 0 and "OK" in p.stdout:
+                    self._boot_msg = "Done. " + ("Windows is in the menu." if "WINDOWS=yes" in p.stdout else "") + " Restart the computer to see it."
+                else:
+                    self._boot_msg = "It did not work, so the old files were put back. Details: " + ((p.stderr or p.stdout).strip().splitlines() or ["?"])[-1]
+            except Exception as exc:  # pragma: no cover
+                self._boot_msg = f"Something went wrong: {exc}"
+            finally:
+                try:
+                    os.unlink(path)
+                except Exception:
+                    pass
+                self._boot_busy = ""
+                self._bgDone.emit()
+        threading.Thread(target=work, daemon=True, name="atari-bootscreen").start()
+
+    def _boot_activate(self, rid: str, run=None) -> str:
+        run = run or self._boot_run
+        confirm = getattr(self, "_boot_confirm", "")
+        self._boot_confirm = ""
+        if getattr(self, "_boot_busy", ""):
+            return "refresh"
+        if rid == "bootanim":
+            self.store.set_pref("boot_anim", not bool(self.store.get_pref("boot_anim", True)))
+        elif rid == "bootinstall":
+            if confirm != "install":
+                self._boot_confirm = "install"
+            else:
+                run(bootscreen.install_script(animated=bool(self.store.get_pref("boot_anim", True))), "Installing the boot screen")
+        elif rid == "bootrestore":
+            if confirm != "restore":
+                self._boot_confirm = "restore"
+            else:
+                run(bootscreen.restore_script(), "Restoring the old boot screen")
+        return "refresh"
+
+    # ----- Create (game-making tools) ---------------------------------------------------------
+    def _create_rows(self) -> list:
+        ue = create.find_unreal(custom=str(self.store.get_pref(create.UNREAL_PREF, "") or ""))
+        rows: list = [self._info("Tools for making games. Nothing is downloaded by itself.")]
+        rows.append({"kind": "item", "id": "crue", "title": "Unreal Engine", "value": "OPEN" if ue else "NOT FOUND",
+                     "tone": "ok" if ue else "", "detail": (f"Found: {ue}\n" if ue else "") + create.UNREAL_NOTE})
+        if not ue:
+            for st in create.UNREAL_STEPS:
+                rows.append(self._info(st))
+        rows.append({"kind": "item", "id": "cruelink", "title": "Open the official Unreal Engine Linux page",
+                     "detail": create.UNREAL_URL + "  (in the web browser; sign in there with your free Epic account)"})
+        rows.append({"kind": "item", "id": "cruepick", "title": "Choose UnrealEditor...", "detail": "If you unpacked it somewhere else: pick Engine/Binaries/Linux/UnrealEditor."})
+        rows.append({"kind": "item", "id": "cruelook", "title": "Look again", "detail": "Checks ~/UnrealEngine, ~/Games/UnrealEngine, Downloads, /opt and your home folder."})
+        ok = bool(apps.app_command(self.cfg, create.GODOT)[1])
+        rows.append({"kind": "item", "id": "crgodot", "title": create.GODOT.title, "value": "OPEN" if ok else "INSTALL",
+                     "detail": create.GODOT.note + ("" if ok else " Press to install it (asks first).")})
+        win = create.windows_entry()
+        rows.append({"kind": "item", "id": "crrbx", "title": "Roblox Studio", "value": "NEEDS WINDOWS / MAC", "detail": create.ROBLOX_STUDIO_NOTE})
+        if win:
+            confirm = getattr(self, "_cr_confirm", False)
+            rows.append({"kind": "item", "id": "crwin", "title": "Yes, restart into Windows now" if confirm else "Reboot into Windows",
+                         "tone": "warn" if confirm else "", "value": "CONFIRM" if confirm else "",
+                         "detail": f"Starts \"{win}\" once; the next start after that is CodeAque again. Save your games first. "
+                                   + ("Press again to restart (asks for the password)." if confirm else "Asks you to confirm.")})
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    def _create_activate(self, rid: str) -> str:
+        if rid != "crwin":
+            self._cr_confirm = False
+        if rid == "crue":
+            ue = create.find_unreal(custom=str(self.store.get_pref(create.UNREAL_PREF, "") or ""))
+            if not ue:
+                self.show_toast("Unreal Engine was not found. Follow the steps on this page, then press Look again.", 8000)
+                return ""
+            kiosk.log_event("create: starting " + ue)
+            try:
+                subprocess.Popen([ue], cwd=str(Path(ue).parent), env=launcher.clean_env(), stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, start_new_session=True)
+                self.show_toast("Starting Unreal Engine - the first start can take several minutes.", 8000)
+            except OSError as exc:
+                self.show_toast(f"Could not start Unreal Engine: {exc}", 8000)
+            return ""
+        if rid == "cruelink":
+            if not self._running:
+                self._launch_game(Game(gid=webapps.UNREAL.gid, title=webapps.UNREAL.title, platform=webapps.STREAMING,
+                                       platform_name=webapps.STREAMING_NAME, note=webapps.UNREAL.note))
+            return ""
+        if rid == "cruepick":
+            return "browse:unreal"
+        if rid == "cruelook":
+            return "refresh"
+        if rid == "crgodot":
+            if apps.app_command(self.cfg, create.GODOT)[1]:
+                self._launch_game(Game(gid=create.GODOT.gid, title=create.GODOT.title, platform=apps.APPS, platform_name="Create"))
+            else:
+                self.begin_install(["godot"], what=create.GODOT.title)
+            return ""
+        if rid == "crwin":
+            entry = create.windows_entry()
+            if not entry:
+                return "refresh"
+            if not getattr(self, "_cr_confirm", False):
+                self._cr_confirm = True
+                return "refresh"
+            self._cr_confirm = False
+            kiosk.log_event(f"create: reboot into Windows once ({entry})")
+            for cmd in create.reboot_commands(entry):
+                ok, msg = bluetooth._admin(cmd, None, shutil.which)
+                if not ok:
+                    self.show_toast("Could not restart into Windows: " + (msg or "the password was not accepted") + ". Nothing was changed.", 9000)
+                    return "refresh"
+            return ""
+        return ""
+
+    @Slot(str)
+    def setUnrealEditor(self, path: str) -> None:
+        self.store.set_pref(create.UNREAL_PREF, path)
+
+    # ----- Start Steam at boot (hidden) ---------------------------------------------------------
+    def _steam_installed(self) -> bool:
+        return bool(apps.app_command(self.cfg, apps.BY_ID["steam"])[1]) or bool(self.cfg.steam_command.strip())
+
+    def _steam_autostart_on(self) -> bool:
+        v = self.store.get_pref(steam.AUTOSTART_PREF, None)
+        return self._steam_installed() if v is None else bool(v)       # default ON when Steam is installed
+
+    @Slot()
+    def toggleSteamBoot(self) -> None:
+        on = not self._steam_autostart_on()
+        self.store.set_pref(steam.AUTOSTART_PREF, on)
+        kiosk.log_event("steam autostart: " + ("on" if on else "off"))
+        if on:
+            self._steam_autostart()
+
+    def _steam_autostart(self, spawn=None) -> str:
+        """At session start: `steam -silent` so Steam signs in with its own saved login and waits in the background; game launches then
+        only send steam://rungameid. Returns what it did (for the log / tests)."""
+        try:
+            if not self._steam_autostart_on() or not self._steam_installed():
+                return "off"
+            if steam.steam_running():
+                kiosk.log_event("steam autostart: Steam is already running")
+                return "running"
+            if not steam.remembered_login():
+                kiosk.log_event("steam autostart: no remembered Steam login - showing the hint, not starting Steam")
+                self.show_toast(steam.LOGIN_HINT, 9000)
+                return "login"
+            cmd = steam.autostart_command(launcher.steam_base_command(self.cfg))
+            kiosk.log_event("steam autostart: " + " ".join(cmd))
+            (spawn or (lambda c: subprocess.Popen(c, env=launcher.clean_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                                  stdin=subprocess.DEVNULL, start_new_session=True)))(cmd)
+            if self._window is not None:
+                QTimer.singleShot(4000, self._raise_window)       # Steam must not take the focus from CodeAque
+            return "started"
+        except Exception as exc:  # pragma: no cover
+            kiosk.log_event(f"steam autostart: failed ({exc})")
+            return "error"
+
+    # ----- Sim & Tycoon ----------------------------------------------------------------------
+    def _sim_tags(self) -> tuple[list, list]:
+        return list(self.store.get_pref(simtycoon.TAGS_PREF, []) or []), list(self.store.get_pref(simtycoon.UNTAGS_PREF, []) or [])
+
+    def _sim_games(self) -> list:
+        tags, untags = self._sim_tags()
+        out = [g for g in self._all if g.platform not in apps.NON_GAME
+               and simtycoon.in_section(g.gid, g.title, tags, untags, str((g.meta or {}).get("genre", "")))]
+        return sorted(out, key=lambda g: g.title.lower())
+
+    def _sim_scan(self) -> None:
+        if getattr(self, "_sim_busy", False):
+            return
+        self._sim_busy = True
+
+        def work():
+            found = {}
+            try:
+                roots = simtycoon.search_roots(steam_libraries=simtycoon.steam_libraries())
+                for kind in ("th", "rct2", "rct1", "c3"):
+                    found[kind] = simtycoon.find_data(kind, roots)
+            except Exception:  # pragma: no cover
+                pass
+            finally:
+                self._sim_data, self._sim_busy = found, False
+                self._bgDone.emit()
+        threading.Thread(target=work, daemon=True, name="atari-simdata").start()
+
+    def _sim_engine_state(self, eid: str) -> tuple[bool, str]:
+        e = simtycoon.BY_ID[eid]
+        ok = bool(apps.app_command(self.cfg, e.app)[1])
+        data = ""
+        if e.check:
+            data = (self._sim_data or {}).get(e.check, "")
+            if eid == "openrct2" and not data:
+                data = (self._sim_data or {}).get("rct1", "")
+        return ok, data
+
+    def _sim_rows(self) -> list:
+        self._page_seen("simtycoon")
+        if getattr(self, "_sim_data", None) is None and not getattr(self, "_sim_busy", False):
+            self._sim_data = None
+            self._sim_scan()
+        busy = getattr(self, "_sim_busy", False)
+        rows: list = []
+        ok, data = self._sim_engine_state("corsixth")
+        if busy and not data:
+            state, detail = "LOOKING...", "Looking for your Theme Hospital files..."
+        elif not data:
+            state, detail = "NEED FILES", simtycoon.NO_TH_DATA
+        elif not ok:
+            state, detail = "INSTALL", (f"Your Theme Hospital files: {data}\nPress to install CorsixTH (free, open source, MIT licence) - "
+                                        "it asks first, then the game is one press away.")
+        else:
+            state, detail = "PLAY", f"Plays your own Theme Hospital files ({data}) with CorsixTH."
+        rows.append({"kind": "item", "id": "simhero", "title": "★  THEME HOSPITAL  ·  FEATURED", "value": state,
+                     "tone": "ok" if state == "PLAY" else ("warn" if state == "NEED FILES" else ""), "detail": detail})
+        games = self._sim_games()
+        rows.append(self._info(f"Your sim & tycoon games ({len(games)}): from Steam, PC Games, DOS and your consoles, picked by title or genre, "
+                               "plus any you add yourself."))
+        for i, g in enumerate(games[:200]):
+            rows.append({"kind": "item", "id": f"simgame:{i}", "title": g.title, "value": g.platform_name.upper(), "detail": "Press to play."})
+        rows.append({"kind": "item", "id": "simpick", "title": "Add or remove games...", "detail": "Pick any game from your library to show it here (or hide it)."})
+        rows.append(self._info("Open-source engines (installed only if you press Install; no game files, logos or art are included):"))
+        for e in simtycoon.ENGINES:
+            ok, data = self._sim_engine_state(e.app.id)
+            if e.needs_data and not data:
+                value, d = ("INSTALLED" if ok else "OPTIONAL"), f"{e.app.note} Not found yet: your {e.data_name}."
+            elif ok:
+                value, d = "PLAY", e.app.note + (f" Your files: {data}" if data else "")
+            else:
+                value, d = "INSTALL", e.app.note + (f" Your files: {data}" if data else "")
+            rows.append({"kind": "item", "id": "simeng:" + e.app.id, "title": e.app.title, "value": value,
+                         "detail": d + f" Licence: {e.licence}."})
+        rows.append({"kind": "item", "id": "simlook", "title": "Look again for my game files",
+                     "detail": "Searches ~/Games, ~/GOG Games, Downloads, Documents, Heroic, CodeAque's PC Games folders and Steam."})
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    def _sim_play_engine(self, eid: str) -> str:
+        e = simtycoon.BY_ID[eid]
+        ok, data = self._sim_engine_state(eid)
+        if e.needs_data and not data:
+            self.show_toast(simtycoon.NO_TH_DATA if eid == "corsixth" else f"You need your own {e.data_name}. Copy the game's folder into ~/Games, then press Look again.", 12000)
+            return ""
+        if not ok:
+            self.begin_install([eid], what=e.app.title)
+            return ""
+        if data:
+            simtycoon.point_engine_at(eid, data)
+        self._launch_game(Game(gid=e.app.gid, title=e.app.title, platform=apps.APPS, platform_name=simtycoon.NAME, note=e.app.note))
+        return ""
+
+    def _sim_activate(self, rid: str) -> str:
+        if rid == "simhero":
+            return self._sim_play_engine("corsixth")
+        if rid.startswith("simeng:"):
+            return self._sim_play_engine(rid[7:])
+        if rid == "simlook":
+            self._sim_data = None
+            self._sim_scan()
+            return "refresh"
+        if rid == "simpick":
+            return "page:simpick"
+        if rid.startswith("simgame:"):
+            games = self._sim_games()
+            i = int(rid[8:])
+            if 0 <= i < len(games) and not self._running:
+                self._launch_game(games[i])
+            return ""
+        return ""
+
+    def _simpick_rows(self) -> list:
+        tags, untags = self._sim_tags()
+        rows: list = [self._info("Press a game to show it in Sim & Tycoon, press again to hide it.")]
+        pool = sorted([g for g in self._all if g.platform not in apps.NON_GAME], key=lambda g: g.title.lower())
+        for i, g in enumerate(pool[:500]):
+            on = simtycoon.in_section(g.gid, g.title, tags, untags, str((g.meta or {}).get("genre", "")))
+            rows.append({"kind": "item", "id": f"simtag:{i}", "title": g.title, "value": "SHOWN" if on else "",
+                         "tone": "ok" if on else "", "detail": g.platform_name})
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    def _simpick_activate(self, rid: str) -> str:
+        if not rid.startswith("simtag:"):
+            return ""
+        pool = sorted([g for g in self._all if g.platform not in apps.NON_GAME], key=lambda g: g.title.lower())
+        i = int(rid[7:])
+        if not 0 <= i < len(pool):
+            return ""
+        g = pool[i]
+        tags, untags = self._sim_tags()
+        on = simtycoon.in_section(g.gid, g.title, tags, untags, str((g.meta or {}).get("genre", "")))
+        tags = [t for t in tags if t != g.gid]
+        untags = [t for t in untags if t != g.gid]
+        if on:
+            untags.append(g.gid)
+        else:
+            tags.append(g.gid)
+        self.store.set_pref(simtycoon.TAGS_PREF, tags)
+        self.store.set_pref(simtycoon.UNTAGS_PREF, untags)
+        return "refresh"
+
+    # ----- Find my BIOS files ----------------------------------------------------------------
+    def _bf_rows(self) -> list:
+        self._page_seen("biosfind")
+        if self._bf_res is None and not self._bf_busy and not self._bf_msg:
+            self._bf_start()
+        rows: list = [self._info("Looks in Downloads and every folder below it (also inside .zip / .7z / .rar) for BIOS files from your own consoles. "
+                                 "Nothing is downloaded and nothing is changed until you press Copy.")]
+        if self._bf_busy:
+            rows.append(self._info("Working:  " + self._bf_busy))
+        if self._bf_msg:
+            rows.append(self._info("Result:  " + self._bf_msg))
+        res = self._bf_res
+        if res is not None and not self._bf_busy:
+            if not res.found:
+                rows.append(self._info("No BIOS files found in Downloads. Copy them from your USB stick into Downloads (or use Add BIOS files), then press Look again."))
+            for f in res.found:
+                it = f.item
+                odd = "   (unusual file - check it)" if it.status == "odd" else ""
+                rows.append({"kind": "item", "id": "bfrow", "title": f"{it.label}:  {it.name}{odd}",
+                             "value": it.system.upper(), "detail": f"Found in {f.source}  ->  goes to {f.dest or 'the emulator folder'}"})
+            for n in res.notes[:6]:
+                rows.append(self._info(n))
+            if res.found:
+                rows.append({"kind": "done", "id": "bfcopy", "title": f"Copy {len(res.found)} file{'s' if len(res.found) != 1 else ''} into place",
+                             "detail": "Copies each file to its emulator's folder (never overwrites a different file of the same name without keeping it) "
+                                       "and, for the Xbox, writes xemu's settings."})
+        if not self._bf_busy:
+            rows.append({"kind": "item", "id": "bfscan", "title": "Look again"})
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    def _bf_start(self) -> None:
+        self._bf_busy, self._bf_msg = "Looking in Downloads...", ""
+
+        def say(t):
+            self._bf_busy = t
+            self._bgDone.emit()
+
+        def work():
+            try:
+                old, self._bf_res = self._bf_res, biosfind.find(say=say)
+                if old is not None:
+                    old.cleanup()
+                n = len(self._bf_res.found)
+                self._bf_msg = f"Found {n} BIOS file{'s' if n != 1 else ''}." + (" Check the list, then press Copy." if n else "")
+            except Exception as exc:  # pragma: no cover
+                self._bf_msg = f"Something went wrong: {exc}"
+            finally:
+                self._bf_busy = ""
+                self._bgDone.emit()
+        threading.Thread(target=work, daemon=True, name="atari-biosfind").start()
+
+    def _bf_activate(self, rid: str) -> str:
+        if self._bf_busy:
+            return ""
+        if rid == "bfscan":
+            self._bf_start()
+            return "refresh"
+        if rid == "bfcopy" and self._bf_res is not None:
+            res = self._bf_res
+            self._bf_busy = "Copying..."
+
+            def work():
+                try:
+                    out, xemu = biosfind.install(res, self.cfg)
+                    bits = [f"Copied {out.copied} file{'s' if out.copied != 1 else ''}"]
+                    if out.skipped_same:
+                        bits.append(f"{out.skipped_same} already in place")
+                    if out.failed:
+                        bits.append("problems: " + "; ".join(out.failed[:3]))
+                    self._bf_msg = ", ".join(bits) + "." + (" " + " ".join(out.notes[:2]) if out.notes else "")
+                    if xemu:
+                        self._bf_msg += "  xemu: " + " | ".join(xemu[:5])
+                    kiosk.log_event("find my bios: " + self._bf_msg)
+                    self._bf_res = None
+                    self._bf_done = True
+                except Exception as exc:  # pragma: no cover
+                    self._bf_msg = f"Something went wrong: {exc}"
+                finally:
+                    self._bf_busy = ""
+                    self._bgDone.emit()
+            threading.Thread(target=work, daemon=True, name="atari-bioscopy").start()
+            return "refresh"
+        return ""
+
+    # ----- Find my games ----------------------------------------------------------------------
+    def _sys_name(self, sid: str) -> str:
+        if sid == findgames.PC:
+            return windows.PLATFORM_NAME
+        sc = self.cfg.systems.get(sid)
+        return sc.name if sc else "Console not known yet"
+
+    def _fg_rows(self) -> list:
+        self._page_seen("findgames")
+        if self._fg_res is None and not self._fg_busy and not self._fg_msg:
+            self._fg_start()
+        rows: list = [self._info("For your own games and backups. CodeAque looks in Downloads, Desktop, Documents and plugged-in drives (every folder, "
+                                 "whole game folders and archives), tells which console each game is for, and puts it in ~/Games/CodeAque/<console>. "
+                                 "Nothing is downloaded and nothing moves until you press the button below.")]
+        if self._fg_busy:
+            rows.append(self._info("Working:  " + self._fg_busy))
+        if self._fg_msg:
+            rows.append(self._info("Result:  " + self._fg_msg))
+        res = self._fg_res
+        if res is not None and not self._fg_busy:
+            games = [e for e in res.entries if e.kind != "installer"]
+            inst = [e for e in res.entries if e.kind == "installer"]
+            if not games and not inst:
+                rows.append(self._info("No games found in: " + ", ".join(res.roots) + "."))
+            last = None
+            for e in games:
+                if e.system != last:
+                    last = e.system
+                    n = len([x for x in games if x.system == e.system])
+                    rows.append(self._info(f"{self._sys_name(e.system)}  -  {n} game{'s' if n != 1 else ''}"))
+                rows.append({"kind": "item", "id": "fgrow", "title": "   " + e.title,
+                             "value": {"archive": "ARCHIVE", "pc": "PC FOLDER"}.get(e.kind, ""),
+                             "detail": f"From {e.source}  ->  {e.dest}" + (f"   (starts with {e.exe})" if e.exe else "")})
+            for i, e in enumerate(inst):
+                rows.append({"kind": "item", "id": f"fginst:{i}", "title": f"Installer: {e.title}",
+                             "detail": f"{e.source}  -  if this is a game, press to set it up with the PC Games Installer (it is not run otherwise)."})
+            if res.unknown or res.skipped:
+                rows.append(self._info(f"Skipped {res.unknown} file{'s' if res.unknown != 1 else ''} whose console could not be told"
+                                       + (" (first: " + res.skipped[0] + ")" if res.skipped else "") + ". Games you already have are skipped when copying."))
+            if games:
+                rows.append({"kind": "item", "id": "fgmode", "title": "How:  " + ("Move (the originals are removed after copying)" if self._fg_move
+                                                                               else "Copy (the originals stay where they are)"),
+                             "detail": "Press to switch between copy and move."})
+                rows.append({"kind": "done", "id": "fggo", "title": f"{'Move' if self._fg_move else 'Copy'} {len(games)} game{'s' if len(games) != 1 else ''} into my games",
+                             "detail": "Then CodeAque scans again so they show up."})
+        if not self._fg_busy:
+            rows.append({"kind": "item", "id": "fgscan", "title": "Look again"})
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    def _fg_start(self) -> None:
+        self._fg_busy, self._fg_msg = "Looking for games...", ""
+
+        def say(t):
+            self._fg_busy = t
+            self._bgDone.emit()
+
+        def work():
+            try:
+                self._fg_res = findgames.find(self.cfg, say=say)
+                n = len([e for e in self._fg_res.entries if e.kind != "installer"])
+                self._fg_msg = f"Found {n} game{'s' if n != 1 else ''}." + (" Check the list, then press the button at the bottom." if n else "")
+            except Exception as exc:  # pragma: no cover
+                self._fg_msg = f"Something went wrong: {exc}"
+            finally:
+                self._fg_busy = ""
+                self._bgDone.emit()
+        threading.Thread(target=work, daemon=True, name="atari-findgames").start()
+
+    def _fg_activate(self, rid: str) -> str:
+        if self._fg_busy:
+            return ""
+        if rid == "fgscan":
+            self._fg_start()
+            return "refresh"
+        if rid == "fgmode":
+            self._fg_move = not self._fg_move
+            return "refresh"
+        if rid.startswith("fginst:") and self._fg_res is not None:
+            inst = [e for e in self._fg_res.entries if e.kind == "installer"]
+            try:
+                e = inst[int(rid.split(":")[1])]
+            except (ValueError, IndexError):
+                return ""
+            self._win_reset()
+            self._win_exe, self._win_name = str(e.source), e.title
+            return "page:winform"
+        if rid == "fggo" and self._fg_res is not None:
+            res, move = self._fg_res, self._fg_move
+            self._fg_busy = "Copying..."
+
+            def say(t):
+                self._fg_busy = t
+                self._bgDone.emit()
+
+            def work():
+                try:
+                    d = findgames.install(res, self.cfg, move=move, say=say)
+                    bits = [f"{'Moved' if move else 'Copied'} {d.added} game{'s' if d.added != 1 else ''}"]
+                    if d.duplicates:
+                        bits.append(f"{d.duplicates} already there (skipped)")
+                    if d.unknown:
+                        bits.append(f"{d.unknown} not recognised (skipped)")
+                    if d.failed:
+                        bits.append("problems: " + "; ".join(d.failed[:3]))
+                    self._fg_msg = ", ".join(bits) + "."
+                    kiosk.log_event("find my games: " + self._fg_msg)
+                    self._fg_res = None
+                    self._fg_done = True
+                except Exception as exc:  # pragma: no cover
+                    self._fg_msg = f"Something went wrong: {exc}"
+                finally:
+                    self._fg_busy = ""
+                    self._bgDone.emit()
+                    QTimer.singleShot(0, lambda: self.rescan(toast=False))
+            threading.Thread(target=work, daemon=True, name="atari-findgames-copy").start()
+            return "refresh"
+        return ""
+
+    # ----- Pair a Bluetooth controller ------------------------------------------------------------
+    def _bt_rows(self) -> list:
+        self._page_seen("btpair")
+        rows: list = []
+        if self._bt_busy:
+            rows.append(self._info("Working:  " + self._bt_busy))
+        elif self._bt_msg:
+            rows.append(self._info("Result:  " + self._bt_msg))
+        if not bluetooth.available():
+            rows.append(self._info("The Bluetooth tools (BlueZ) are not installed on this computer. In a Terminal:  sudo apt install bluez   then restart."))
+            rows.append({"kind": "item", "id": "back", "title": "Back"})
+            return rows
+        rows += [self._info(t) for t in bluetooth.PAIRING_STEPS]
+        if not self._bt_busy:
+            rows.append({"kind": "done", "id": "btscan", "title": f"Search for controllers ({bluetooth.SCAN_SECONDS} seconds)",
+                         "detail": "Switches Bluetooth on if needed (asks for the password only if Bluetooth is blocked or stopped)."})
+        pads_ = [d for d in self._bt_found if d.is_pad]
+        other = [d for d in self._bt_found if not d.is_pad]
+        if self._bt_searched and not self._bt_found:
+            rows.append(self._info("Nothing found. Put the pad in pairing mode (fast flashing light) right before pressing Search, and keep it close."))
+        for d in pads_ + other[:8]:
+            state = "Connected" if d.connected else "Paired" if d.paired else "New"
+            extra = f"   Battery {d.battery}%" if d.battery is not None else ""
+            act = "Press to connect again" if d.paired and not d.connected else "Press to pair and connect" if not d.paired else "Already connected"
+            rows.append({"kind": "item", "id": "btdev:" + d.mac, "title": ("" if d.is_pad else "(not a controller?)  ") + d.name,
+                         "value": state, "detail": f"{act}.  {d.mac}{extra}"})
+        for d in pads_:
+            if d.paired:
+                rows.append({"kind": "item", "id": "btforget:" + d.mac, "title": f"Forget {d.name}",
+                             "detail": "Removes the pairing (do this if it will not reconnect, then pair it again)."})
+        rows.append(self._info("Not tested with real Bluetooth pads on your computer: if a pad pairs but does nothing, pair it once in the desktop's "
+                               "Bluetooth settings, then it shows here as Paired."))
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    def _bt_job(self, what: str, fn) -> None:
+        if self._bt_busy:
+            return
+        self._bt_busy = what
+
+        def work():
+            try:
+                fn()
+            except Exception as exc:  # pragma: no cover
+                self._bt_msg = f"Something went wrong: {exc}"
+            finally:
+                self._bt_busy = ""
+                self._bgDone.emit()
+        threading.Thread(target=work, daemon=True, name="atari-bluetooth").start()
+
+    def _bt_activate(self, rid: str) -> str:
+        if rid == "btscan":
+            def scan():
+                ok, text = bluetooth.ensure_on()
+                if not ok:
+                    self._bt_msg = text
+                    return
+                self._bt_busy = f"Searching for {bluetooth.SCAN_SECONDS} seconds - put the pad in pairing mode now..."
+                self._bgDone.emit()
+                self._bt_found = bluetooth.scan()
+                self._bt_searched = True
+                n = len([d for d in self._bt_found if d.is_pad])
+                self._bt_msg = f"Found {n} controller{'s' if n != 1 else ''}." + (" Press one to pair it." if n else "")
+                kiosk.log_event(f"bluetooth scan: {len(self._bt_found)} devices, {n} pads")
+            self._bt_job("Switching Bluetooth on...", scan)
+            return "refresh"
+        if rid.startswith("btdev:"):
+            mac = rid[6:]
+
+            def pair():
+                def say(t):
+                    self._bt_busy = t
+                    self._bgDone.emit()
+                ok, self._bt_msg = bluetooth.connect_pad(mac, say=say)
+                kiosk.log_event(f"bluetooth pair {mac}: {ok} {self._bt_msg}")
+                self._bt_found = bluetooth.devices()
+            self._bt_job("Pairing...", pair)
+            return "refresh"
+        if rid.startswith("btforget:"):
+            mac = rid[9:]
+
+            def forget():
+                ok, self._bt_msg = bluetooth.forget(mac)
+                self._bt_found = bluetooth.devices()
+            self._bt_job("Removing...", forget)
+            return "refresh"
+        return ""
+
+    # ----- Screen to TV ---------------------------------------------------------------------------
+    def _tv_rows(self) -> list:
+        self._page_seen("screentv")
+        rows: list = []
+        if self._tv_msg:
+            rows.append(self._info("Result:  " + self._tv_msg))
+        left = int(self._tv_until - time.monotonic() + 0.99)
+        if self._tv_undo and left > 0:
+            rows.append({"kind": "done", "id": "tvkeep", "title": f"Keep this  (undoes itself in {left} s)",
+                         "detail": "Press if you can see this on the screen you wanted."})
+            rows.append({"kind": "item", "id": "tvundo", "title": "Undo now"})
+        outs = screentv.xrandr_outputs()
+        kern = screentv.kernel_outputs()
+        shown = outs if outs is not None else kern
+        conn = [o for o in shown if o.connected]
+        if conn:
+            rows.append(self._info("Screens plugged in now:  " + ",  ".join(f"{o.name} ({o.kind}{', on' if o.active else ''})" for o in conn)))
+        else:
+            rows.append(self._info("CodeAque could not see which screens are plugged in."))
+        inner, tv = screentv.pick(shown)
+        rows += [self._info(t) for t in screentv.CABLE_STEPS]
+        if outs is None:
+            rows.append(self._info("Switching screens from here needs an X11 session with xrandr. Otherwise use the system's Display settings, "
+                                   "or press the laptop's screen key (often Fn + F4 / F7 / a key with a screen picture)."))
+        elif tv is None:
+            rows.append(self._info("No TV found yet. Plug in the cable, switch the TV to that HDMI input, then press Refresh."))
+        else:
+            rows.append({"kind": "item", "id": "tvmirror", "title": f"Same picture on both screens ({tv.name})",
+                         "detail": "Mirror: the TV shows the same as this screen."})
+            rows.append({"kind": "item", "id": "tvonly", "title": f"TV only ({tv.name})",
+                         "detail": f"Switches this screen off and uses the TV. Undoes itself after {screentv.REVERT_SECONDS} s unless you press Keep."})
+            if inner is not None:
+                rows.append({"kind": "item", "id": "tvhere", "title": f"This screen only ({inner.name})", "detail": "Switches the TV picture off."})
+        rows += [self._info(t) for t in screentv.WIRELESS_STEPS]
+        cmd = screentv.wireless_app()
+        if cmd:
+            rows.append({"kind": "item", "id": "tvwireless", "title": "Open wireless display (Miracast)",
+                         "detail": "Opens GNOME Network Displays: pick your TV in its list."})
+        else:
+            rows.append(self._info("For wireless Miracast, install GNOME Network Displays (in a Terminal:  flatpak install flathub org.gnome.NetworkDisplays) "
+                                   "- then this page gets an Open button."))
+        rows.append({"kind": "item", "id": "tvrefresh", "title": "Refresh"})
+        rows.append(self._info("Not tested on a real TV here: the screen switching is the standard xrandr command, and wireless depends on your TV."))
+        rows.append({"kind": "item", "id": "back", "title": "Back"})
+        return rows
+
+    def _tv_apply(self, mode: str) -> str:
+        outs = screentv.xrandr_outputs()
+        if outs is None:
+            self._tv_msg = "Screen switching is not possible here (needs X11 and xrandr)."
+            return "refresh"
+        inner, tv = screentv.pick(outs)
+        cmd = screentv.commands(mode, inner, tv)
+        if not cmd:
+            self._tv_msg = "No TV found to switch to."
+            return "refresh"
+        undo = screentv.undo_command(outs)
+        ok, err = screentv.run(cmd)
+        kiosk.log_event(f"screen to tv {mode}: {ok} {' '.join(cmd)} {err}")
+        if not ok:
+            self._tv_msg = "The screen could not be switched: " + (err or "xrandr said no") + "."
+            return "refresh"
+        self._tv_msg = {"mirror": "Same picture on both screens.", "tv": "Showing on the TV only.", "here": "Showing on this screen only."}[mode]
+        if mode != "here" and undo:
+            self._tv_undo = undo
+            self._tv_until = time.monotonic() + screentv.REVERT_SECONDS
+            self._tv_timer.start()
+        return "refresh"
+
+    def _tv_tick(self) -> None:
+        if self._tv_undo and time.monotonic() >= self._tv_until:
+            self._tv_revert("Nobody pressed Keep, so the screens were put back.")
+        if self._page_visible("screentv"):
+            self.pageChanged.emit()
+        if not self._tv_undo:
+            self._tv_timer.stop()
+
+    def _tv_revert(self, why: str) -> None:
+        cmd, self._tv_undo = self._tv_undo, []
+        if cmd:
+            ok, err = screentv.run(cmd)
+            kiosk.log_event(f"screen to tv undo: {ok} {' '.join(cmd)} {err}")
+            self._tv_msg = why if ok else "Could not put the screens back: " + err
+
+    def _tv_activate(self, rid: str) -> str:
+        if rid in ("tvmirror", "tvonly", "tvhere"):
+            return self._tv_apply({"tvmirror": "mirror", "tvonly": "tv", "tvhere": "here"}[rid])
+        if rid == "tvkeep":
+            self._tv_undo = []
+            self._tv_msg = "Kept."
+            return "refresh"
+        if rid == "tvundo":
+            self._tv_revert("Put back.")
+            return "refresh"
+        if rid == "tvwireless":
+            cmd = screentv.wireless_app()
+            if cmd:
+                try:
+                    subprocess.Popen(cmd, env=launcher.clean_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                     stdin=subprocess.DEVNULL, start_new_session=True)
+                    self._tv_msg = "Opened the wireless display app - pick your TV there."
+                    self._hide_for_wireless()
+                except OSError as exc:
+                    self._tv_msg = f"Could not open it: {exc}"
+            return "refresh"
+        if rid == "tvrefresh":
+            self._tv_msg = ""
+            return "refresh"
+        return ""
+
+    def _hide_for_wireless(self) -> None:
+        if self._window is not None and not os.environ.get("ATARI_NO_MINIMIZE"):
+            self._window.showMinimized()
+
     # ----- Controllers page ---------------------------------------------------------------------
     def _controllers_rows(self) -> list:
         self._ct_seen = time.monotonic()
@@ -1386,6 +2265,10 @@ class Backend(QObject):
             rows.append({"kind": "done", "id": f"ctxemu:{i}", "title": title,
                          "detail": "Writes this pad as player 1 (an Xbox controller) into xemu's settings and keeps xemu's automatic binding on. "
                                    "A copy of the old settings file is kept once. Close xemu first."})
+        rows.append({"kind": "item", "id": "ctbt", "title": "Pair a Bluetooth controller",
+                     "detail": "Search, pair and connect a wireless pad, with steps for putting it into pairing mode."})
+        for b in self._pad_batt:
+            rows.append(self._info(f"Battery:  {b['name']}  -  {b['text']}" + ("  (LOW - charge it soon)" if b.get("low") else "")))
         left = int(self._pad_test_until - time.monotonic())
         if left > 0:
             rows.append({"kind": "item", "id": "ctstop", "title": f"Testing: press buttons on the pad ({left} s left). Press here (keyboard / mouse) to stop",
@@ -1421,6 +2304,8 @@ class Backend(QObject):
             if ok and files:                                  # read it back so the page shows what is really in the file
                 self._ct_msg += " (read back: " + xemuconfig.read_pad()["guid"] + ")"
             return "refresh"
+        if rid == "ctbt":
+            return "page:btpair"
         if rid == "cttest":
             self._pad_events = []
             self._pad_test_until = time.monotonic() + 20
@@ -2322,6 +3207,29 @@ class Backend(QObject):
                 QTimer.singleShot(0, self._hide_for_game)
         threading.Thread(target=work, daemon=True).start()
 
+    @Property(bool, notify=runningStatusChanged)
+    def runningSteam(self):
+        return bool(self._running and getattr(self, "_running_appid", ""))
+
+    @Slot(result=str)
+    def copySteamLog(self) -> str:
+        """Now Playing > Copy Steam log: CodeAque's Steam steps plus Steam's own log, to the clipboard and ~/CodeAque-steam-log.txt."""
+        from . import steam as steam_mod
+        text = steam_mod.steam_log_report(session_lines=kiosk.log_tail(2000))
+        path = Path.home() / "CodeAque-steam-log.txt"
+        try:
+            path.write_text(text, encoding="utf-8")
+        except OSError:
+            path = None
+        try:
+            from PySide6.QtGui import QGuiApplication
+            QGuiApplication.clipboard().setText(text)
+        except Exception:  # pragma: no cover
+            pass
+        kiosk.log_event("steam launch: Steam log copied" + (f" (saved to {path})" if path else ""))
+        self.show_toast("Steam log copied - paste it in a message, or send the file " + (str(path) if path else "(could not save the file)") + ".", 9000)
+        return str(path or "")
+
     @Slot()
     def cancelLaunch(self) -> None:
         """Esc / B / the Cancel button while a Steam game is starting: stop waiting and come back to CodeAque (Steam keeps running)."""
@@ -2888,6 +3796,9 @@ class Backend(QObject):
             rows.append({"kind": "emu", "id": sc.id, "title": sc.name, "value": value,
                          "detail": games + (label if ready else (label + ": " + hint))
                                    + (f"   [{hint}]" if ready and hint else "") + bios_line})
+            if ready and bstate == "missing":
+                rows.append({"kind": "biosfindpage", "title": f"{sc.name}: Find my BIOS files", "value": "",
+                             "detail": "Looks in Downloads (also inside archives) for this console's BIOS and copies it into place."})
             if sc.id == "xbox":
                 rows.append({"kind": "xemupage", "title": "Xbox: check and repair xemu settings", "value": "",
                              "detail": "Shows exactly which BIOS, boot ROM and disk files xemu will use, fixes empty paths "
@@ -2904,8 +3815,9 @@ class Backend(QObject):
                      "detail": (f"Open in {b.name}. " + ("Netflix & co. work." if b.drm else "Netflix & co. may not play (no Widevine) - use Chrome.")
                                 if b else webapps.HELP_TEXT)})
         wok, wlabel = windows.runner_status(self.cfg)
-        rows.append({"kind": "app", "title": "Windows games  (umu / Proton / Wine)", "value": "Ready" if wok else "Not installed",
-                     "detail": ("Runs with " + wlabel + ".") if wok else wlabel})
+        rows.append({"kind": "app", "title": "PC Games support", "value": "Ready" if wok else "Not installed",
+                     "detail": ("Advanced: PC games run with " + wlabel + " (a Windows compatibility layer), each game in its own private folder.")
+                               if wok else wlabel})
         for name, text in emulators.NOTES:
             rows.append({"kind": "info", "title": f"{name}: {text}", "value": "", "detail": ""})
         rows.append({"kind": "back", "title": "Back to Settings", "value": "",
@@ -3942,6 +4854,18 @@ class Backend(QObject):
                      "detail": "Find a network, type its password with the on-screen keyboard, see if it connected, or forget a network. "
                                "Works in CodeAque-only mode too."})
         _mode = kiosk.read_mode(self._kiosk_layout)["next"]
+        rows.append({"kind": "bootpage", "title": "Boot screen", "detail": "The CodeAque start-up menu (CodeAque / Windows) and splash. Install or restore."})
+        rows.append({"kind": "steamboot", "title": "Start Steam at boot (hidden): " + ("ON" if self._steam_autostart_on() else "OFF"),
+                     "detail": "Starts Steam quietly in the background when CodeAque starts, with Steam's own saved login, so games open faster. "
+                               "CodeAque never sees or stores your Steam password." + ("" if self._steam_installed() else " (Steam is not installed.)")})
+        rows.append({"kind": "themepage", "title": "Theme: " + themes.get(self.store.get_pref("theme", themes.DEFAULT)).name,
+                     "detail": "CodeAque Gold, Midnight, Neon, Light, Hoodlum Asylum - colours, background and buttons."})
+        rows.append({"kind": "findgamespage", "title": "Find my games",
+                     "detail": "Your own games and backups from Downloads, Desktop, Documents and drives, sorted by console."})
+        rows.append({"kind": "biosfindpage", "title": "Find my BIOS files",
+                     "detail": "Looks in Downloads (also inside .zip / .7z / .rar) and copies them where the emulators look."})
+        rows.append({"kind": "screentvpage", "title": "Screen to TV: show CodeAque on your TV",
+                     "detail": "HDMI cable steps, same picture / TV only, and wireless (Miracast, Chromecast) if your TV supports it."})
         rows.append({"kind": "controllerspage", "title": "Controllers: see your gamepads, test buttons, set up for xemu",
                      "detail": "Shows the gamepads found, a live button test, and writes player 1 into xemu's settings."})
         rows.append({"kind": "startmodepage", "title": "Start mode: Linux desktop or CodeAque only",
@@ -4092,16 +5016,17 @@ class Backend(QObject):
     # ----- help, "fix my game", Windows games: simple row-list pages -------------------
     @Slot(str, result=str)
     def pageTitle(self, name: str) -> str:
-        return {"help": "HELP & GETTING STARTED", "fix": "FIX MY GAME", "winform": "ADD A WINDOWS GAME",
+        return {"help": "HELP & GETTING STARTED", "fix": "FIX MY GAME", "winform": "PC GAMES INSTALLER",
                 "winchoose": "WHICH PROGRAM STARTS THE GAME?", "winwork": "OPENING THE ARCHIVE",
                 "install": "INSTALL", "installmenu": "INSTALL EMULATORS & APPS", "steam": "STEAM",
                 "recordings": "RECORDINGS", "coverpick": "PICK A COVER", "nocovers": "COVERS NOT FOUND",
-                "addgames": "ADD GAMES", "kiosk": "CODEAQUE-ONLY MODE", "startmode": "START MODE", "xemusetup": "XBOX (XEMU) SETTINGS", "controllers": "CONTROLLERS", "quietboot": "QUIET BOOT", "power": "POWER", "downloads": "DOWNLOADS", "golive": "GO LIVE", "robloxfix": "FIX ROBLOX",
+                "addgames": "ADD GAMES", "kiosk": "CODEAQUE-ONLY MODE", "startmode": "START MODE", "xemusetup": "XBOX (XEMU) SETTINGS", "controllers": "CONTROLLERS", "btpair": "PAIR A BLUETOOTH CONTROLLER", "biosfind": "FIND MY BIOS FILES", "theme": "THEME", "simtycoon": "SIM & TYCOON", "create": "CREATE", "boot": "BOOT SCREEN", "simpick": "ADD TO SIM & TYCOON", "findgames": "FIND MY GAMES", "screentv": "SCREEN TO TV", "quietboot": "QUIET BOOT", "power": "POWER", "downloads": "DOWNLOADS", "golive": "GO LIVE", "robloxfix": "FIX ROBLOX",
                 "dlsystem": "WHICH SYSTEM IS THIS FILE FOR?", "files": "MY FILES", "fileact": "WHAT TO DO WITH IT", "deletegame": "DELETE GAME", "about": "ABOUT CODEAQUE"}.get(name, name.upper())
 
     @Slot(str, result=str)
     def pageSub(self, name: str) -> str:
         return {"help": "Up/Down to choose, Enter / A to press.  Esc / B = back.",
+                "simtycoon": "Your simulation and management games. Enter / A to play or install.  Esc / B = back.",
                 "golive": "Enter / A to press.  Esc / B = back.",
                 "robloxfix": "Enter / A on Run fix.  Esc / B = back.",
                 "downloads": "Enter / A on a finished file adds it to your games.  Esc / B = back.",
@@ -4124,6 +5049,10 @@ class Backend(QObject):
                 "startmode": "Choose one. Esc / B = back.",
                 "xemusetup": "Esc / B = back. Your own Xbox files only - nothing is bundled.",
                 "controllers": "Up/Down to choose, Enter / A to press.  Esc / B = back.",
+                "btpair": "Pairing mode on the pad first, then Search.  Esc / B = back.",
+                "biosfind": "Your own BIOS files only - nothing is downloaded.  Esc / B = back.",
+                "findgames": "Your own games and backups only - nothing is downloaded.  Esc / B = back.",
+                "screentv": "Cable first (easiest), wireless if your TV supports it.  Esc / B = back.",
                 "kiosk": "Read this, then choose.  Esc / B = back - nothing changes until you press Yes.",
                 "power": "Up/Down to choose, Enter / A to press.  Restart and shut down ask first.  Esc / B = back.",
                 "quietboot": "Read this, then choose.  Esc / B = back - nothing changes until you press Yes."}.get(name, "")
@@ -4285,8 +5214,12 @@ class Backend(QObject):
             {"kind": "item", "id": "usb", "title": "From a USB stick", "detail": usb, "value": "USB" if drives else ""},
             {"kind": "item", "id": "folder", "title": "From a folder on this computer",
              "detail": "Starts at your USB sticks, Downloads and Home. Pick the folder that holds the games."},
-            {"kind": "item", "id": "windows", "title": "A Windows game (.exe or .zip)",
-             "detail": "A PC game you downloaded yourself. CodeAque sets it up to run with Proton / Wine."},
+            {"kind": "done", "id": "findgames", "title": "Find my games (one press)",
+             "detail": "Looks in Downloads, Desktop, Documents and drives for your own games and backups, and sorts them by console."},
+            {"kind": "item", "id": "biosfind", "title": "Find my BIOS files (one press)",
+             "detail": "Looks in Downloads (also inside archives) for BIOS files from your own consoles."},
+            {"kind": "item", "id": "windows", "title": "PC Games Installer (a PC game: .exe, setup.exe or .zip)",
+             "detail": "A PC game you own or downloaded yourself. CodeAque sets it up to run on this computer."},
             {"kind": "item", "id": "bios", "title": "BIOS files (for PlayStation, Saturn, Dreamcast ...)",
              "detail": "Files from your own console; some emulators need them."},
             {"kind": "item", "id": "downloads", "title": "Files I downloaded from the web (Downloads)",
@@ -4346,6 +5279,24 @@ class Backend(QObject):
             return self._xemu_rows()
         if name == "controllers":
             return self._controllers_rows()
+        if name == "btpair":
+            return self._bt_rows()
+        if name == "biosfind":
+            return self._bf_rows()
+        if name == "theme":
+            return self._theme_rows()
+        if name == "simtycoon":
+            return self._sim_rows()
+        if name == "create":
+            return self._create_rows()
+        if name == "boot":
+            return self._boot_rows()
+        if name == "simpick":
+            return self._simpick_rows()
+        if name == "findgames":
+            return self._fg_rows()
+        if name == "screentv":
+            return self._tv_rows()
         if name == "quietboot":
             return self._quietboot_rows()
         if name == "power":
@@ -4370,8 +5321,8 @@ class Backend(QObject):
                          "value": "Done" if done else "", "tone": "ok" if done else "",
                          "detail": step["detail"]})
         rows += [
-            {"kind": "item", "id": "winadd", "title": "Add a Windows game (.exe or .zip)",
-             "detail": "For PC games you downloaded yourself. Runs through Proton / Wine."},
+            {"kind": "item", "id": "winadd", "title": "PC Games Installer (.exe, setup.exe or .zip)",
+             "detail": "For PC games you own or downloaded yourself."},
             {"kind": "item", "id": "nocovers", "title": "Covers not found (and re-download covers)",
              "detail": "Lists games no cover was found for; pick one yourself or search again."},
             {"kind": "item", "id": "steampage", "title": "Steam: install, rescan, where to keep games",
@@ -4444,6 +5395,8 @@ class Backend(QObject):
             rows.append({"kind": "item", "id": "emus", "title": "Install emulators and apps",
                          "detail": "Opens a window that installs what is missing (needs internet)."})
         if g.platform != "steam" and not g.launch and g.platform not in apps.NON_GAME:
+            rows.append({"kind": "item", "id": "biosfind", "title": "Find my BIOS files (looks in Downloads for you)",
+                         "detail": "Finds the files by name and size, also inside .zip / .7z / .rar, and shows where they go before copying."})
             rows.append({"kind": "item", "id": "bios", "title": "Add BIOS files",
                          "detail": "From your own console, via USB stick or folder."})
         if g.platform == "steam" or g.gid == "app:steam":
@@ -4521,6 +5474,10 @@ class Backend(QObject):
         """Press a row. Returns what the screen should do next: '' | refresh | back | close | page:X | browse:X | osk:winname | import:games | import:bios | controls | emus"""
         if rid in ("back", "noop"):
             return "back" if rid == "back" else ""
+        if rid == "biosfind" and name != "biosfind":
+            return "page:biosfind"
+        if rid == "findgames" and name != "findgames":
+            return "page:findgames"
         if name == "help":
             return self._help_activate(rid)
         if name == "robloxfix":
@@ -4568,6 +5525,24 @@ class Backend(QObject):
             return self._xemu_activate(rid)
         if name == "controllers":
             return self._controllers_activate(rid)
+        if name == "btpair":
+            return self._bt_activate(rid)
+        if name == "biosfind":
+            return self._bf_activate(rid)
+        if name == "theme":
+            return self._theme_activate(rid)
+        if name == "simtycoon":
+            return self._sim_activate(rid)
+        if name == "create":
+            return self._create_activate(rid)
+        if name == "boot":
+            return self._boot_activate(rid)
+        if name == "simpick":
+            return self._simpick_activate(rid)
+        if name == "findgames":
+            return self._fg_activate(rid)
+        if name == "screentv":
+            return self._tv_activate(rid)
         if name == "quietboot":
             return self._quietboot_activate(rid)
         if name == "power":
@@ -4621,6 +5596,12 @@ class Backend(QObject):
                 return "browse:wincover"
             if rid == "add":
                 return self.winFinish()
+            if rid == "runinstaller":
+                self._win_run_installer()
+                return "refresh"
+            if rid == "pcsupport":
+                self.begin_install(list(windows.SUPPORT_SPECS), what="PC game support")
+                return ""
         if name == "winchoose" and rid.startswith("c"):
             try:
                 self._win_exe = str(self._win_cands[int(rid[1:])].path)
@@ -4712,7 +5693,7 @@ class Backend(QObject):
         """Like listDir, plus the files of one kind: 'exe' (programs and archives) or 'image'."""
         data = dict(self.listDir(path))
         exts = {"exe": (".exe",) + windows.ARCHIVE_EXT, "image": windows.IMAGE_EXT, "video": intro.VIDEO_EXT,
-                "archive": tuple(files.ARCHIVE_SUFFIXES)}.get(kind, ())
+                "archive": tuple(files.ARCHIVE_SUFFIXES), "unreal": ("unrealeditor", "ue4editor")}.get(kind, ())
         found = []
         if path and exts:
             try:
@@ -4804,10 +5785,20 @@ class Backend(QObject):
 
     def _winform_rows(self) -> list:
         ok, label = windows.runner_status(self.cfg)
-        return [
-            self._info("CodeAque runs Windows games with " + (label if ok else "a helper that is not installed yet") + "."
-                       + ("" if ok else "  " + windows.UMU_HINT)),
-            self._info("Program: " + self._win_exe),
+        self._page_seen("winform")
+        rows = []
+        if self._win_msg:
+            rows.append(self._info(("Working:  " if self._win_busy else "Result:  ") + self._win_msg))
+        rows.append(self._info("PC games run on this computer through CodeAque's PC game support." if ok else windows.UMU_HINT))
+        if not ok:
+            rows.append({"kind": "item", "id": "pcsupport", "title": "Install PC game support",
+                         "detail": "Downloads umu-launcher from its official page (it fetches the rest the first time a game starts). Only when you press Install."})
+        rows.append(self._info(windows.ANTICHEAT_NOTE))
+        rows.append(self._info("Program: " + self._win_exe))
+        if self._win_exe and windows.is_installer(self._win_exe):
+            rows.append({"kind": "done", "id": "runinstaller", "title": "This is an installer: run it with the PC Games Installer",
+                         "detail": "The game's own setup opens; click through it as usual. When it closes, CodeAque finds the installed game and adds it."})
+        return rows + [
             {"kind": "item", "id": "name", "title": "Name", "value": self._win_name or "(none)",
              "detail": "Press Enter to change the name."},
             {"kind": "item", "id": "cover", "title": "Cover picture (optional)",
@@ -4816,6 +5807,24 @@ class Backend(QObject):
             {"kind": "done", "id": "add", "title": "Add this game"},
             {"kind": "item", "id": "back", "title": "Cancel"},
         ]
+
+    def _win_run_installer(self) -> None:
+        if getattr(self, "_win_busy", False):
+            return
+        setup, name = Path(self._win_exe), (self._win_name.strip() or windows.clean_name(Path(self._win_exe).parent.name))
+        self._win_busy, self._win_msg = True, "The installer is open - finish it, then CodeAque adds the game..."
+
+        def work():
+            try:
+                g, self._win_msg = windows.run_installer(self.cfg, setup, name)
+                kiosk.log_event(f"pc games installer: {setup} -> {g.exe if g else 'nothing'}")
+            except Exception as exc:  # pragma: no cover
+                self._win_msg = f"Something went wrong: {exc}"
+            finally:
+                self._win_busy = False
+                self._bgDone.emit()
+                QTimer.singleShot(0, lambda: self.rescan(toast=False))
+        threading.Thread(target=work, daemon=True, name="atari-pcinstaller").start()
 
     @Slot(result=str)
     def winName(self) -> str:
@@ -4836,7 +5845,7 @@ class Backend(QObject):
         if not self._win_exe or not Path(self._win_exe).is_file():
             self.show_toast("That program is missing. Choose the game again.", 7000)
             return "close"
-        name = self._win_name.strip() or "Windows game"
+        name = self._win_name.strip() or "PC game"
         windows.add_game(name, self._win_exe, self._win_cover)
         self._win_reset()
         self.rescan(toast=False)
@@ -4844,7 +5853,7 @@ class Backend(QObject):
         self.currentFilterChanged.emit()
         self._apply()
         ok, label = windows.runner_status(self.cfg)
-        self.show_toast(f"Added {name} to Windows / PC." + ("" if ok else "  " + windows.UMU_HINT), 10000)
+        self.show_toast(f"Added {name} to PC Games." + ("" if ok else "  " + windows.UMU_HINT), 10000)
         return "close"
 
     @Slot(result=str)

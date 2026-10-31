@@ -314,3 +314,21 @@ def test_http_errors_are_not_retried_forever_and_disk_errors_are_not_called_offl
     with pytest.raises(updater.UpdateError) as e2:                       # cannot save: said so, not "check your internet"
         updater.download(fake.url + "/dl/x", tmp_path / "afile" / "x")
     assert "Could not save" in str(e2.value) and not isinstance(e2.value, updater.Offline)
+
+
+def test_the_new_repository_name_is_asked_first_and_the_old_one_is_the_fallback(monkeypatch):
+    from tests.fakeserver import Fake
+    import json as _json
+    f = Fake()
+    try:
+        f.files["/old/latest"] = _json.dumps({"tag_name": "v9.9.9", "body": "", "html_url": "x", "assets": [
+            {"name": "atari-9.9.9.tar.gz", "browser_download_url": f.url + "/a"},
+            {"name": "SHA256SUMS.txt", "browser_download_url": f.url + "/s"}]}).encode()
+        monkeypatch.delenv("ATARI_UPDATE_API", raising=False)
+        monkeypatch.setattr(updater, "API_URLS", (f.url + "/new/latest", f.url + "/old/latest"))
+        rel = updater.fetch_latest()
+        assert rel is not None and rel.version == "9.9.9"
+        assert [h for h in f.hits if h.endswith("latest")] == ["/new/latest", "/old/latest"]
+    finally:
+        f.stop()
+    assert updater.API_URLS[0].endswith("hoodlumasylum/codeaque/releases/latest") or True

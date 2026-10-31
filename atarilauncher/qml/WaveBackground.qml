@@ -6,7 +6,7 @@ Item {
     id: wb
     property bool active: true
     clip: true
-    opacity: 0.55
+    opacity: Theme.waveOpacity
 
     Repeater {
         model: [ { src: "wave1.png", period: 90000, bobMs: 7000, top: 0.52, dir: 1 },

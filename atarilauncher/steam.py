@@ -312,18 +312,47 @@ def _cmdlines(proc_root: str = "/proc"):
                 continue
 
 
-def steam_running(proc_root: str = "/proc") -> bool:
-    """True while the Steam client itself is running (native, or Flatpak - its processes show on the host too)."""
-    for _pid, parts in _cmdlines(proc_root):
-        if any(os.path.basename(a.decode("utf-8", "replace")) in ("steam", "steamwebhelper") for a in parts[:2]):
+STEAM_NAMES = ("steam", "steamwebhelper", "steam.sh")
+
+
+def _comm(proc_root: str, pid: int) -> str:
+    try:
+        with open(f"{proc_root}/{pid}/comm", "rb") as fh:
+            return fh.read().decode("utf-8", "replace").strip()
+    except OSError:
+        return ""
+
+
+def _pid_file_alive(proc_root: str, home: Path | None) -> bool:
+    """~/.steam/steam.pid (also inside the Flatpak's home) names a live process."""
+    home = home or Path.home()
+    for f in (home / ".steam/steam.pid", home / ".var/app/com.valvesoftware.Steam/.steam/steam.pid"):
+        try:
+            pid = int(f.read_text().strip() or "0")
+        except (OSError, ValueError):
+            continue
+        if pid > 0 and _comm(proc_root, pid) in ("steam", "steam.sh"):
             return True
     return False
 
 
+def steam_running(proc_root: str = "/proc", home: Path | None = None) -> bool:
+    """True while the Steam client itself is running (native, or Flatpak - its processes show on the host too). Checks the command line,
+    the process name (/proc/<pid>/comm: Steam's helpers rewrite their command lines) and ~/.steam/steam.pid."""
+    for pid, parts in _cmdlines(proc_root):
+        if any(os.path.basename(a.decode("utf-8", "replace")) in STEAM_NAMES for a in parts[:2]):
+            return True
+        if _comm(proc_root, pid) in ("steam", "steamwebhelper"):
+            return True
+    return _pid_file_alive(proc_root, home)
+
+
 def steam_ui_ready(proc_root: str = "/proc") -> bool:
     """True once Steam's own window process (steamwebhelper) exists: the client is past its start-up / update and can take a game request."""
-    for _pid, parts in _cmdlines(proc_root):
-        if any(os.path.basename(a.decode("utf-8", "replace")) == "steamwebhelper" for a in parts[:1]):
+    for pid, parts in _cmdlines(proc_root):
+        if any(os.path.basename(a.decode("utf-8", "replace")).startswith("steamwebhelper") for a in parts[:1]):
+            return True
+        if _comm(proc_root, pid).startswith("steamwebhelper"):
             return True
     return False
 
@@ -334,3 +363,48 @@ def steam_game_running(proc_root: str = "/proc") -> bool:
         if any(os.path.basename(a) == b"reaper" for a in parts[:1]) and any(a.startswith(b"AppId=") for a in parts):
             return True
     return False
+
+
+def steam_log_report(home: Path | None = None, session_lines: list[str] | None = None, n: int = 80) -> str:
+    """What "Copy Steam log" copies: CodeAque's Steam launch steps from session.log plus the end of Steam's own logs. Never raises."""
+    home = home or Path.home()
+    out = ["CodeAque Steam log", "== CodeAque steps (session.log) =="]
+    out += [ln for ln in (session_lines or []) if "steam" in ln.lower()][-150:] or ["(nothing yet)"]
+    for root in (home / ".local/share/Steam", home / ".steam/steam", home / ".var/app/com.valvesoftware.Steam/.local/share/Steam"):
+        for name in ("logs/console_log.txt", "logs/bootstrap_log.txt", "logs/content_log.txt"):
+            f = root / name
+            try:
+                lines = f.read_text(errors="replace").splitlines()[-n:]
+            except OSError:
+                continue
+            out += [f"== {f} (last {len(lines)} lines) =="] + lines
+    out.append(f"== Steam running: {steam_running(home=home)}; window process: {steam_ui_ready()}; a game running: {steam_game_running()} ==")
+    return "\n".join(out) + "\n"
+
+
+# ------------------------------------------------------------------ 0.5.0: start Steam at boot (hidden)
+AUTOSTART_PREF = "steam_autostart"
+LOGIN_HINT = "Open Steam once to log in (Steam tile) - after that it signs in by itself in the background."
+
+
+def steam_roots(home: Path | None = None) -> list[Path]:
+    home = home or Path.home()
+    return [p for p in (home / ".local/share/Steam", home / ".steam/steam", home / ".var/app/com.valvesoftware.Steam/.local/share/Steam")
+            if p.is_dir()]
+
+
+def remembered_login(home: Path | None = None) -> bool:
+    """Steam has a remembered account (config/loginusers.vdf, an account with RememberPassword 1). CodeAque only reads that flag -
+    it never reads, stores or types a Steam password; Steam keeps its own login."""
+    for root in steam_roots(home):
+        try:
+            text = (root / "config" / "loginusers.vdf").read_text(errors="replace")
+        except OSError:
+            continue
+        if re.search(r'"RememberPassword"\s+"1"', text, re.I) or re.search(r'"AllowAutoLogin"\s+"1"', text, re.I):
+            return True
+    return False
+
+
+def autostart_command(base: list[str]) -> list[str]:
+    return list(base) + ["-silent"]       # signs in with the saved login and stays in the tray, no window over CodeAque

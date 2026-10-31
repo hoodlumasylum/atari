@@ -1,0 +1,23 @@
+name = "Light"
+description = "Light grey and white, dark text. Good in a bright room."
+order = 4
+rain = false
+wave_opacity = 0.25
+
+[colors]
+bg = "#eef1f6"
+panel = "#ffffff"
+card = "#ffffff"
+line = "#c9d0dc"
+text = "#12151d"
+dim = "#3e4657"
+faint = "#6b7486"
+accent = "#c2121c"
+focus = "#b00a1e"
+accent_dark = "#f6d5d8"
+yellow = "#8a6200"
+green = "#1d7a2a"
+blue = "#1d5fbf"
+overlay = "#eef2f4f8"
+grad_top = "#ffffff"
+grad_bottom = "#dfe5ee"

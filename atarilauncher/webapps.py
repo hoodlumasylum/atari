@@ -73,6 +73,9 @@ WEBAPPS: list[WebApp] = [
 SUPPORT = WebApp("support", donate.TITLE, donate.DONATE_URL, browse=True, note=donate.NOTE)
 BY_ID = {w.id: w for w in WEBAPPS}
 BY_ID[SUPPORT.id] = SUPPORT
+UNREAL = WebApp("unrealpage", "Unreal Engine for Linux (Epic's page)", "https://www.unrealengine.com/en-US/linux", browse=True,
+                note="Epic's official download page. Sign in there with your own free Epic account.")
+BY_ID[UNREAL.id] = UNREAL
 
 
 @dataclass(frozen=True)

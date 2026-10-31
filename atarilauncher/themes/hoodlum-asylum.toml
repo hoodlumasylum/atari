@@ -1,0 +1,23 @@
+name = "Hoodlum Asylum"
+description = "Rainy night in a neon desert city: dark teal and purple with gold, and soft rain (can be switched off)."
+order = 5
+rain = true
+wave_opacity = 0.45
+
+[colors]
+bg = "#061014"
+panel = "#0b1a20"
+card = "#10232b"
+line = "#1f3d47"
+text = "#eef6f4"
+dim = "#a3bdb9"
+faint = "#5f7f7b"
+accent = "#7b3fe4"
+focus = "#e8b649"
+accent_dark = "#2a1456"
+yellow = "#e8b649"
+green = "#3fc1a5"
+blue = "#3aa6c9"
+overlay = "#ee051013"
+grad_top = "#0f2a33"
+grad_bottom = "#1a0f2e"

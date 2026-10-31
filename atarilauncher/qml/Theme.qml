@@ -2,21 +2,26 @@ pragma Singleton
 import QtQuick
 
 QtObject {
+    property var pal: ({})              // the chosen theme (atarilauncher/themes/<id>.toml), set from Main.qml; empty = the standard look
+    property color gradTop: pal.gradTop !== undefined ? pal.gradTop : bg
+    property color gradBottom: pal.gradBottom !== undefined ? pal.gradBottom : bg
+    property real waveOpacity: pal.waveOpacity !== undefined ? pal.waveOpacity : 0.55
+    property bool rain: pal.rain === true
     property bool anim: true            // false = "Reduce animations": nothing moves on its own (set from Main.qml)
-    readonly property color bg: "#08090e"
-    readonly property color panel: "#0f111a"
-    readonly property color card: "#151826"
-    readonly property color line: "#272b3d"
-    readonly property color text: "#f3f4f8"
-    readonly property color dim: "#9aa1b6"
-    readonly property color faint: "#5c6279"
-    readonly property color red: "#e0202a"
-    readonly property color redBright: "#ff3a43"
-    readonly property color redDark: "#5a0b11"
-    readonly property color yellow: "#f2c230"
-    readonly property color green: "#3fae49"
-    readonly property color blue: "#2f7de1"
-    readonly property color overlay: "#ee06070b"
+    property color bg: pal.bg !== undefined ? pal.bg : "#08090e"
+    property color panel: pal.panel !== undefined ? pal.panel : "#0f111a"
+    property color card: pal.card !== undefined ? pal.card : "#151826"
+    property color line: pal.line !== undefined ? pal.line : "#272b3d"
+    property color text: pal.text !== undefined ? pal.text : "#f3f4f8"
+    property color dim: pal.dim !== undefined ? pal.dim : "#9aa1b6"
+    property color faint: pal.faint !== undefined ? pal.faint : "#5c6279"
+    property color red: pal.red !== undefined ? pal.red : "#e0202a"
+    property color redBright: pal.redBright !== undefined ? pal.redBright : "#ff3a43"
+    property color redDark: pal.redDark !== undefined ? pal.redDark : "#5a0b11"
+    property color yellow: pal.yellow !== undefined ? pal.yellow : "#f2c230"
+    property color green: pal.green !== undefined ? pal.green : "#3fae49"
+    property color blue: pal.blue !== undefined ? pal.blue : "#2f7de1"
+    property color overlay: pal.overlay !== undefined ? pal.overlay : "#ee06070b"
 
     // ---- original line icons (24x24), built as SVG text so they can take any colour -------------
     readonly property var icons: ({

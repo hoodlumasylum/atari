@@ -161,7 +161,7 @@ def test_big_picture_flag_is_used_when_wanted_and_not_otherwise(env, monkeypatch
     cfg.steam_bigpicture = False
     monkeypatch.setattr(kiosk, "shell_mode", lambda *a, **k: False)
     (secs, err), _ = run(cfg, fs, steam_running=lambda: fs.up.exists() or fs.log.exists() and bool(fs.up.touch()) is None)
-    assert fs.calls()[0] == ""                       # plain `steam` (no -gamepadui) outside CodeAque-only mode when the setting is off
+    assert fs.calls()[0] == "-silent"                # `steam -silent` (no -gamepadui) outside CodeAque-only mode when the setting is off
 
 
 def test_every_step_lands_in_the_session_log(env):
@@ -357,3 +357,111 @@ def test_stale_minimised_flag_does_not_stop_the_next_game_stepping_aside(app, tm
         assert calls == ["min"]
     finally:
         ui.close()
+
+
+# ------------------------------------------------------------------ 0.5.0 (t421u): stuck on "Starting Steam... 26 s"
+def test_running_steam_without_a_window_process_does_not_block(env):
+    fs, cfg, events = env
+    t0 = time.time()
+    (secs, err), seen = run(cfg, fs, ui_ready=lambda: False, ui_grace=0.6)
+    assert err == "" and time.time() - t0 < 6
+    assert any("asking for the game anyway" in e for e in events)
+    assert "steam://rungameid/4242" in fs.calls()
+
+
+def test_steam_started_silent_outside_big_picture(env, monkeypatch):
+    fs, cfg, events = env
+    cfg.steam_bigpicture = False
+    monkeypatch.setattr(kiosk, "shell_mode", lambda *a, **k: False)
+    run(cfg, fs, steam_running=lambda: fs.log.exists(), ui_ready=lambda: fs.log.exists())
+    assert fs.calls()[0] == "-silent"
+
+
+def test_rungameid_is_retried_every_few_seconds(env):
+    fs, cfg, events = env
+    fs2 = FakeSteam(fs.tmp, start_game=False)
+    fs2.up.touch()
+    cfg.steam_command = fs2.cmd
+    run(cfg, fs2, start_timeout=2.2, reveal_after=5, resend_after=0.3, resend_every=0.5, hint_after=9)
+    assert fs2.calls().count("steam://rungameid/4242") >= 4
+
+
+def test_steam_detected_by_process_name_and_pid_file(tmp_path):
+    from atarilauncher import steam
+    proc = tmp_path / "proc"
+    (proc / "77").mkdir(parents=True)
+    (proc / "77" / "cmdline").write_bytes(b"")              # helpers rewrite their command lines
+    (proc / "77" / "comm").write_text("steamwebhelper\n")
+    home = tmp_path / "h"
+    home.mkdir()
+    assert steam.steam_running(str(proc), home=home) and steam.steam_ui_ready(str(proc))
+    (proc / "77" / "comm").write_text("bash\n")
+    assert not steam.steam_running(str(proc), home=home)
+    (proc / "88").mkdir()
+    (proc / "88" / "cmdline").write_bytes(b"x")
+    (proc / "88" / "comm").write_text("steam\n")
+    (home / ".steam").mkdir()
+    (home / ".steam" / "steam.pid").write_text("88")
+    assert steam.steam_running(str(proc), home=home)
+
+
+def test_steam_log_report(tmp_path):
+    from atarilauncher import steam
+    logs = tmp_path / ".local/share/Steam/logs"
+    logs.mkdir(parents=True)
+    (logs / "console_log.txt").write_text("hello from steam\n")
+    text = steam.steam_log_report(home=tmp_path, session_lines=["x steam launch: asking Steam for the game", "other"])
+    assert "asking Steam for the game" in text and "hello from steam" in text and "other" not in text
+
+
+# ------------------------------------------------------------------ 0.5.0 (t424u): start Steam at boot (hidden)
+def test_remembered_login_flag_only(tmp_path):
+    from atarilauncher import steam
+    assert not steam.remembered_login(tmp_path)
+    cfgd = tmp_path / ".local/share/Steam/config"
+    cfgd.mkdir(parents=True)
+    (cfgd / "loginusers.vdf").write_text('"users"\n{\n "7656" { "AccountName" "x" "RememberPassword" "0" }\n}\n')
+    assert not steam.remembered_login(tmp_path)
+    (cfgd / "loginusers.vdf").write_text('"users"\n{\n "7656" { "AccountName" "x" "RememberPassword" "1" }\n}\n')
+    assert steam.remembered_login(tmp_path)
+    assert steam.autostart_command(["steam"]) == ["steam", "-silent"]
+
+
+def test_autostart_setting_default_on_when_installed(app, tmp_path, monkeypatch):
+    from atarilauncher import steam
+    conf(tmp_path)
+    ui = Ui(app, tmp_path, monkeypatch, config_exists=False)
+    try:
+        b = ui.backend
+        monkeypatch.setattr(b, "_steam_installed", lambda: True)
+        monkeypatch.setattr(steam, "steam_running", lambda *a, **k: False)
+        assert b._steam_autostart_on()
+        row = next(r for r in b.setupRows() if r.get("kind") == "steamboot")
+        assert row["title"].endswith("ON") and "password" in row["detail"]
+        spawned, toasts = [], []
+        monkeypatch.setattr(b, "show_toast", lambda t, *a: toasts.append(t))
+        monkeypatch.setattr(steam, "remembered_login", lambda *a, **k: False)
+        assert b._steam_autostart(spawn=spawned.append) == "login" and not spawned and "Open Steam once to log in" in toasts[0]
+        monkeypatch.setattr(steam, "remembered_login", lambda *a, **k: True)
+        assert b._steam_autostart(spawn=spawned.append) == "started" and spawned[0][-1] == "-silent"
+        monkeypatch.setattr(steam, "steam_running", lambda *a, **k: True)
+        assert b._steam_autostart(spawn=spawned.append) == "running" and len(spawned) == 1
+        b.toggleSteamBoot()
+        assert not b._steam_autostart_on() and b._steam_autostart(spawn=spawned.append) == "off"
+        monkeypatch.setattr(b, "_steam_installed", lambda: False)
+        b.store.set_pref(steam.AUTOSTART_PREF, None)
+        assert not b._steam_autostart_on()
+    finally:
+        ui.close()
+
+
+def test_marvel_rivals_gets_the_launch_option_hint(env):
+    fs, cfg, events = env
+    fs2 = FakeSteam(fs.tmp, start_game=False)
+    fs2.up.touch()
+    cfg.steam_command = fs2.cmd
+    g = Game("steam:2767030", "Marvel Rivals", "steam", "Steam", steam_appid="2767030")
+    secs, err = launcher._run_steam(cfg, g, lambda: None, poll=0.1, start_timeout=1.0, grace=0.3, settle=0, reveal_after=5,
+                                    hint_after=0.5, steam_running=lambda: True, ui_ready=lambda: True)
+    assert "SteamDeck=1 %command%" in err
+    assert launcher.launch_option_hint("4242") == ""

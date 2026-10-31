@@ -106,7 +106,7 @@ def test_games_show_up_in_the_library(env, tmp_path):
     windows.add_game("My Fan Game", str(exe))
     res = library.build_library(config.default_config())
     g = [x for x in res.games if x.platform == "windows"]
-    assert len(g) == 1 and g[0].title == "My Fan Game" and g[0].platform_name == "Windows / PC"
+    assert len(g) == 1 and g[0].title == "My Fan Game" and g[0].platform_name == "PC Games"
 
 
 def fake_steam_home(home: Path, proton: str):
@@ -121,7 +121,7 @@ def test_runner_order_custom_umu_proton_wine(env, tmp_path):
     cfg = config.default_config()
     nothing = lambda n: None
     assert windows.find_runner(cfg, home, nothing).kind == ""
-    assert "umu-launcher" in windows.runner_status(cfg, home, nothing)[1]
+    assert "PC game support" in windows.runner_status(cfg, home, nothing)[1]
     assert windows.find_runner(cfg, home, lambda n: "/usr/bin/wine" if n == "wine" else None).kind == "wine"
     root = fake_steam_home(home, "Proton 8.0")
     fake_steam_home(home, "Proton 9.0")
@@ -166,7 +166,7 @@ def test_build_launch_errors_are_plain_english(env, tmp_path):
     with pytest.raises(windows.WinError, match="missing"):
         windows.build_launch(cfg, g, tmp_path, lambda n: "/x")
     (tmp_path / "ok.exe").write_bytes(b"MZ")
-    with pytest.raises(windows.WinError, match="helper"):
+    with pytest.raises(windows.WinError, match="PC game support"):
         windows.build_launch(cfg, windows.WinGame("x", "X", str(tmp_path / "ok.exe")), tmp_path / "nohome", lambda n: None)
 
 
@@ -262,4 +262,4 @@ def test_diagnose_controller_and_game_checks(env, tmp_path):
 def test_list_shows_the_windows_helpers(capsys):
     installer.list_status()
     text = capsys.readouterr().out
-    assert "umu-launcher" in text and "Wine" in text and "7-Zip" in text and "net.davidotek.pupgui2" in text
+    assert "PC Games support (umu-launcher)" in text and "PC Games support (fallback runtime)" in text and "7-Zip" in text and "net.davidotek.pupgui2" in text

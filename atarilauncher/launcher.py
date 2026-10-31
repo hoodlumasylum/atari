@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from . import apps, controls, emulators, exitwatch, freegames, paths, sober, webapps, windows, xbox, xemuconfig
+from . import create, simtycoon, apps, controls, emulators, exitwatch, freegames, paths, sober, webapps, windows, xbox, xemuconfig
 from .config import Config, SystemConfig
 from .library import Game
 
@@ -310,7 +310,7 @@ def _run_app(cfg: Config, game: Game, on_started):
         app = apps.BY_ID.get(store)
         cmd, how = apps.store_command(cfg, game.launch, store) if app else ([], "")
     else:
-        app = next((a for a in apps.APP_DEFS if a.gid == game.gid), None)
+        app = next((a for a in list(apps.APP_DEFS) + list(simtycoon.APPS) + list(create.APPS) if a.gid == game.gid), None)
         if app is None:
             raise LaunchError(f"Unknown app '{game.title}'.")
         cmd, how = apps.app_command(cfg, app)
@@ -694,6 +694,20 @@ def _run_windows(cfg: Config, game: Game, on_started):
     return elapsed, ""
 
 
+# games that are known not to start on desktop Linux without a Steam launch option (Properties > General > Launch options)
+LAUNCH_OPTION_HINTS = {
+    "2767030": "SteamDeck=1 %command%",      # Marvel Rivals (ProtonDB / Steam community reports; skips its launcher)
+}
+
+
+def launch_option_hint(appid: str, title: str = "") -> str:
+    opt = LAUNCH_OPTION_HINTS.get(str(appid))
+    if not opt:
+        return ""
+    return (f"\nTip for {title or 'this game'}: in Steam, right-click the game > Properties > Launch options, type  {opt}  and try again. "
+            "(Ask for Proton Experimental too, in Properties > Compatibility, if it still does not start.)")
+
+
 GAME_WAIT_MAX = 150.0        # seconds to wait for a game process once Steam was asked (the status screen offers Cancel all along)
 
 
@@ -709,7 +723,7 @@ def _slog(msg: str) -> None:
 
 def _run_steam(cfg: Config, game: Game, on_started, poll: float, start_timeout: float, grace: float = 6.0, status=None, cancel=None,
                steam_running=None, ui_ready=None, settle: float = 3.0, reveal_after: float = 20.0, resend_after: float = 45.0,
-               hint_after: float = 60.0, game_wait: float = GAME_WAIT_MAX, front=None):
+               hint_after: float = 60.0, game_wait: float = GAME_WAIT_MAX, front=None, ui_grace: float = 12.0, resend_every: float = 8.0):
     """A Steam game from CodeAque. Never fire-and-forget: (1) start Steam first when it is not running (Big Picture) and WAIT until its
     window process exists, (2) only then hand it steam://rungameid/<id>, (3) show live status, resend the request once, offer a hint
     after hint_after seconds, (4) detect the game's process, (5) let the user cancel (Esc / B on the screen, or Esc twice once CodeAque
@@ -744,7 +758,7 @@ def _run_steam(cfg: Config, game: Game, on_started, poll: float, start_timeout: 
     if steam_running():
         _slog(f"Steam is already running (window process {'up' if ui_ready() else 'not up yet'})")
     else:
-        spawn(base + (["-gamepadui"] if big_picture_wanted(cfg) else []), "Steam is not running - starting it")
+        spawn(base + (["-gamepadui"] if big_picture_wanted(cfg) else ["-silent"]), "Steam is not running - starting it")
         seen = False
         while True:
             if cancelled():
@@ -754,6 +768,13 @@ def _run_steam(cfg: Config, game: Game, on_started, poll: float, start_timeout: 
             waited = time.time() - t0
             if running and ui_ready():
                 _slog(f"Steam is up after {int(waited)} s")
+                break
+            if running and waited >= ui_grace:          # 0.4.9 waited for Steam's window process for minutes ("Starting Steam... 26 s")
+                _slog(f"Steam is running but its window process was not seen after {int(waited)} s - asking for the game anyway "
+                      "(and again every few seconds)")
+                break
+            if find_steam_pids(appid):
+                _slog("the game is already starting")
                 break
             if not running and not seen and waited > 45:
                 return 0.0, "Steam did not start. Open the Steam tile once to see what it says (sign in / update), then try again."
@@ -776,7 +797,7 @@ def _run_steam(cfg: Config, game: Game, on_started, poll: float, start_timeout: 
     else:
         say("launching", f"Asking Steam to start {title}...")
         first_seen = _ask_and_wait(base, appid, title, cfg, start_timeout, game_wait, step, steam_running, cancelled, say, spawn, stopped,
-                                   hint_after, reveal_after, resend_after)
+                                   hint_after, reveal_after, resend_after, resend_every)
         if isinstance(first_seen, tuple):
             return first_seen
         say("playing", f"Playing {title}")
@@ -796,7 +817,7 @@ def _run_steam(cfg: Config, game: Game, on_started, poll: float, start_timeout: 
 
 
 def _ask_and_wait(base, appid, title, cfg, start_timeout, game_wait, step, steam_running, cancelled, say, spawn, stopped,
-                  hint_after, reveal_after, resend_after):
+                  hint_after, reveal_after, resend_after, resend_every: float = 8.0, max_resends: int = 8):
     """Send steam://rungameid and wait for the game's process. Returns the time it was seen, or a (secs, message) tuple to hand back."""
     from . import steam as steam_mod
     watch = None
@@ -805,7 +826,7 @@ def _ask_and_wait(base, appid, title, cfg, start_timeout, game_wait, step, steam
         watch.start()
     spawn(base + [f"steam://rungameid/{appid}"], "asking Steam for the game")
     t1 = time.time()
-    resent = revealed = False
+    resent, revealed, last_ask = 0, False, None
     limit = min(start_timeout, game_wait)
     try:
         while time.time() - t1 < limit:
@@ -818,9 +839,10 @@ def _ask_and_wait(base, appid, title, cfg, start_timeout, game_wait, step, steam
             if not steam_running() and w > 10:
                 _slog("Steam closed before the game started")
                 return 0.0, "Steam closed before the game started. Open the Steam tile, check it signs in, then try again."
-            if w >= resend_after and not resent:
-                resent = True
-                spawn(base + [f"steam://rungameid/{appid}"], "no game yet - asking Steam again")
+            if w >= resend_after and resent < max_resends and (last_ask is None or time.time() - last_ask >= resend_every):
+                resent += 1
+                last_ask = time.time()
+                spawn(base + [f"steam://rungameid/{appid}"], f"no game yet - asking Steam again (try {resent + 1})")
             if w >= reveal_after and not revealed:
                 revealed = True
                 _slog("no game process yet - stepping aside so Steam's own windows (sign in, update, Proton download) can be seen")
@@ -828,14 +850,14 @@ def _ask_and_wait(base, appid, title, cfg, start_timeout, game_wait, step, steam
             text = f"Waiting for {title} to start... {int(w)} s"
             if w >= hint_after:
                 text += ("\nStill nothing after a minute. Steam may be asking something (sign in, an update, a Proton download, the game "
-                         "installing). Press Esc (or B) to go back to CodeAque, or Esc twice if CodeAque has stepped aside.")
+                         "installing). Press Esc (or B) to go back to CodeAque, or Esc twice if CodeAque has stepped aside.") + launch_option_hint(appid, title)
             say("waiting", text)
             time.sleep(step)
         waited = int(time.time() - t1)
         _slog(f"the game never started after {waited} s (Steam running: {steam_running()}; any Steam game process: {steam_mod.steam_game_running()})")
         return 0.0, (f"Steam did not start {title} within {waited} s (play time not recorded). Open the Steam tile to see Steam's own message "
                      "(sign in, update, the game still installing, or its anti-cheat). Games with an anti-cheat can refuse to start on Linux; "
-                     "the game's ProtonDB page says whether it works and which Steam launch option it needs.")
+                     "the game's ProtonDB page says whether it works and which Steam launch option it needs." + launch_option_hint(appid, title))
     finally:
         if watch is not None:
             watch.stop()

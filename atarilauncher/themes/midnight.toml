@@ -1,0 +1,23 @@
+name = "Midnight"
+description = "Deep blue-black, calm and dark."
+order = 2
+rain = false
+wave_opacity = 0.35
+
+[colors]
+bg = "#05070d"
+panel = "#0b0f1a"
+card = "#111827"
+line = "#1f2a44"
+text = "#e8ecf6"
+dim = "#9ba6c2"
+faint = "#5d6886"
+accent = "#3b82f6"
+focus = "#60a5fa"
+accent_dark = "#102449"
+yellow = "#f5c84c"
+green = "#34d399"
+blue = "#60a5fa"
+overlay = "#ee04060b"
+grad_top = "#0b1530"
+grad_bottom = "#05070d"
