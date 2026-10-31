@@ -380,7 +380,7 @@ Item {
         }
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
-            text: "Keyboard: just type, Enter = connect, Esc = back.   Controller: D-pad + A,  L1 = delete,  R1 = abc/ABC/123,  B = back"
+            text: backend.padText("Keyboard: just type, Enter = connect, Esc = back.   Controller: D-pad + A,  L1 = delete,  R1 = abc/ABC/123,  B = back", backend.padStyle)
             color: Theme.dim; font.pixelSize: 21 * ws.u
         }
     }

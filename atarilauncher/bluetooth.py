@@ -36,6 +36,7 @@ class Device:
     trusted: bool = False
     connected: bool = False
     battery: int | None = None
+    bonded: bool | None = None       # None = this BlueZ does not say (older than 5.66)
 
     @property
     def is_pad(self) -> bool:
@@ -93,6 +94,7 @@ def parse_info(mac: str, name: str, text: str) -> Device:
     d = Device(mac, field("Name") or field("Alias") or name or mac)
     d.icon = field("Icon")
     d.paired, d.trusted, d.connected = (field(k) == "yes" for k in ("Paired", "Trusted", "Connected"))
+    d.bonded = None if field("Bonded") == "" else field("Bonded") == "yes"
     m = re.search(r"Battery Percentage:\s*0x[0-9a-fA-F]+\s*\((\d+)\)", text)
     d.battery = int(m.group(1)) if m else None
     return d
@@ -268,13 +270,15 @@ def reconnect_conf(main_text: str, input_text: str) -> tuple[str, str]:
     input.conf: [General] ClassicBondedOnly=false - with true (BlueZ 5.6x default), a DualShock 4 whose bond BlueZ does not fully
     trust is refused at reconnect and has to be paired again. UserspaceHID is left as the distro set it."""
     from .inifile import set_values
-    return (set_values(main_text, "Policy", {"AutoEnable": "true"}, "="),
+    main_text = set_values(main_text, "General", {"FastConnectable": "true"}, "=")
+    return (set_values(main_text, "Policy", {"AutoEnable": "true", "ReconnectAttempts": "7"}, "="),
             set_values(input_text, "General", {"ClassicBondedOnly": "false"}, "="))
 
 
 def reconnect_ok(main_text: str, input_text: str) -> bool:
     from .inifile import get_value
     return (get_value(main_text, "Policy", "AutoEnable") or "").lower() == "true" and \
+        (get_value(main_text, "General", "FastConnectable") or "").lower() == "true" and \
         (get_value(input_text, "General", "ClassicBondedOnly") or "true").lower() == "false"
 
 
@@ -297,4 +301,99 @@ def trust_paired_pads(runner: Callable | None = None) -> list[str]:
         if d.paired and d.is_pad and not d.trusted:
             _rc, out = _run(["trust", d.mac], runner, 15)
             done.append(d.name)
+    return done
+
+
+DUALBOOT_NOTE = ("Why a pad can forget this computer after Windows: a Bluetooth pad keeps one secret key per computer, and Linux and "
+                 "Windows on the same laptop use the same Bluetooth adapter - so to the pad they are ONE computer. Pairing it in "
+                 "Windows gives it a new key, and Linux's saved key stops working (and the other way round). Honest fixes: pair "
+                 "the pad only in CodeAque (use a cable or a second pad in Windows), or copy the key from Windows to Linux with "
+                 "the free tool bt-dualboot (advanced; CodeAque does not do this for you).")
+
+
+def check_report(devs: list[Device], main_text: str, input_text: str, dual_boot: bool, service_on: bool = True) -> list[str]:
+    """Plain lines for Controllers > Controller check."""
+    from .inifile import get_value
+    out = []
+    pads_ = [d for d in devs if d.is_pad]
+    if not pads_:
+        out.append("No controller is paired with this computer yet.")
+    for d in pads_:
+        bond = "unknown (older Bluetooth software)" if d.bonded is None else ("yes" if d.bonded else "NO")
+        line = (f"{d.name} ({d.mac}): paired {'yes' if d.paired else 'NO'}, trusted {'yes' if d.trusted else 'NO'}, "
+                f"bonded {bond}, connected {'yes' if d.connected else 'no'}.")
+        if d.paired and d.bonded is False:
+            line += " Not bonded = no key was saved, so it can never reconnect by itself: Forget it and pair it again here."
+        elif d.paired and not d.trusted:
+            line += " Not trusted: press Fix controller reconnect."
+        out.append(line)
+    ae = (get_value(main_text, "Policy", "AutoEnable") or "not set")
+    fc = (get_value(main_text, "General", "FastConnectable") or "not set")
+    cb = (get_value(input_text, "General", "ClassicBondedOnly") or "not set (BlueZ default: true)")
+    uh = (get_value(input_text, "General", "UserspaceHID") or "not set (BlueZ default)")
+    out.append(f"Bluetooth settings: AutoEnable={ae}, FastConnectable={fc}, ClassicBondedOnly={cb}, UserspaceHID={uh}."
+               + ("" if reconnect_ok(main_text, input_text) else "  -> press Fix controller reconnect."))
+    if not service_on:
+        out.append("The Bluetooth service is not running.")
+    if any(d.paired and not d.connected for d in pads_):
+        out.append("A pad that shows Paired but does not connect when you press its PS / Home button usually has a stale pairing: "
+                   "press \"Remove and re-pair\" next to it (one tap; hold SHARE + PS while it searches).")
+    if dual_boot:
+        out.append("(Less likely here, only if the pad was ever paired in Windows:) " + DUALBOOT_NOTE)
+    return out
+
+
+def repair_pad(mac: str, runner: Callable | None = None, popen=None, say: Callable[[str], None] | None = None,
+               seconds: int = SCAN_SECONDS) -> tuple[bool, str]:
+    """One tap for a pad that shows Paired but will not connect (a stale pairing): remove it, search, pair, trust, connect -
+    then read it back and make sure Trusted (and Bonded, where BlueZ reports it) stuck."""
+    say = say or (lambda t: None)
+    if not MAC.match(mac or ""):
+        return False, "That is not a Bluetooth address."
+    say("Removing the old pairing...")
+    _run(["remove", mac], runner, 15)
+    say("Searching - hold SHARE + PS on the pad now until the light double-blinks...")
+    found = scan(runner, seconds, popen=popen, say=say) if (runner is None or popen is not None) else scan(runner, seconds)
+    if not any(d.mac == mac for d in found):
+        return False, ("The pad was not found. Hold SHARE + PS until the light bar double-blinks, keep it close, "
+                       "then press Remove and re-pair again.")
+    ok, text = connect_pad(mac, runner, say, popen=popen)
+    if not ok:
+        return False, text
+    _rc, info = _run(["info", mac], runner, 10)
+    d = parse_info(mac, "", info)
+    if not d.trusted:
+        _run(["trust", mac], runner, 15)
+        _rc, info = _run(["info", mac], runner, 10)
+        d = parse_info(mac, "", info)
+    if d.bonded is False:
+        return False, "It connected, but Bluetooth did not save a key (Bonded: no), so it will not reconnect after a restart."
+    return True, ("Done: removed, paired again, trusted" + (" and bonded" if d.bonded else "") + ", connected. "
+                  "After a restart, press the PS button and it should come back by itself.")
+
+
+def auto_reconnect(runner: Callable | None = None, which: Callable = shutil.which) -> list[str]:
+    """Background helper (every few seconds): Bluetooth on (no password: power on / rfkill unblock as the user), then ask every
+    paired + trusted pad that is not connected to connect. A pad that is switched off simply does not answer. -> names connected."""
+    if not available(which):
+        return []
+    st = adapter(runner)
+    if not st["present"]:
+        return []
+    if not st["powered"]:
+        if which("rfkill"):
+            try:
+                (runner or subprocess.run)(["rfkill", "unblock", "bluetooth"], capture_output=True, text=True, timeout=10,
+                                           stdin=subprocess.DEVNULL)
+            except (OSError, subprocess.SubprocessError):
+                pass
+        _run(["power", "on"], runner, 10)
+    done = []
+    for d in devices(runner):
+        if d.is_pad and d.paired and not d.connected:
+            if not d.trusted:
+                _run(["trust", d.mac], runner, 10)
+            _rc, out = _run(["connect", d.mac], runner, 12)
+            if "Connection successful" in out or "AlreadyConnected" in out:
+                done.append(d.name)
     return done

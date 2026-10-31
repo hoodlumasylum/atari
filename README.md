@@ -31,6 +31,65 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 
 (The screenshots use made-up demo games. With no games yet you get a friendly empty screen: `docs/screenshot-empty.png`.)
 
+## What's new in 0.5.3
+
+
+
+* **The on-screen buttons now match the pad in your hand.** Use a PS4 / PS5 pad (DualShock 4, DualSense - "Wireless Controller") and the bottom bar shows cross / circle / square / triangle in PlayStation-style colours, OPTIONS and L1 / R1. Use an Xbox pad and it shows A / B / X / Y in their colours, the Menu button and LB / RB. Other pads get the Xbox style (the layout they use). It switches by itself, live, to whichever pad pressed a button last - no setting needed.
+* The written prompts change too: "Esc / B = back" becomes "Esc / Circle = back", "Enter / A" becomes "Enter / Cross" and so on, on every page, in Settings, the import screen and the WiFi screen.
+* **Settings > Button pictures: Auto / PlayStation / Xbox** if you want to fix one style (Auto is the default).
+* The button shapes are drawn by CodeAque - no Sony or Microsoft logos.
+
+### Not tested on real hardware
+- Tested with an offscreen screen and made-up pad names / button presses (PS4, PS5, Xbox, 8BitDo names); not with the real DS4 on the Dell. The style is chosen from the pad's name as Linux reports it ("Wireless Controller" = PlayStation; names with "Xbox" / "Microsoft" = Xbox); a pad with an unusual name gets the Xbox style - use the Settings switch then.
+- A few prompts written inside emulators or Steam are their own and are not changed.
+
+### Picture shape (no more side bars)
+* **Settings > Picture shape: Fill screen** (default) / **Widescreen hack** / **Original**, written into each emulator's own settings by itself before every game:
+  - Fill screen: the picture uses the whole screen, full height, no side bars (stretched). PCSX2 `AspectRatio = Stretch`, DuckStation `Stretch To Fill` (integer scaling off, so no gap at the top), Dolphin stretch, PPSSPP stretch, RetroArch "Full" with integer scaling off, xemu `fit = stretch`.
+  - Widescreen hack: a real wide picture where the emulator has one (PCSX2 widescreen patches + 16:9, DuckStation widescreen hack, Dolphin widescreen hack, xemu 16:9); some games show small glitches with it.
+  - Original: the game's own shape (4:3 for The Great Escape on PS2: bars at the sides).
+* A copy of each settings file is kept once (`*.codeaque.bak`); nothing else in them changes.
+
+### Not tested (picture)
+- Written in each emulator's documented setting names and checked on sample files only; not tried by running The Great Escape here. RetroArch's "Full" index (24) is from RetroArch 1.10+ and may differ in older versions. Whether PCSX2 has widescreen patches for a given game depends on the game.
+
+### Xbox: "Get a formatted hard disk" now shows what it is doing
+* *Why it seemed to do nothing in 0.5.2:* the download itself worked, but the xemu page never refreshed when it finished (the page was not marked as "on screen" for background jobs), so no result appeared.
+* Now the page shows a progress bar - **Downloading / Checking / Setting it up** - and then **"Done, set up."** with the exact `hdd_path` read back from xemu.toml. If anything fails (no internet, checksum mismatch) it says why in plain words, with **Try again** and **Open xemu's disk page in the browser** (download it there, then "Find my BIOS files in Downloads").
+* Tested: the real download + checksum + xemu.toml write ran here for real (into a test folder); the page flow was tested with a pretend download. Not tried on the Dell.
+
+### Boot menu: a reminder to update it
+* *Why the old menu was still there:* the new menu (only CodeAque and Windows) is written when you press **Install CodeAque boot screen**; updating CodeAque does not touch the boot files by itself.
+* Now, after an update, if the boot screen was installed before and the start menu still has the old entries, CodeAque opens **Settings > Boot screen** once by itself: **one tap** on the highlighted row (plus your password) updates it.
+* Settings > Boot screen shows **"Boot menu: up to date"** with the entries, or **"Boot menu is NOT up to date - press to update it"** listing what is still there.
+* After Install, CodeAque reads `/boot/grub/grub.cfg` back. If it still lists Mint's or os-prober's entries, it says so plainly and offers the same one-tap fix.
+* Not tested on the Dell: checked with sample grub.cfg files and pretend tools.
+* **Only "CodeAque" and "Windows"** now (in that order): the "UEFI Firmware Settings" entry (`/etc/grub.d/30_uefi-firmware`) is switched off too, with its old setting kept in the backup; Restore switches it back on (so does "Recovery entry: SHOWN"). The computer's firmware setup is still reachable with the Dell's own F2 key at power-on.
+* **Countdown fits:** it now reads "Starting CodeAque in 5s" in a wider box (it was cut off on the right at 1366x768). Press Install boot screen once more to get both changes (CodeAque reminds you once after the update).
+* Not tested on the Dell: the GRUB layout is checked with the preview picture only; GRUB's real font size at 1366x768 was not seen.
+
+### PS4 pad reconnecting after a restart
+* **Automatic, no taps:** CodeAque now keeps Bluetooth switched on and, every few seconds, asks each paired controller that is not connected to connect (and marks it Trusted if it was not). So after a restart, switching the DS4 on with PS should bring it back by itself while CodeAque runs.
+* **Reconnect settings applied by themselves:** the first time CodeAque 0.5.3 starts with a paired pad and the Bluetooth settings are not right (AutoEnable, FastConnectable, ClassicBondedOnly=false), it applies Fix controller reconnect on its own. Changing /etc/bluetooth needs the administrator, so **the password box appears once** - that cannot be avoided; after that it never asks again.
+* **Remove and re-pair (one tap):** a pad that shows **Paired** but does not connect when you press PS usually has a stale pairing. On the Bluetooth page, next to such a pad: hold SHARE + PS until the light double-blinks, press **Remove and re-pair** - CodeAque removes the old pairing, searches, pairs (with a pairing agent so the key is saved), trusts and connects it, then reads it back to make sure **Trusted** and **Bonded** stuck.
+* **Controller check:** for each paired pad shows paired / trusted / bonded (key saved) / connected, plus the Bluetooth settings that matter (AutoEnable, FastConnectable, ClassicBondedOnly, UserspaceHID), and points to the fix.
+* **Fix controller reconnect** now also sets `FastConnectable=true` and `ReconnectAttempts=7`, restarts Bluetooth and **reads the files back** to confirm the change stuck (0.5.2 did not check). UserspaceHID is shown but left as Mint set it.
+* Dual boot: only matters if a pad was ever paired in Windows (one adapter = one key per pad); Controller check mentions it as the less likely cause.
+* Not tested on the Dell or with the real DS4: checked with a pretend bluetoothctl. Whether the stale pairing is the cause there is the best guess from your description; Controller check will show it.
+
+### CodeAque USB (plug and play)
+* **Plug in a USB stick and CodeAque looks at it by itself** (Mint mounts sticks automatically): it scans it with Find my games and Find my BIOS files and shows the list. Then one tap:
+  - **Play them from the USB stick** - nothing is copied; the stick's game folders are added to each console, and the games show while the stick is plugged in (when it is unplugged they disappear from the list - nothing is deleted - and come back next time), or
+  - **copy them to this computer** (the usual button at the bottom), and
+  - if BIOS files are on it: **check and copy them**.
+* **Settings > Make a CodeAque USB:** pick a plugged-in stick and CodeAque adds a `CodeAque` folder with one folder per console, a `BIOS` folder and a README. It **does not format or erase anything** - your files on the stick stay. (Formatting was left out on purpose: it is the one step that can destroy data, and an existing stick works fine.)
+* Legal only: CodeAque includes and downloads no commercial games, BIOS or keys; the README says so.
+* Not in this version: greying out unplugged games instead of hiding them, and pre-filling a stick with free homebrew (I could not yet check each homebrew file's licence properly).
+* Not tested with a real USB stick on the Dell: tested with a folder pretending to be a plugged-in stick.
+
+Plan for a future CodeAque Live USB: [docs/live-usb-plan.md](docs/live-usb-plan.md).
+
 ## What's new in 0.5.2
 
 - **Controllers just work:** PS4 DualShock 4 moves the menus (also when switched on later); before every game CodeAque writes player 1's pad into PCSX2, DuckStation, Dolphin, RetroArch and xemu by itself. Bluetooth search really searches now (DS4 tip: hold SHARE + PS), paired pads are trusted, and "Fix controller reconnect" stops re-pairing.
@@ -168,7 +227,7 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 - **If the in-app updater cannot be trusted on your connection, one command does the same by hand** (resumes if it drops, checks the SHA256 against the release's own list, keeps your settings and games):
 
   ```bash
-  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.5.2.tar.gz https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.2/atari-0.5.2.tar.gz && curl -fsSL https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.2/SHA256SUMS.txt | grep ' atari-0.5.2.tar.gz$' | sha256sum -c - && tar xzf atari-0.5.2.tar.gz && cd atari-0.5.2 && ./install.sh --yes
+  cd ~/Downloads && curl -fL --retry 8 --retry-all-errors -C - -o atari-0.5.3.tar.gz https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.3/atari-0.5.3.tar.gz && curl -fsSL https://github.com/hoodlumasylum/codeaque/releases/download/v0.5.3/SHA256SUMS.txt | grep ' atari-0.5.3.tar.gz$' | sha256sum -c - && tar xzf atari-0.5.3.tar.gz && cd atari-0.5.3 && ./install.sh --yes
   ```
 
 ## What's new in 0.4.1
@@ -390,13 +449,13 @@ If the Studio cannot start (numpy missing, no recording program, no microphone) 
 
 You need a Linux computer with an internet connection (for the first install only).
 
-1. Download **`atari-0.5.2.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/codeaque/releases/latest).
+1. Download **`atari-0.5.3.tar.gz`** from the [Releases page](https://github.com/hoodlumasylum/codeaque/releases/latest).
 2. Open a **Terminal** and type:
 
    ```bash
    cd ~/Downloads
-   tar xzf atari-0.5.2.tar.gz
-   cd atari-0.5.2
+   tar xzf atari-0.5.3.tar.gz
+   cd atari-0.5.3
    ./install.sh
    ```
 

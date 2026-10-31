@@ -38,7 +38,7 @@ def test_install_backup_readback_and_restore(tmp_path):
     th = root / "boot/grub/themes/codeaque"
     assert (th / "theme.txt").is_file() and (th / "background.png").is_file() and (th / "select_c.png").is_file()
     text = (th / "theme.txt").read_text()
-    assert "Starting CodeAque in %d s" in text and "boot_menu" in text
+    assert "Starting CodeAque in %ds" in text and "boot_menu" in text
     gd = (root / "etc/default/grub.d/zzz-codeaque-boot.cfg").read_text()
     assert "GRUB_DISABLE_OS_PROBER=true" in gd and "GRUB_TIMEOUT=5" in gd and "themes/codeaque/theme.txt" in gd
     assert os.access(root / "etc/grub.d/35_codeaque_windows", os.X_OK)
@@ -190,7 +190,7 @@ def test_only_codeaque_and_windows_and_restore_turns_mint_entries_back_on(tmp_pa
     (root / "etc/default/grub").write_text("GRUB_DEFAULT=0\n")
     gd = root / "etc/grub.d"
     gd.mkdir(parents=True)
-    for n in ("10_linux", "30_os-prober"):
+    for n in ("10_linux", "30_os-prober", "30_uefi-firmware"):
         (gd / n).write_text("#!/bin/sh\n")
         (gd / n).chmod(0o755)
     lay = bootscreen.Layout(str(root))
@@ -198,6 +198,7 @@ def test_only_codeaque_and_windows_and_restore_turns_mint_entries_back_on(tmp_pa
     p = run(bootscreen.install_script(lay), env)
     assert p.returncode == 0, p.stderr
     assert not os.access(gd / "10_linux", os.X_OK) and not os.access(gd / "30_os-prober", os.X_OK)
+    assert not os.access(gd / "30_uefi-firmware", os.X_OK)
     assert os.access(gd / "06_codeaque", os.X_OK) and not (root / "etc/default/codeaque-recovery").exists()
     p = run(bootscreen.install_script(lay, recovery=True), env)
     assert p.returncode == 0 and os.access(gd / "10_linux", os.X_OK) and (root / "etc/default/codeaque-recovery").exists()
@@ -205,6 +206,7 @@ def test_only_codeaque_and_windows_and_restore_turns_mint_entries_back_on(tmp_pa
     p = run(bootscreen.restore_script(lay), env)
     assert p.returncode == 0, p.stderr
     assert os.access(gd / "10_linux", os.X_OK) and os.access(gd / "30_os-prober", os.X_OK) and not (gd / "06_codeaque").exists()
+    assert os.access(gd / "30_uefi-firmware", os.X_OK)
 
 
 def test_codeaque_menu_entry_script_output(tmp_path):
@@ -223,3 +225,25 @@ def test_codeaque_menu_entry_script_output(tmp_path):
     assert 'menuentry "CodeAque"' in out and "root=UUID=1111-UUID ro" in out and "quiet splash" in out
     assert "search --no-floppy --fs-uuid --set=root 1111-UUID" in out and "recovery" not in out
     assert 'width = 48%' in bootscreen.theme_txt()
+
+
+def test_menu_state_old_current_and_prompt(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    lay = bootscreen.Layout(str(root))
+    assert bootscreen.menu_state(lay) == "none"
+    (root / "etc/default/grub.d").mkdir(parents=True)
+    (root / "etc/default/grub.d/zzz-codeaque-boot.cfg").write_text("x")
+    (root / "boot/grub").mkdir(parents=True)
+    cfg = root / "boot/grub/grub.cfg"
+    cfg.write_text("menuentry 'Linux Mint 22 Cinnamon' {\n}\nsubmenu 'Advanced options for Linux Mint 22 Cinnamon' {\n}\n"
+                   "menuentry 'Windows Boot Manager (on /dev/nvme0n1p1)' {\n}\n")
+    assert bootscreen.menu_state(lay) == "old"
+    (root / "etc/grub.d").mkdir(parents=True)
+    (root / "etc/grub.d/06_codeaque").write_text("")
+    cfg.write_text('menuentry "CodeAque" --class codeaque {\n}\nmenuentry "Windows" --class windows {\n}\n'
+                   "menuentry 'UEFI Firmware Settings' {\n}\n")
+    assert bootscreen.menu_state(lay) == "old"                   # 0.5.3: UEFI Firmware Settings is switched off too
+    cfg.write_text('menuentry "CodeAque" --class codeaque {\n}\nmenuentry "Windows" --class windows {\n}\n')
+    assert bootscreen.menu_state(lay) == "current"
+    cfg.write_text('menuentry "CodeAque" {\n}\nmenuentry \'Linux Mint 22 Cinnamon\' {\n}\n')
+    assert bootscreen.menu_state(lay) == "old" and bootscreen.menu_state(lay, recovery=True) == "current"

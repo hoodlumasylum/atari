@@ -202,6 +202,20 @@ def main() -> int:
             rep.release(action)
 
     last_rescan = time.monotonic()
+    last_used = [None]
+
+    def used(iid) -> None:
+        """'#use <name>' when a different pad than last time presses something (the hints switch to its button names)."""
+        if iid == last_used[0]:
+            return
+        last_used[0] = iid
+        dev = pads.get(iid) or raws.get(iid)
+        if dev is not None:
+            try:
+                nm = dev.name if hasattr(dev, "name") and not callable(dev.name) else dev.get_name()
+            except Exception:
+                nm = ""
+            print(f"#use {nm}", flush=True)
 
     for i in range(controller.get_count()):
         open_pad(i)
@@ -229,6 +243,7 @@ def main() -> int:
                 if raws.pop(getattr(ev, "instance_id", -1), None) is not None:
                     print("#pad-removed", flush=True)
             elif t == pygame.JOYBUTTONDOWN and ev.instance_id in raws:
+                used(ev.instance_id)
                 bname = raw_button_name(ev.button)
                 print(f"#btn {bname or ev.button}", flush=True)
                 press(bname)
@@ -254,6 +269,7 @@ def main() -> int:
                         rep.press(new, time.monotonic())
                     stick_dir[ev.instance_id] = new
             elif t == pygame.CONTROLLERBUTTONDOWN:
+                used(ev.instance_id)
                 bname = btn_names.get(ev.button, "")
                 print(f"#btn {bname or ev.button}", flush=True)
                 special = chord.button(bname, True)

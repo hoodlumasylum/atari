@@ -113,3 +113,55 @@ def test_rfkill_soft_block_is_lifted_and_hard_block_explained(monkeypatch):
 def test_ds4_tip_is_on_the_page():
     tips = " ".join(bt.PAIRING_STEPS)
     assert "SHARE and the PS button" in tips and "Wireless Controller" in tips
+
+
+def test_remove_and_repair_one_tap(monkeypatch):
+    calls = []
+    trusted = {"v": False}
+
+    def run(args, runner=None, timeout=20):
+        calls.append(args)
+        if args[0] == "trust":
+            trusted["v"] = True
+        if args[0] == "connect":
+            return 0, "Connection successful"
+        if args[0] == "info":
+            return 0, f"Name: Wireless Controller\nPaired: yes\nBonded: yes\nTrusted: {'yes' if trusted['v'] else 'no'}\nConnected: yes\n"
+        return 0, ""
+    monkeypatch.setattr(bt, "_run", run)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    ctls = []
+
+    def popen(*a, **k):
+        ctls.append(FakeCtl())
+        return ctls[-1]
+    ok, text = bt.repair_pad(MAC, popen=popen)
+    assert ok and "bonded" in text, text
+    assert calls[0] == ["remove", MAC] and ["trust", MAC] in calls and ["connect", MAC] in calls
+    assert any(f"pair {MAC}" in c.cmds for c in ctls)
+
+
+def test_auto_reconnect_powers_on_and_connects_paired_pads(monkeypatch):
+    calls = []
+
+    def run(args, runner=None, timeout=20):
+        calls.append(args)
+        if args[0] == "show":
+            return 0, "Controller 00:11:22:33:44:55\n\tPowered: no\n"
+        if args[0] == "devices":
+            return 0, f"Device {MAC} Wireless Controller\nDevice 11:22:33:44:55:66 Speaker\n"
+        if args[0] == "info" and args[1] == MAC:
+            return 0, "Name: Wireless Controller\nPaired: yes\nTrusted: no\nConnected: no\n"
+        if args[0] == "info":
+            return 0, "Name: Speaker\nPaired: yes\nConnected: no\n"
+        if args[0] == "connect":
+            return 0, "Connection successful"
+        return 0, ""
+    monkeypatch.setattr(bt, "_run", run)
+
+    class P:
+        returncode, stdout, stderr = 0, "", ""
+    got = bt.auto_reconnect(runner=lambda *a, **k: P(), which=lambda n: "/usr/bin/" + n)
+    assert got == ["Wireless Controller"]
+    assert ["power", "on"] in calls and ["trust", MAC] in calls and ["connect", MAC] in calls
+    assert ["connect", "11:22:33:44:55:66"] not in calls

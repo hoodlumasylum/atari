@@ -64,6 +64,11 @@ def build_rom_command(cfg: Config, system: SystemConfig, rom: str, home: Path | 
             kiosk.log_event(f"pad config {choice.emu.id}: {note}: {files}")
     except Exception:
         pass
+    try:                                   # Settings > Picture shape (fill the screen by default)
+        from . import picture
+        picture.apply(choice.emu.id, getattr(cfg, "picture_shape", "fill"), choice.how, home)
+    except Exception:
+        pass
     tpl = emulators.with_fullscreen(choice.emu.id, choice.emu.template, getattr(cfg, "fullscreen_games", True))
     cmd = emulators.expand(tpl, cfg, system, rom, choice.cmd, choice.core, home)
     if choice.how == "flatpak":  # sandboxed emulators only see folders they were given

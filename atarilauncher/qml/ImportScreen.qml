@@ -206,7 +206,7 @@ Item {
             }
             Text { anchors.horizontalCenter: parent.horizontalCenter; text: backend.importMessage; color: "#e6e8f2"
                    font.pixelSize: 24 * imp.u; elide: Text.ElideMiddle; width: 1000 * imp.u; horizontalAlignment: Text.AlignHCenter }
-            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "Esc / B to cancel"; color: Theme.dim; font.pixelSize: 20 * imp.u }
+            Text { anchors.horizontalCenter: parent.horizontalCenter; text: backend.padText("Esc / B to cancel", backend.padStyle); color: Theme.dim; font.pixelSize: 20 * imp.u }
         }
     }
 

@@ -60,13 +60,13 @@ terminal-box: "terminal_box_*.png"
 
 + label {{
     id = "__timeout__"
-    left = 25%
+    left = 10%
     top = 92%
-    width = 50%
+    width = 80%
     align = "center"
     color = "{GOLD_LIGHT}"
     font = "CodeAque Regular 24"
-    text = "Starting CodeAque in %d s   -   Up / Down and Enter to choose"
+    text = "Starting CodeAque in %ds"
 }}
 """
 
@@ -250,6 +250,7 @@ def _write(path: str, text: str, mode: str = "644") -> str:
 
 LINUX_SCRIPT = "/etc/grub.d/10_linux"
 OSPROBER_SCRIPT = "/etc/grub.d/30_os-prober"
+UEFI_SCRIPT = "/etc/grub.d/30_uefi-firmware"
 RECOVERY_FLAG = "/etc/default/codeaque-recovery"
 
 
@@ -286,7 +287,7 @@ def install_script(lay: Layout = Layout(), assets: Path = ASSETS, animated: bool
         (f"touch {_q(lay.p(RECOVERY_FLAG))}" if recovery else f"rm -f {_q(lay.p(RECOVERY_FLAG))}"),
         # only "CodeAque" and "Windows": the distro's own entries (10_linux, os-prober) are switched off - not deleted - unless
         # recovery is wanted. Their old mode is kept in the backup so Restore switches them back on.
-        f"for g in {_q(lay.p(LINUX_SCRIPT))} {_q(lay.p(OSPROBER_SCRIPT))}; do [ -e \"$g\" ] || continue; "
+        f"for g in {_q(lay.p(LINUX_SCRIPT))} {_q(lay.p(OSPROBER_SCRIPT))} {_q(lay.p(UEFI_SCRIPT))}; do [ -e \"$g\" ] || continue; "
         f"b={_q(bk)}/mode-$(basename \"$g\"); [ -e \"$b\" ] || stat -c %a \"$g\" > \"$b\"; "
         + ("chmod 755 \"$g\"; done" if recovery else "chmod 644 \"$g\"; done"),
         # NVIDIA's own driver shows no splash without early mode setting
@@ -351,7 +352,7 @@ def restore_body(lay: Layout = Layout()) -> str:
             f"cp -a {_q(bk + '/slick-greeter.conf')} {_q(g)}; else rm -f {_q(g)}; fi; rm -f {_q(bk + '/greeter.saved')}; fi; "
             f"rm -rf {_q(lay.p(SHARE))}; rmdir {_q(str(Path(lay.p(SHARE)).parent))} 2>/dev/null || true; "
             f"rm -f {_q(lay.p(GRUB_D))} {_q(lay.p(WIN_SCRIPT))} {_q(lay.p(MENU_SCRIPT))} {_q(lay.p(RECOVERY_FLAG))}; rm -rf {_q(th)} {_q(ply)}; "
-            f"for g in {_q(lay.p(LINUX_SCRIPT))} {_q(lay.p(OSPROBER_SCRIPT))}; do b={_q(bk)}/mode-$(basename \"$g\"); "
+            f"for g in {_q(lay.p(LINUX_SCRIPT))} {_q(lay.p(OSPROBER_SCRIPT))} {_q(lay.p(UEFI_SCRIPT))}; do b={_q(bk)}/mode-$(basename \"$g\"); "
             f"if [ -e \"$g\" ] && [ -s \"$b\" ]; then chmod \"$(cat \"$b\")\" \"$g\"; rm -f \"$b\"; fi; done; "
             f"if [ -f {_q(bk + '/grub')} ]; then cp -a {_q(bk + '/grub')} {_q(lay.p('/etc/default/grub'))}; fi; "
             f"if [ -d {_q(bk + '/theme')} ]; then cp -a {_q(bk + '/theme')} {_q(th)}; fi; "
@@ -447,3 +448,31 @@ def status_line(st: dict) -> str:
 
 FIRMWARE_NOTE = ("The Dell logo at the very first second comes from the computer's own firmware (BIOS) and cannot be changed by CodeAque. "
                  "After it, the CodeAque splash replaces the Linux Mint logo at start, restart and shut-down.")
+
+
+ALLOWED = ("CodeAque", "CodeAque (recovery)", "Windows")
+
+
+def menu_entries(lay: Layout = Layout()) -> list[str] | None:
+    import re
+    try:
+        text = Path(lay.p(GRUB_CFG)).read_text(errors="replace")
+    except OSError:
+        return None
+    return re.findall(r"^\s*(?:menuentry|submenu)\s+['\"]([^'\"]+)", text, re.M)
+
+
+def menu_state(lay: Layout = Layout(), recovery: bool = False) -> str:
+    """'current' = the menu is only CodeAque (+ Windows); 'old' = the boot screen is installed but the menu still has the distro's
+    entries (an older CodeAque boot screen, or update-grub did not run); 'none' = not installed; 'unknown' = grub.cfg unreadable."""
+    if not installed(lay):
+        return "none"
+    e = menu_entries(lay)
+    if e is None:
+        return "unknown"
+    if not Path(lay.p(MENU_SCRIPT)).exists() or "CodeAque" not in e:
+        return "old"
+    extra = [x for x in e if x not in ALLOWED]
+    if extra and not recovery:
+        return "old"
+    return "current"

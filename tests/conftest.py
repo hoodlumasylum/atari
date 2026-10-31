@@ -18,6 +18,8 @@ os.environ.setdefault("ATARI_NO_STEAMFIX", "1")    # tests never edit a real Ste
 os.environ.setdefault("ATARI_NO_ROOTAUTH", "1")    # no in-app password provider unless a test asks for it
 os.environ.setdefault("ATARI_NO_MEDIA", "1")       # no playerctl calls in tests unless a test fakes them
 os.environ.setdefault("ATARI_NO_BADGES", "1")       # no ProtonDB lookups in tests
+os.environ.setdefault("ATARI_NO_BOOTPROMPT", "1")
+os.environ.setdefault("ATARI_NO_USBWATCH", "1")
 os.environ.setdefault("ATARI_NO_BRIGHTNESS", "1")
 os.environ.setdefault("ATARI_NO_WIFI", "1")        # no nmcli calls in tests unless a test mocks it
 os.environ.setdefault("ATARI_NO_INTRO", "1")      # no start-up intro in tests unless a test turns it on

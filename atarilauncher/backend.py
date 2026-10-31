@@ -13,7 +13,7 @@ from pathlib import Path
 from PySide6.QtCore import Property, QObject, QProcess, Qt, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QKeyEvent, QWindow
 
-from . import protondb, brightness, worldgames, bootscreen, create, steam, simtycoon, themes, biosfind, findgames, bluetooth, padbattery, pads, screentv, xemuconfig, branding, donate, gamedelete, gamesroot, power, rootauth, files, steamfix, downloads, golive, icons, inputfix, intro, kiosk, quietboot, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
+from . import usbdrive, padstyle, protondb, brightness, worldgames, bootscreen, create, steam, simtycoon, themes, biosfind, findgames, bluetooth, padbattery, pads, screentv, xemuconfig, branding, donate, gamedelete, gamesroot, power, rootauth, files, steamfix, downloads, golive, icons, inputfix, intro, kiosk, quietboot, sober, studio_fix, appinstall, apps, bios, controls, covers, diagnose, recorder, emulators, exitwatch, freegames, importer, installer, launcher, paths, roms, updater, webapps, windows
 from . import __version__
 from .config import Config, load_config, save_config
 from .import_model import ImportModel
@@ -94,6 +94,7 @@ class Backend(QObject):
     brightnessChanged = Signal()                # the brightness % in the top bar / Settings changed
     themeChanged = Signal()              # the battery pills in the top bar
     _badgesReady = Signal()
+    padStyleChanged = Signal()                  # the button names / pictures to show (PlayStation or Xbox)
     _raiseMe = Signal()                         # a background job wants CodeAque back in front (GUI thread)
     _bgDone = Signal()                          # a background job (Bluetooth, batteries) finished: refresh on the GUI thread
     _batteryRead = Signal("QVariantList")
@@ -356,6 +357,7 @@ class Backend(QObject):
         self._bgDone.connect(self._on_bg_done, Qt.QueuedConnection)
         self._raiseMe.connect(self._raise_window_if_idle, Qt.QueuedConnection)
         self._batteryRead.connect(self._on_battery_read, Qt.QueuedConnection)
+        self._last_pad_name = ""
         self._badgesReady.connect(lambda: self.model.badges_updated(), Qt.QueuedConnection)
         self._pad_batt: list = []
         self._batt_low_warned: set = set()
@@ -373,6 +375,20 @@ class Backend(QObject):
                 except Exception:
                     pass
             threading.Thread(target=_trust, daemon=True, name="atari-bttrust").start()
+            # background: Bluetooth on and paired pads reconnected whenever they are switched on (no taps)
+            self._btauto_busy = False
+            self._btauto_timer = QTimer(self, interval=8000)
+            self._btauto_timer.timeout.connect(self._bt_auto_tick)
+            self._btauto_timer.start()
+            QTimer.singleShot(15000, self._bt_auto_fix_once)
+        if not demo and not os.environ.get("ATARI_NO_BOOTPROMPT"):
+            QTimer.singleShot(9000, self._boot_reapply_prompt)
+        self._usb_drive = None
+        if not demo and not os.environ.get("ATARI_NO_USBWATCH"):
+            self._usb_watch = usbdrive.Watcher()
+            self._usb_timer = QTimer(self, interval=4000)
+            self._usb_timer.timeout.connect(self._usb_tick)
+            self._usb_timer.start()
         self._batt_timer = QTimer(self, interval=20000)
         self._batt_timer.timeout.connect(self.refreshBatteries)
         if not os.environ.get("ATARI_NO_BATTERY") and not demo:
@@ -484,8 +500,14 @@ class Backend(QObject):
 
     def _pad_info_line(self, line: str) -> None:
         """'#...' lines from the gamepad reader: pads coming and going, and (for the Controllers page) every button and stick movement."""
+        if line.startswith("#use "):
+            self._pad_used(line[5:].strip())
+            return
         if line.startswith("#pad "):
             name = line[5:]
+            if name.endswith(" (basic)"):
+                name = name[:-8]
+            self._pad_used(name)
             if name not in self._sdl_pads:
                 self._sdl_pads.append(name)
             self.show_toast("Controller connected: " + name)
@@ -1377,8 +1399,18 @@ class Backend(QObject):
 
     # ----- Xbox / xemu settings ----------------------------------------------------------------
     def _xemu_rows(self) -> list:
+        self._page_seen("xemusetup")          # so background jobs (disk download) refresh this page when they finish
         rep = xemuconfig.check()
         rows: list = []
+        st = getattr(self, "_xm_dl", None)
+        if st is not None:
+            rows.append({"kind": "progress", "title": "Formatted hard disk: " + st["stage"] + "...",
+                         "fraction": float(st["frac"]), "value": f"{int(st['frac'] * 100)}%", "detail": xemuconfig.READY_HDD_URL})
+        if getattr(self, "_xm_dl_failed", False):
+            rows.append({"kind": "done", "id": "xmhddready", "title": "Try again", "tone": "warn",
+                         "detail": "Downloads xemu's formatted hard disk again."})
+            rows.append({"kind": "item", "id": "xmhddpage", "title": "Open xemu's disk page in the browser",
+                         "detail": "Download xbox_hdd.qcow2.zip there yourself; then \"Find my BIOS files in Downloads\" puts it in place."})
         if self._xm_msg:
             rows.append(self._info("Result:  " + self._xm_msg))
         rows.append(self._info("xemu (the Xbox emulator) reads these four files from its settings file. CodeAque never includes them - they come from your own Xbox."))
@@ -1478,17 +1510,39 @@ class Backend(QObject):
             kiosk.log_event("xemu repair: " + " | ".join(rep.lines()))
             return "refresh"
         if rid == "xmhddready":
-            if getattr(self, "_xm_busy", ""):
+            if getattr(self, "_xm_dl", None) is not None:
                 return "refresh"
-            self._xm_busy = "Downloading xemu's formatted hard disk..."
+            self._xm_dl, self._xm_dl_failed = {"stage": "Starting", "frac": 0.0}, False
+            self._xm_msg = ""
+            last = [0.0]
+
+            def say(stage, frac):
+                self._xm_dl = {"stage": stage, "frac": frac}
+                if time.monotonic() - last[0] > 0.25 or frac >= 1.0:
+                    last[0] = time.monotonic()
+                    self._bgDone.emit()
 
             def work():
+                ok = False
                 try:
-                    ok, msg, _p = xemuconfig.get_ready_hdd()
-                    self._xm_msg = msg
+                    ok, msg, path = xemuconfig.get_ready_hdd(say=say)
+                    if ok and path is None:
+                        msg = "Done, set up. " + msg
+                    elif ok:
+                        seen = []
+                        for t in xemuconfig.config_files():
+                            try:
+                                if xemuconfig.read_files_section(t.read_text()).get("hdd_path") == str(path):
+                                    seen.append(str(t))
+                            except OSError:
+                                pass
+                        msg = ("Done, set up. " + msg + (" Checked: hdd_path in " + ", ".join(seen) + " = " + str(path) + "." if seen else ""))
+                    self._xm_msg = msg if ok else "Could not get the formatted hard disk: " + msg
                     kiosk.log_event(f"xemu ready hdd: {ok} {msg}")
+                except Exception as exc:
+                    self._xm_msg = f"Could not get the formatted hard disk: {exc}"
                 finally:
-                    self._xm_busy = ""
+                    self._xm_dl, self._xm_dl_failed = None, not ok
                     self._bgDone.emit()
             threading.Thread(target=work, daemon=True, name="atari-xemureadyhdd").start()
             return "refresh"
@@ -1776,6 +1830,21 @@ class Backend(QObject):
             return ""
         return ""
 
+    def _boot_reapply_prompt(self) -> None:
+        """After an update: the boot screen was installed with an older CodeAque and its menu is old -> open Boot screen once."""
+        try:
+            if self._running or self.store.get_pref("boot_reapply_asked", "") == __version__:
+                return
+            if bootscreen.menu_state(recovery=bool(self.store.get_pref("boot_recovery", False))) != "old":
+                return
+            self.store.set_pref("boot_reapply_asked", __version__)
+            self._boot_confirm = "install"           # one tap on the highlighted row does it (plus the password)
+            self._boot_msg = ("CodeAque was updated: your start menu still shows the old entries. Press the Install row once "
+                              "(it asks for your password) to get the new menu with just CodeAque and Windows.")
+            self.pageRequested.emit("boot")
+        except Exception as exc:  # pragma: no cover
+            kiosk.log_event(f"boot reapply prompt: {exc}")
+
     # ----- Settings > Boot (CodeAque boot screen) ----------------------------------------------
     def _boot_rows(self) -> list:
         self._page_seen("boot")
@@ -1786,6 +1855,17 @@ class Backend(QObject):
                                  "and \"Windows\", then the CodeAque splash on the way in. It never changes partitions or Windows itself. "
                                  "Not yet tried on a real computer's start - if anything looks wrong, use Restore.")]
         st = bootscreen.status()
+        rec = bool(self.store.get_pref("boot_recovery", False))
+        ms = bootscreen.menu_state(recovery=rec)
+        if ms == "old":
+            rows.append({"kind": "done", "id": "bootinstall", "tone": "warn", "value": "UPDATE",
+                         "title": "Boot menu is NOT up to date - press to update it (one tap + password)",
+                         "detail": "The start menu still lists " + ", ".join((bootscreen.menu_entries() or [])[:4])
+                                   + ". Updating makes it just CodeAque and Windows."})
+        elif ms == "current":
+            rows.append(self._info("Boot menu: up to date (" + ", ".join(bootscreen.menu_entries() or []) + ")."))
+        elif ms == "unknown":
+            rows.append(self._info("Boot menu: could not read /boot/grub/grub.cfg to check it."))
         rows.append(self._info(bootscreen.status_line(st)))
         rows.append(self._info(bootscreen.FIRMWARE_NOTE))
         if st["quiet"]:
@@ -1835,7 +1915,11 @@ class Backend(QObject):
                 p = subprocess.run(full, capture_output=True, text=True, timeout=900,
                                    **({"input": secret.decode()} if secret else {"stdin": subprocess.DEVNULL}))
                 kiosk.log_event(f"boot screen: {what}: exit {p.returncode}: {(p.stdout + p.stderr).strip()[-400:]}")
-                if p.returncode == 0 and "OK" in p.stdout:
+                ms = bootscreen.menu_state(recovery=bool(self.store.get_pref("boot_recovery", False))) if "Installing" in what else ""
+                if p.returncode == 0 and "OK" in p.stdout and ms == "old":
+                    self._boot_msg = ("Installed, but the start menu (grub.cfg) still lists: " + ", ".join(bootscreen.menu_entries() or [])
+                                      + ". update-grub may not have finished. Press \"Boot menu is NOT up to date\" above to try again.")
+                elif p.returncode == 0 and "OK" in p.stdout:
                     self._boot_msg = ("Done. " + ("Windows is in the menu. " if "WINDOWS=yes" in p.stdout else "")
                                       + ("The splash is in the start-up files. " if "SPLASH=yes" in p.stdout else "")
                                       + ("Warning: the splash is NOT in the start-up files (initramfs) - it may not show. " if "SPLASH=no" in p.stdout else "")
@@ -2284,6 +2368,19 @@ class Backend(QObject):
         sc = self.cfg.systems.get(sid)
         return sc.name if sc else "Console not known yet"
 
+    def _usb_rows(self) -> list:
+        rows = []
+        d = getattr(self, "_fg_usb", None)
+        if d is not None and self._fg_res is not None and not self._fg_busy:
+            rows.append(self._info(f"From the USB stick \"{d.label}\" ({d.path}). Choose how to use these games:"))
+            rows.append({"kind": "done", "id": "usbplay", "title": "Play them from the USB stick",
+                         "detail": "Nothing is copied; the games show while the stick is plugged in."})
+            if getattr(self, "_fg_usb_bios", 0):
+                rows.append({"kind": "item", "id": "biosfind", "title": f"Also found {self._fg_usb_bios} BIOS file(s) - check and copy them",
+                             "detail": "Opens Find my BIOS files with what is on the stick."})
+            rows.append(self._info("...or copy them to this computer with the button at the bottom."))
+        return rows
+
     def _fg_rows(self) -> list:
         self._page_seen("findgames")
         if self._fg_res is None and not self._fg_busy and not self._fg_msg:
@@ -2295,6 +2392,7 @@ class Backend(QObject):
             rows.append(self._info("Working:  " + self._fg_busy))
         if self._fg_msg:
             rows.append(self._info("Result:  " + self._fg_msg))
+        rows += self._usb_rows()
         res = self._fg_res
         if res is not None and not self._fg_busy:
             games = [e for e in res.entries if e.kind != "installer"]
@@ -2327,8 +2425,46 @@ class Backend(QObject):
         rows.append({"kind": "item", "id": "back", "title": "Back"})
         return rows
 
-    def _fg_start(self) -> None:
+    def _usb_tick(self) -> None:
+        if self._running:
+            return
+        try:
+            new = self._usb_watch.tick()
+        except Exception:
+            return
+        if new and not self._fg_busy:
+            d = new[0]
+            self._usb_drive = d
+            kiosk.log_event(f"usb: {d.path} plugged in - looking for games")
+            self.show_toast(f"USB stick \"{d.label}\" - looking for games and BIOS files on it...", 6000)
+            self._fg_start(roots=[usbdrive.game_root(d.path)], usb=d)
+            self.pageRequested.emit("findgames")
+
+    def _usb_play_from(self) -> str:
+        """Play from the stick: its game folders are added to each console's folders (games show while it is plugged in)."""
+        res, d = self._fg_res, self._usb_drive
+        if res is None or d is None:
+            return "refresh"
+        added = []
+        for e in res.entries:
+            sc = self.cfg.systems.get(e.system)
+            if sc is None or e.kind not in ("rom",):
+                continue
+            folder = str(Path(e.source).parent)
+            if folder not in sc.roms:
+                sc.roms.append(folder)
+                added.append(folder)
+        if added:
+            self._save_prefs()
+            self.rescan(toast=False)
+        self._fg_msg = (f"Playing from the USB stick: {len(added)} folder{'s' if len(added) != 1 else ''} added. The games show while "
+                        "the stick is plugged in and disappear (nothing is deleted) when it is unplugged.") if added else \
+            "Nothing new to add from the stick."
+        return "refresh"
+
+    def _fg_start(self, roots=None, usb=None) -> None:
         self._fg_busy, self._fg_msg = "Looking for games...", ""
+        self._fg_usb = usb
 
         def say(t):
             self._fg_busy = t
@@ -2336,7 +2472,15 @@ class Backend(QObject):
 
         def work():
             try:
-                self._fg_res = findgames.find(self.cfg, say=say)
+                self._fg_res = findgames.find(self.cfg, roots=roots, say=say)
+                if usb is not None:
+                    try:
+                        bres = biosfind.find(roots=[Path(usb.path)])
+                        if bres.found:
+                            self._bf_res = bres
+                            self._fg_usb_bios = len(bres.found)
+                    except Exception:
+                        pass
                 n = len([e for e in self._fg_res.entries if e.kind != "installer"])
                 self._fg_msg = f"Found {n} game{'s' if n != 1 else ''}." + (" Check the list, then press the button at the bottom." if n else "")
             except Exception as exc:  # pragma: no cover
@@ -2347,6 +2491,8 @@ class Backend(QObject):
         threading.Thread(target=work, daemon=True, name="atari-findgames").start()
 
     def _fg_activate(self, rid: str) -> str:
+        if rid == "usbplay":
+            return self._usb_play_from()
         if self._fg_busy:
             return ""
         if rid == "fgscan":
@@ -2409,6 +2555,11 @@ class Backend(QObject):
             rows.append({"kind": "item", "id": "back", "title": "Back"})
             return rows
         rows += [self._info(t) for t in bluetooth.PAIRING_STEPS]
+        if getattr(self, "_bt_check", None):
+            rows += [self._info("Check:  " + t) for t in self._bt_check]
+        rows.append({"kind": "item", "id": "btcheck", "title": "Controller check",
+                     "detail": "Shows for each paired pad: paired, trusted, bonded (key saved), connected - and the Bluetooth settings that "
+                               "decide whether it reconnects by itself."})
         rows.append({"kind": "item", "id": "btreconnect", "title": "Fix controller reconnect",
                      "detail": "For a pad that has to be paired again every time: marks paired pads Trusted, switches Bluetooth on at every "
                                "start (AutoEnable=true) and lets bonded PlayStation pads reconnect (input.conf ClassicBondedOnly=false). "
@@ -2427,6 +2578,11 @@ class Backend(QObject):
             rows.append({"kind": "item", "id": "btdev:" + d.mac, "title": ("" if d.is_pad else "(not a controller?)  ") + d.name,
                          "value": state, "detail": f"{act}.  {d.mac}{extra}"})
         for d in pads_:
+            if d.paired and not d.connected:
+                rows.append({"kind": "done", "id": "btrepair:" + d.mac, "title": f"Remove and re-pair {d.name}",
+                             "detail": "For a pad that shows Paired but won't connect: removes the old pairing, searches, pairs, "
+                                       "trusts and connects it again in one go. Hold SHARE + PS on the pad until the light "
+                                       "double-blinks, then press this."})
             if d.paired:
                 rows.append({"kind": "item", "id": "btforget:" + d.mac, "title": f"Forget {d.name}",
                              "detail": "Removes the pairing (do this if it will not reconnect, then pair it again)."})
@@ -2450,6 +2606,43 @@ class Backend(QObject):
                 self._bgDone.emit()
         threading.Thread(target=work, daemon=True, name="atari-bluetooth").start()
 
+    def _bt_auto_tick(self) -> None:
+        if self._btauto_busy or self._bt_busy:
+            return
+        self._btauto_busy = True
+
+        def work():
+            try:
+                got = bluetooth.auto_reconnect()
+                if got:
+                    kiosk.log_event(f"bluetooth: reconnected {got}")
+            except Exception:
+                pass
+            finally:
+                self._btauto_busy = False
+        threading.Thread(target=work, daemon=True, name="atari-btauto").start()
+
+    def _bt_auto_fix_once(self) -> None:
+        """At start: a pad is paired but the reconnect settings are not right -> apply Fix controller reconnect by itself (the
+        password box appears once; after that never again)."""
+        def work():
+            try:
+                if self.store.get_pref("bt_autofix_done", "") == __version__:
+                    return
+                if not any(d.is_pad and d.paired for d in bluetooth.devices()):
+                    return
+                try:
+                    ok = bluetooth.reconnect_ok(Path(bluetooth.MAIN_CONF).read_text(), Path(bluetooth.INPUT_CONF).read_text())
+                except OSError:
+                    ok = False
+                self.store.set_pref("bt_autofix_done", __version__)
+                if not ok:
+                    kiosk.log_event("bluetooth: applying the reconnect fix by itself")
+                    self._bt_reconnect_fix()
+            except Exception as exc:  # pragma: no cover
+                kiosk.log_event(f"bluetooth autofix: {exc}")
+        threading.Thread(target=work, daemon=True, name="atari-btautofix").start()
+
     def _bt_reconnect_fix(self) -> None:
         def fix():
             names = bluetooth.trust_paired_pads()
@@ -2467,11 +2660,45 @@ class Backend(QObject):
                 return
             nm, ni = bluetooth.reconnect_conf(mt, it)
             rc = self._root_run(["pkexec", "sh", "-c", bluetooth.reconnect_script(nm, ni)], timeout=120)
-            self._bt_msg = msg + ("Done (old files kept as *.codeaque.bak). Bluetooth restarted - press the PS / Home button on the pad."
+            try:
+                applied = bluetooth.reconnect_ok(Path(bluetooth.MAIN_CONF).read_text(), Path(bluetooth.INPUT_CONF).read_text())
+            except OSError:
+                applied = False
+            if rc == 0 and not applied:
+                self._bt_msg = msg + "The settings did not stick (read back from /etc/bluetooth differs). Press Controller check for details."
+                return
+            self._bt_msg = msg + ("Done and checked (old files kept as *.codeaque.bak). Bluetooth restarted - press the PS button on the pad."
                                   if rc == 0 else "The password box was closed - nothing was changed." if rc == -1 else "That did not work.")
         self._bt_job("Fixing controller reconnect...", fix)
 
     def _bt_activate(self, rid: str) -> str:
+        if rid.startswith("btrepair:"):
+            mac = rid[9:]
+
+            def rep():
+                def say(t):
+                    self._bt_busy = t
+                    self._bgDone.emit()
+                ok, self._bt_msg = bluetooth.repair_pad(mac, say=say)
+                self._bt_found = bluetooth.devices()
+                kiosk.log_event(f"bluetooth re-pair {mac}: {ok} {self._bt_msg}")
+            self._bt_job("Removing and pairing again...", rep)
+            return "refresh"
+        if rid == "btcheck":
+            def chk():
+                try:
+                    mt = Path(bluetooth.MAIN_CONF).read_text()
+                except OSError:
+                    mt = ""
+                try:
+                    it = Path(bluetooth.INPUT_CONF).read_text()
+                except OSError:
+                    it = ""
+                self._bt_check = bluetooth.check_report(bluetooth.devices(), mt, it, bool(create.windows_entry()),
+                                                        bluetooth.adapter()["present"])
+                kiosk.log_event("bluetooth check: " + " | ".join(self._bt_check))
+            self._bt_job("Checking...", chk)
+            return "refresh"
         if rid == "btreconnect":
             self._bt_reconnect_fix()
             return "refresh"
@@ -4843,6 +5070,13 @@ class Backend(QObject):
         self.playSound("select")
 
     @Slot()
+    def cyclePictureShape(self) -> None:
+        from . import picture
+        cur = self.cfg.picture_shape if self.cfg.picture_shape in picture.SHAPES else "fill"
+        self.cfg.picture_shape = picture.SHAPES[(picture.SHAPES.index(cur) + 1) % 3]
+        self._save_prefs()
+
+    @Slot()
     def toggleFullscreenGames(self) -> None:
         self.cfg.fullscreen_games = not self.cfg.fullscreen_games
         self._save_prefs()
@@ -5298,6 +5532,15 @@ class Backend(QObject):
         rows.append({"kind": "music", "title": "Music (soft background loop)",
                      "value": "ON" if self.cfg.music else "OFF",
                      "detail": "Quiet and off by default. It stops while a game is running."})
+        ps = str(self.store.get_pref("pad_style", "auto"))
+        rows.append({"kind": "padstyle", "title": "Button pictures", "value": padstyle.NAMES.get(ps, "Auto").upper(),
+                     "detail": "Auto shows the buttons of the pad you used last (PlayStation shapes or Xbox letters). "
+                               "Now showing: " + ("PlayStation" if self.padStyle == "ps" else "Xbox") + "."})
+        from . import picture as _pic
+        rows.append({"kind": "picshape", "title": "Picture shape", "value": _pic.NAMES.get(self.cfg.picture_shape, "Fill screen").upper(),
+                     "detail": "Fill screen = the game uses the whole screen, no side bars (stretched). Widescreen hack = a real wide "
+                               "picture where the emulator has one (PCSX2, DuckStation, Dolphin; may glitch in some games). "
+                               "Original = the game's own shape, with bars. Applied by itself before every game."})
         rows.append({"kind": "fsgames", "title": "Open games full screen", "value": "ON" if self.cfg.fullscreen_games else "OFF",
                      "detail": "Emulators (RetroArch, DuckStation, PCSX2, PPSSPP, Dolphin, xemu, DOSBox ...) start full screen. OFF = in a window."})
         rows.append({"kind": "brightnesspage", "title": "Brightness", "value": f"{self._br_level}%" if self._br_level >= 0 else "",
@@ -5325,6 +5568,9 @@ class Backend(QObject):
         rows.append({"kind": "steamboot", "title": "Start Steam at boot (hidden): " + ("ON" if self._steam_autostart_on() else "OFF"),
                      "detail": "Starts Steam quietly in the background when CodeAque starts, with Steam's own saved login, so games open faster. "
                                "CodeAque never sees or stores your Steam password." + ("" if self._steam_installed() else " (Steam is not installed.)")})
+        rows.append({"kind": "makeusbpage", "title": "Make a CodeAque USB", "value": "",
+                     "detail": "Gets a USB stick ready for your games (folders + README; nothing is erased). Plug it into any "
+                               "CodeAque computer and the games show by themselves."})
         rows.append({"kind": "findgamespage", "title": "Find my games",
                      "detail": "Your own games and backups from Downloads, Desktop, Documents and drives, sorted by console."})
         rows.append({"kind": "biosfindpage", "title": "Find my BIOS files",
@@ -5485,11 +5731,37 @@ class Backend(QObject):
                 "winchoose": "WHICH PROGRAM STARTS THE GAME?", "winwork": "OPENING THE ARCHIVE",
                 "install": "INSTALL", "installmenu": "INSTALL EMULATORS & APPS", "steam": "STEAM",
                 "recordings": "RECORDINGS", "coverpick": "PICK A COVER", "nocovers": "COVERS NOT FOUND",
-                "addgames": "ADD GAMES", "kiosk": "CODEAQUE-ONLY MODE", "startmode": "START MODE", "xemusetup": "XBOX (XEMU) SETTINGS", "controllers": "CONTROLLERS", "brightness": "BRIGHTNESS", "anticheat": "NEEDS WINDOWS", "btpair": "PAIR A BLUETOOTH CONTROLLER", "biosfind": "FIND MY BIOS FILES", "theme": "THEME", "simtycoon": "SIM & TYCOON", "create": "CREATE", "worldgames": "WORLD GAMES", "boot": "BOOT SCREEN", "simpick": "ADD TO SIM & TYCOON", "findgames": "FIND MY GAMES", "screentv": "SCREEN TO TV", "quietboot": "QUIET BOOT", "power": "POWER", "downloads": "DOWNLOADS", "golive": "GO LIVE", "robloxfix": "FIX ROBLOX",
+                "addgames": "ADD GAMES", "kiosk": "CODEAQUE-ONLY MODE", "startmode": "START MODE", "xemusetup": "XBOX (XEMU) SETTINGS", "controllers": "CONTROLLERS", "brightness": "BRIGHTNESS", "makeusb": "MAKE A CODEAQUE USB", "anticheat": "NEEDS WINDOWS", "btpair": "PAIR A BLUETOOTH CONTROLLER", "biosfind": "FIND MY BIOS FILES", "theme": "THEME", "simtycoon": "SIM & TYCOON", "create": "CREATE", "worldgames": "WORLD GAMES", "boot": "BOOT SCREEN", "simpick": "ADD TO SIM & TYCOON", "findgames": "FIND MY GAMES", "screentv": "SCREEN TO TV", "quietboot": "QUIET BOOT", "power": "POWER", "downloads": "DOWNLOADS", "golive": "GO LIVE", "robloxfix": "FIX ROBLOX",
                 "dlsystem": "WHICH SYSTEM IS THIS FILE FOR?", "files": "MY FILES", "fileact": "WHAT TO DO WITH IT", "deletegame": "DELETE GAME", "about": "ABOUT CODEAQUE"}.get(name, name.upper())
+
+    @Property(str, notify=padStyleChanged)
+    def padStyle(self):
+        return padstyle.resolve(str(self.store.get_pref("pad_style", "auto")), self._last_pad_name)
+
+    @Slot(str, str, result=str)
+    def padText(self, text: str, _style: str = "") -> str:
+        """Button names in a prompt changed to the pad's own ('Esc / B' -> 'Esc / Circle' on a PlayStation pad)."""
+        return padstyle.pad_text(text, self.padStyle)
+
+    def _pad_used(self, name: str) -> None:
+        old = self.padStyle
+        self._last_pad_name = name
+        if self.padStyle != old:
+            self.padStyleChanged.emit()
+            self.pageChanged.emit()
+
+    @Slot()
+    def cyclePadStyle(self) -> None:
+        cur = str(self.store.get_pref("pad_style", "auto"))
+        nxt = padstyle.CHOICES[(padstyle.CHOICES.index(cur) + 1) % 3] if cur in padstyle.CHOICES else "auto"
+        self.store.set_pref("pad_style", nxt)
+        self.padStyleChanged.emit()
 
     @Slot(str, result=str)
     def pageSub(self, name: str) -> str:
+        return padstyle.pad_text(self._page_sub(name), self.padStyle)
+
+    def _page_sub(self, name: str) -> str:
         return {"help": "Up/Down to choose, Enter / A to press.  Esc / B = back.",
                 "simtycoon": "Your simulation and management games. Enter / A to play or install.  Esc / B = back.",
                 "golive": "Enter / A to press.  Esc / B = back.",
@@ -5744,6 +6016,19 @@ class Backend(QObject):
             return self._xemu_rows()
         if name == "brightness":
             return self._br_rows()
+        if name == "makeusb":
+            rows = [self._info("Make a CodeAque USB: adds a CodeAque folder with a folder for each console, a BIOS folder and a "
+                               "README to a USB stick. It does NOT format or erase the stick - your files stay. Put only your own "
+                               "games / BIOS dumps or free homebrew on it.")]
+            if getattr(self, "_mu_msg", ""):
+                rows.append(self._info("Result:  " + self._mu_msg))
+            ds = usbdrive.drives()
+            if not ds:
+                rows.append(self._info("No USB stick found. Plug one in - it shows here by itself."))
+            for i, d in enumerate(ds):
+                rows.append({"kind": "item", "id": f"mu:{i}", "title": f"Prepare \"{d.label}\"", "detail": d.path})
+            rows.append({"kind": "item", "id": "back", "title": "Back"})
+            return rows
         if name == "anticheat":
             g = getattr(self, "_ac_game", None)
             rows = [self._info(f"{g.title if g else 'This game'} uses an anti-cheat that refuses Linux, so it won't run here "
@@ -5959,6 +6244,13 @@ class Backend(QObject):
             return "back" if rid == "back" else ""
         if name == "brightness":
             return self._br_activate(rid)
+        if name == "makeusb":
+            if rid.startswith("mu:"):
+                ds = usbdrive.drives()
+                i = int(rid[3:])
+                if 0 <= i < len(ds):
+                    ok, self._mu_msg = usbdrive.prepare(ds[i].path)
+            return "refresh"
         if name == "anticheat":
             if rid == "acwin":
                 return self._create_activate("crwin") or "refresh"

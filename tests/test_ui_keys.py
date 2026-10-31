@@ -136,7 +136,7 @@ def test_enter_on_top_and_bottom_done_row(app, tmp_path, monkeypatch):
     ui = Ui(app, tmp_path / "b", monkeypatch)
     try:
         ui.key(Qt.Key_Up)                        # still on the top row
-        for _ in range(60):                      # walk to the very bottom
+        for _ in range(120):                     # walk to the very bottom
             ui.key(Qt.Key_Down, 15)
         ui.key(Qt.Key_Return)
         assert ui.mode == "library" and not ui.backend.firstRun

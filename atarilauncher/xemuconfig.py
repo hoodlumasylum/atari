@@ -485,18 +485,29 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _download(url: str, dest: Path) -> None:
+def _download(url: str, dest: Path, progress: Callable[[float], None] | None = None) -> None:
     import urllib.request
     req = urllib.request.Request(url, headers={"User-Agent": "CodeAque"})
     with urllib.request.urlopen(req, timeout=60) as r, open(dest, "wb") as f:
-        shutil.copyfileobj(r, f)
+        total = int(r.headers.get("Content-Length") or 0)
+        got = 0
+        while True:
+            b = r.read(16384)
+            if not b:
+                break
+            f.write(b)
+            got += len(b)
+            if progress and total:
+                progress(min(1.0, got / total))
 
 
-def get_ready_hdd(home: Path | None = None, which: Callable = shutil.which, fetch: Callable = _download) -> tuple[bool, str, Path | None]:
+def get_ready_hdd(home: Path | None = None, which: Callable = shutil.which, fetch: Callable = _download,
+                  say: Callable[[str, float], None] | None = None) -> tuple[bool, str, Path | None]:
     """Download xemu's formatted disk, check both checksums, keep it as xbox_hdd_formatted.qcow2 in xemu's folder (never over another
     file) and point hdd_path at it. The old disk (if any) is left where it is. -> (ok, message, path)."""
     import tempfile
     import zipfile
+    say = say or (lambda stage, frac: None)
     folder = data_folders(home, which)[0]
     dest = folder / READY_HDD_NAME
     try:
@@ -506,7 +517,12 @@ def get_ready_hdd(home: Path | None = None, which: Callable = shutil.which, fetc
                 return False, f"{dest} exists but is not xemu's ready-made disk - nothing was changed.", None
             with tempfile.TemporaryDirectory(dir=folder) as td:
                 z = Path(td) / "hdd.zip"
-                fetch(READY_HDD_URL, z)
+                say("Downloading", 0.0)
+                try:
+                    fetch(READY_HDD_URL, z, lambda f: say("Downloading", f))
+                except TypeError:
+                    fetch(READY_HDD_URL, z)
+                say("Checking", 1.0)
                 if _sha256(z) != READY_HDD_ZIP_SHA256:
                     return False, "The download did not match xemu's published disk (checksum) - nothing was changed.", None
                 with zipfile.ZipFile(z) as zf:
@@ -523,6 +539,7 @@ def get_ready_hdd(home: Path | None = None, which: Callable = shutil.which, fetc
         return False, f"Could not get the ready-made disk: {exc}", None
     except Exception as exc:  # network errors (urllib)
         return False, f"Could not download the ready-made disk (is the internet on?): {exc}", None
+    say("Setting it up", 1.0)
     wrote = []
     for toml in config_files(home, which) or [folder / "xemu.toml"]:
         try:

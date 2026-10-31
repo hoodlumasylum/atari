@@ -25,7 +25,7 @@ def grub(out, w=1920, h=1080):
             d.rectangle((x0, y, x0 + iw, y + ih), fill=(150, 116, 40), outline=GOLD, width=3)
         d.text((x0 + 18, y + ih / 2), t, font=f if i < 2 else small, fill=DARK if sel else (GOLD if i < 2 else DIM), anchor="lm")
         y += ih + int(8 * h / 1080)
-    d.text((w / 2, h * 0.92), "Starting CodeAque in 5 s   -   Up / Down and Enter to choose",
+    d.text((w / 2, h * 0.92), "Starting CodeAque in 5s",
            font=ImageFont.truetype(BOLD, int(24 * h / 1080)), fill=LIGHT, anchor="mt")
     im.save(out)
 

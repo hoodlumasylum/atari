@@ -58,3 +58,16 @@ def test_trust_paired_pads(monkeypatch):
                                                                    bluetooth.Device("AA:BB:CC:DD:EE:02", "Wireless Controller", paired=True, trusted=True)])
     monkeypatch.setattr(bluetooth, "_run", lambda a, r=None, t=20: (calls.append(a) or 0, ""))
     assert bluetooth.trust_paired_pads() == ["Wireless Controller"] and calls == [["trust", "AA:BB:CC:DD:EE:01"]]
+
+
+def test_controller_check_report():
+    info = "Name: Wireless Controller\nIcon: input-gaming\nPaired: yes\nBonded: no\nTrusted: yes\nConnected: no\n"
+    d = bluetooth.parse_info("AA:BB:CC:DD:EE:01", "Wireless Controller", info)
+    assert d.bonded is False
+    lines = bluetooth.check_report([d], "", "", dual_boot=True)
+    t = " ".join(lines)
+    assert "bonded NO" in t and "Forget it and pair it again" in t and "Fix controller reconnect" in t and "Windows" in t
+    m, i = bluetooth.reconnect_conf("", "")
+    ok = bluetooth.check_report([bluetooth.parse_info("AA:BB:CC:DD:EE:01", "Wireless Controller", info.replace("Bonded: no", "Bonded: yes"))], m, i, False)
+    assert "bonded yes" in ok[0] and "press Fix controller" not in " ".join(ok) and any("FastConnectable=true" in l for l in ok)
+    assert bluetooth.parse_info("AA:BB:CC:DD:EE:01", "x", "Paired: yes\n").bonded is None

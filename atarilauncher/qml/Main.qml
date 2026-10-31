@@ -564,6 +564,7 @@ Window {
         else if (r.kind === "brightnesspage") openPage("brightness")
         else if (r.kind === "screentvpage") openPage("screentv")
         else if (r.kind === "findgamespage") openPage("findgames")
+        else if (r.kind === "makeusbpage") openPage("makeusb")
         else if (r.kind === "themepage") openPage("theme")
         else if (r.kind === "bootpage") openPage("boot")
         else if (r.kind === "steamboot") { backend.toggleSteamBoot(); refreshSetup(true) }
@@ -582,6 +583,8 @@ Window {
         else if (r.kind === "introremove") { backend.removeIntro(); refreshSetup(true) }
         else if (r.kind === "intropreview") backend.previewIntro()
         else if (r.kind === "bigpicture") { backend.toggleSteamBigPicture(); refreshSetup(true) }
+        else if (r.kind === "padstyle") { backend.cyclePadStyle(); refreshSetup(true) }
+        else if (r.kind === "picshape") { backend.cyclePictureShape(); refreshSetup(true) }
         else if (r.kind === "fsgames") { backend.toggleFullscreenGames(); refreshSetup(true) }
         else if (r.kind === "escexit") { backend.toggleEscExit(); refreshSetup(true) }
         else if (r.kind === "anim") { backend.toggleAnimations(); refreshSetup(true) }
@@ -1279,12 +1282,12 @@ Window {
                               ? (win.browseTarget.files ? "Choose the file (folders open with Enter, Left = up).  Esc / B = cancel."
                                  : "Pick the folder, then choose \"Use this folder\".  Left = up, Esc / B = cancel.")
                               : win.mode === "emulators"
-                              ? "Enter / A switches the emulator for a console, or runs the action.  Esc / B = back."
+                              ? backend.padText("Enter / A switches the emulator for a console, or runs the action.  Esc / B = back.", backend.padStyle)
                               : win.mode === "controls"
-                              ? "Keyboard keys inside each emulator.  Up/Down to scroll.  Esc / B = back."
+                              ? backend.padText("Keyboard keys inside each emulator.  Up/Down to scroll.  Esc / B = back.", backend.padStyle)
                               : backend.firstRun
                               ? "Up/Down to choose, Enter / A to change.  Choose DONE / CONTINUE (or press Esc / B) to go to your games."
-                              : "Up/Down to choose, Enter / A to change.  Delete / X clears a folder.  Esc / B = back."
+                              : backend.padText("Up/Down to choose, Enter / A to change.  Delete / X clears a folder.  Esc / B = back.", backend.padStyle)
                         color: "#e6e8f2"
                         font.pixelSize: 21 * win.u
                     }
@@ -1463,7 +1466,7 @@ Window {
                     spacing: 6 * win.u
                     Text { text: backend.pageTitle(win.pageName); color: Theme.redBright; font.pixelSize: 42 * win.u
                            font.bold: true; font.letterSpacing: 4 * win.u }
-                    Text { text: backend.pageSub(win.pageName); color: "#e6e8f2"; font.pixelSize: 21 * win.u }
+                    Text { text: (backend.padStyle, backend.pageSub(win.pageName)); color: "#e6e8f2"; font.pixelSize: 21 * win.u }
                 }
             }
             Rectangle {
