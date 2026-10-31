@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Install CodeAque
+Exec=/usr/local/bin/codeaque-install --auto
+Icon=atari-launcher
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

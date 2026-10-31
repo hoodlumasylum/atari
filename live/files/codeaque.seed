@@ -1,0 +1,2 @@
+# CodeAque Live: after the install, set CodeAque up for the new user (see /opt/codeaque-live/postinstall.sh)
+ubiquity ubiquity/success_command string in-target /bin/sh /opt/codeaque-live/postinstall.sh

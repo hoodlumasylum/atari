@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Install CodeAque to this PC
+Comment=Guided install, keeps Windows by default
+Exec=/usr/local/bin/codeaque-install
+Icon=atari-launcher
+Categories=System;

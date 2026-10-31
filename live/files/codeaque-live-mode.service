@@ -1,0 +1,11 @@
+[Unit]
+Description=CodeAque Live: pick Try or Install mode
+Before=lightdm.service display-manager.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/codeaque-live-mode
+
+[Install]
+WantedBy=multi-user.target

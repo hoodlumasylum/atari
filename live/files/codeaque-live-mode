@@ -1,0 +1,14 @@
+#!/bin/sh
+# CodeAque Live: runs at every start of the USB stick, before the login manager.
+#   "Try CodeAque"     -> straight into CodeAque full screen (the CodeAque-only session).
+#   "Install CodeAque" -> the normal desktop with the guided installer opened by itself.
+# On an installed PC (no live medium) it does nothing.
+grep -q "boot=casper" /proc/cmdline || exit 0
+CONF=/etc/lightdm/lightdm.conf.d/95-codeaque-live.conf
+if grep -q "codeaque.install" /proc/cmdline; then
+    printf '[Seat:*]\nautologin-session=cinnamon\n' > "$CONF"
+    touch /run/codeaque-install-mode
+else
+    rm -f "$CONF"
+fi
+exit 0

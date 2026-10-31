@@ -1,0 +1,60 @@
+#!/bin/bash
+# CodeAque Live: guided install to this PC's internal drive. Plain warnings first, then Linux Mint's own installer (Ubiquity)
+# with CodeAque already inside. Nothing is changed on any drive before the installer's own final "Install Now" press.
+if [ "$1" = "--auto" ] && [ ! -e /run/codeaque-install-mode ]; then exit 0; fi
+grep -q "boot=casper" /proc/cmdline || { zenity --info --text="CodeAque is already installed on this PC."; exit 0; }
+T="Install CodeAque"
+zenity --question --title="$T" --width=560 --ok-label="I have a backup - continue" --cancel-label="Cancel" --text=\
+"<big><b>Back up first</b></big>
+
+Installing changes this PC's internal drive (SSD). Before you go on, copy anything important (photos, documents, game saves)
+to another drive or to the cloud.
+
+Nothing is changed until the very last \"Install Now\" button in the next steps." || exit 0
+
+WIN=""; BITLOCKER=""; HIBER=""
+while read -r name fstype; do
+    case "$fstype" in
+        BitLocker) BITLOCKER="$BITLOCKER /dev/$name" ;;
+        ntfs)
+            if [ -e "/dev/$name" ] && sudo ntfs-3g.probe --readwrite "/dev/$name" >/dev/null 2>&1; then :; else
+                rc=$?; [ "$rc" = 14 ] && HIBER="$HIBER /dev/$name"; fi
+            WIN="$WIN /dev/$name" ;;
+    esac
+done < <(lsblk -rno NAME,FSTYPE 2>/dev/null)
+
+if [ -n "$BITLOCKER" ]; then
+    zenity --warning --title="$T" --width=560 --text=\
+"<b>BitLocker is on</b> (drive encryption) on:$BITLOCKER
+
+Making room next to Windows is not safe while BitLocker is on. In Windows: Settings > Privacy &amp; security > Device encryption
+(or Control Panel > BitLocker) and turn it off or suspend it. Keep your BitLocker recovery key. Then start the CodeAque USB again."
+    zenity --question --title="$T" --width=480 --ok-label="Continue anyway" --cancel-label="Stop" --text="Continue anyway? (Only if you know what you are doing.)" || exit 0
+fi
+if [ -n "$HIBER" ]; then
+    zenity --warning --title="$T" --width=560 --text=\
+"<b>Windows is not fully shut down</b> (Fast Startup or hibernation) on:$HIBER
+
+Its drive cannot be resized safely. In Windows: Control Panel > Power Options > Choose what the power buttons do >
+untick \"Turn on fast startup\", then hold Shift while you click Shut down. Then start the CodeAque USB again."
+    exit 0
+fi
+if [ -n "$WIN" ]; then
+    MSG="<b>Windows was found. To keep it (dual boot):</b>
+
+On the \"Installation type\" page choose <b>Install Linux Mint alongside Windows Boot Manager</b> (it is the first choice and already
+selected). Then drag the line to choose how much space CodeAque gets (60 GB or more is good for games).
+
+<b>Do not</b> choose \"Erase disk\" - that deletes Windows and all your files.
+
+After the install, the PC asks at start-up: CodeAque or Windows."
+else
+    MSG="<b>No Windows was found on this PC.</b>
+
+On the \"Installation type\" page, \"Erase disk and install\" uses the whole drive.
+<b>Everything on that drive is deleted.</b> Make sure you picked the right drive (not this USB stick)."
+fi
+zenity --info --title="$T" --width=620 --ok-label="Start the installer" --text="$MSG
+
+The installer is Linux Mint's own. It says \"Linux Mint\" - CodeAque is already inside and starts by itself afterwards." || exit 0
+exec sudo --preserve-env=DBUS_SESSION_BUS_ADDRESS,XDG_DATA_DIRS,XDG_RUNTIME_DIR,GTK_THEME sh -c 'WEBKIT_DISABLE_COMPOSITING_MODE=1 ubiquity gtk_ui'

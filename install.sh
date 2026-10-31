@@ -32,7 +32,7 @@ say()  { printf '\n\033[1;33m==>\033[0m \033[1m%s\033[0m\n' "$*"; }
 warn() { printf '\033[1;31m!!\033[0m %s\n' "$*" >&2; }
 ask()  { [ "$ASSUME_YES" = 1 ] && return 0; [ -t 0 ] || return 1; read -r -p "$1 [Y/n] " a; case "${a:-y}" in [Yy]*) return 0 ;; *) return 1 ;; esac; }
 
-if [ "$(id -u)" = 0 ]; then
+if [ "$(id -u)" = 0 ] && [ "${ATARI_ALLOW_ROOT_BUILD:-0}" != 1 ]; then   # (ATARI_ALLOW_ROOT_BUILD: the Live USB image build only)
     warn "Please run this as your normal user, not with sudo. (It will ask for your password only if it needs to.)"
     exit 1
 fi
