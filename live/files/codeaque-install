@@ -42,8 +42,10 @@ fi
 if [ -n "$WIN" ]; then
     MSG="<b>Windows was found. To keep it (dual boot):</b>
 
-On the \"Installation type\" page choose <b>Install Linux Mint alongside Windows Boot Manager</b> (it is the first choice and already
-selected). Then drag the line to choose how much space CodeAque gets (60 GB or more is good for games).
+On the \"Installation type\" page keep <b>Install CodeAque Live alongside Windows Boot Manager</b> (the first choice, already
+selected). If the installer shows a slider, drag it to choose how much space CodeAque gets (60 GB or more is good for games).
+
+<b>If that choice is not there, press Quit</b> - the installer did not see Windows, and going on could delete it.
 
 <b>Do not</b> choose \"Erase disk\" - that deletes Windows and all your files.
 
@@ -56,5 +58,5 @@ On the \"Installation type\" page, \"Erase disk and install\" uses the whole dri
 fi
 zenity --info --title="$T" --width=620 --ok-label="Start the installer" --text="$MSG
 
-The installer is Linux Mint's own. It says \"Linux Mint\" - CodeAque is already inside and starts by itself afterwards." || exit 0
+The installer is Linux Mint's own, with CodeAque already inside. After the install CodeAque starts by itself." || exit 0
 exec sudo --preserve-env=DBUS_SESSION_BUS_ADDRESS,XDG_DATA_DIRS,XDG_RUNTIME_DIR,GTK_THEME sh -c 'WEBKIT_DISABLE_COMPOSITING_MODE=1 ubiquity gtk_ui'

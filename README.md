@@ -208,7 +208,7 @@ Pick a game from a wall of big covers, press **A** (or **Enter**), and it starts
 * Not in this version: greying out unplugged games instead of hiding them, and pre-filling a stick with free homebrew (I could not yet check each homebrew file's licence properly).
 * Not tested with a real USB stick on the Dell: tested with a folder pretending to be a plugged-in stick.
 
-Plan for a future CodeAque Live USB: [docs/live-usb-plan.md](docs/live-usb-plan.md).
+**CodeAque Live USB (0.5.9):** a bootable stick image (Linux Mint based, UEFI + Secure Boot + BIOS) that starts straight into CodeAque, with Try (keeps your settings), Install (next to Windows) and Safe graphics. How to download, check and write it with Rufus: [docs/live-usb.md](docs/live-usb.md). Older plan: [docs/live-usb-plan.md](docs/live-usb-plan.md).
 
 ## What's new in 0.5.2
 

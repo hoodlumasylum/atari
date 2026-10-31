@@ -13,6 +13,7 @@ OUT=$W/codeaque-live-$VER.iso
 mkdir -p "$W"; cd "$W"
 
 say() { printf '\n==> %s\n' "$*"; }
+die() { echo "ERROR: $*" >&2; exit 1; }
 
 # ---------------------------------------------------------------- 1. the official Linux Mint ISO, verified
 if [ ! -f "$BASE.ok" ]; then
@@ -41,6 +42,8 @@ for m in dev dev/pts proc sys run; do sudo mount --bind "/$m" "root/$m"; done
 sudo cp root/etc/resolv.conf root/etc/resolv.conf.codeaque 2>/dev/null || true
 sudo rm -f root/etc/resolv.conf; sudo cp -L /etc/resolv.conf root/etc/resolv.conf
 sudo mkdir -p root/etc/apt/codeaque-saved
+# keep Mint's own package lists: the installer needs them (with the build mirror's lists it stops with "held broken packages")
+sudo rm -rf root/etc/apt/codeaque-saved/lists; sudo cp -a root/var/lib/apt/lists root/etc/apt/codeaque-saved/lists
 sudo sh -c "mv root/etc/apt/sources.list.d/*.list root/etc/apt/codeaque-saved/ 2>/dev/null || true"
 echo "deb $UBUNTU noble main restricted universe multiverse
 deb $UBUNTU noble-updates main restricted universe multiverse
@@ -89,9 +92,27 @@ subprocess.run(["update-alternatives", "--set", "default.plymouth", str(d / "cod
 PY
 sudo chroot root sh -c 'update-initramfs -u -k all >/dev/null 2>&1 || update-initramfs -u'
 # put the build-only package sources back the way Mint ships them
+# keep the ISO's package pool in step with what is now installed: the installer adds pool packages
+# (boot loader, language bits) and stops with "held broken packages" if their versions no longer match
+say "Syncing the installer package pool"
+sudo mkdir -p root/tmp/pool-sync
+for f in $(find iso/pool -name '*.deb'); do
+    p=$(dpkg-deb -f "$f" Package); pv=$(dpkg-deb -f "$f" Version)
+    v=$(sudo chroot root dpkg-query -W -f='${Version}' "$p" 2>/dev/null || true)
+    if [ -n "$v" ] && [ "$v" != "$pv" ]; then
+        echo "  pool: $p $pv -> $v"
+        sudo chroot root sh -c "cd /tmp/pool-sync && apt-get download -q '$p=$v'" >/dev/null || die "could not fetch $p $v for the pool"
+        d=$(dirname "$f"); sudo rm -f "$f"; sudo mv root/tmp/pool-sync/${p}_*.deb "$d/"
+    fi
+done
+sudo rm -rf root/tmp/pool-sync
+(cd iso && for c in main contrib; do [ -d dists/noble/$c ] || continue
+    sudo sh -c "apt-ftparchive packages pool/$c > dists/noble/$c/binary-amd64/Packages 2>/dev/null; gzip -9nc dists/noble/$c/binary-amd64/Packages > dists/noble/$c/binary-amd64/Packages.gz"; done
+ sudo sh -c "apt-ftparchive -o APT::FTPArchive::Release::Codename=noble -o APT::FTPArchive::Release::Suite=noble -o APT::FTPArchive::Release::Components='main contrib' -o APT::FTPArchive::Release::Architectures=amd64 release dists/noble > /tmp/Release.new && mv /tmp/Release.new dists/noble/Release")
 sudo rm -f root/etc/apt/sources.list.d/codeaque-build.list
-sudo sh -c "mv root/etc/apt/codeaque-saved/*.list root/etc/apt/sources.list.d/ 2>/dev/null || true"; sudo rmdir root/etc/apt/codeaque-saved
-sudo chroot root apt-get update -q >/dev/null 2>&1 || true
+sudo sh -c "mv root/etc/apt/codeaque-saved/*.list root/etc/apt/sources.list.d/ 2>/dev/null || true"
+sudo rm -rf root/var/lib/apt/lists; sudo mv root/etc/apt/codeaque-saved/lists root/var/lib/apt/lists
+sudo rmdir root/etc/apt/codeaque-saved
 sudo rm -rf root/tmp/* root/var/lib/apt/lists/*_codeaque* root/root/.cache root/etc/skel/.cache
 sudo rm -f root/etc/resolv.conf; [ -e root/etc/resolv.conf.codeaque ] && sudo mv root/etc/resolv.conf.codeaque root/etc/resolv.conf || sudo ln -sf ../run/systemd/resolve/stub-resolv.conf root/etc/resolv.conf
 cleanup; trap - EXIT
@@ -156,6 +177,18 @@ label local
 	COM32 chain.c32
 	APPEND hd0
 L
+cat > iso/isolinux/isolinux.cfg <<'I'
+default vesamenu.c32
+prompt 0
+timeout 80
+menu title CodeAque Live
+menu background splash.png
+menu color title 1;33;40 #ffd27a00 #00000000 none
+menu color sel 7;37;40 #ff000000 #ffd27a00 all
+menu color unsel 37;40 #ffe0e0e0 #00000000 none
+menu tabmsg Press Tab to edit options
+include live.cfg
+I
 sed -i 's/^menu title .*/menu title CodeAque Live/; s/^timeout .*/timeout 80/' iso/isolinux/isolinux.cfg iso/isolinux/menu.cfg iso/isolinux/stdmenu.cfg 2>/dev/null || true
 sed -i 's/Welcome to Linux Mint.*/CodeAque Live/' iso/isolinux/*.cfg
 python3 "$HERE/make_splash.py" root/opt/codeaque/atarilauncher/assets/codeaque-logo.png iso/isolinux/splash.png
