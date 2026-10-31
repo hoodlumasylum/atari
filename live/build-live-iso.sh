@@ -55,12 +55,12 @@ apt-get install -y -q --no-install-recommends openbox zenity xdotool wmctrl pyth
     python3-venv python3-pip bluez libxcb-cursor0 libxkbcommon-x11-0 >/dev/null
 HOME=/etc/skel ATARI_INSTALL_DIR=/opt/codeaque ATARI_ALLOW_ROOT_BUILD=1 bash /tmp/codeaque-src/install.sh --yes </dev/null
 test -x /opt/codeaque/.venv/bin/python
-/opt/codeaque/.venv/bin/python -c "import atarilauncher, PySide6; print(\"CodeAque\", atarilauncher.__version__)"
+PYTHONPATH=/opt/codeaque /opt/codeaque/.venv/bin/python -c "import atarilauncher, PySide6; print(\"CodeAque\", atarilauncher.__version__)"
 chown -R 1000:1000 /opt/codeaque
 apt-get clean
 '
 # CodeAque-only session for the live user (the same files CodeAque > Settings > CodeAque-only mode writes)
-sudo chroot root /opt/codeaque/.venv/bin/python -c "
+sudo chroot root env PYTHONPATH=/opt/codeaque /opt/codeaque/.venv/bin/python -c "
 from atarilauncher import kiosk; from pathlib import Path
 open('/tmp/kiosk.sh','w').write(kiosk.enable_script('codeaque', run_sh=Path('/opt/codeaque/run.sh'), desktop_exec='cinnamon-session'))"
 sudo chroot root sh /tmp/kiosk.sh
@@ -75,7 +75,7 @@ sudo mkdir -p root/opt/codeaque-live
 sudo install -m 755 "$HERE/files/postinstall.sh" root/opt/codeaque-live/postinstall.sh
 mkdir -p iso/preseed; cp "$HERE/files/codeaque.seed" iso/preseed/codeaque.seed
 # CodeAque boot splash (Plymouth) instead of the Mint logo
-sudo chroot root /opt/codeaque/.venv/bin/python - <<'PY'
+sudo chroot root env PYTHONPATH=/opt/codeaque /opt/codeaque/.venv/bin/python - <<'PY'
 from atarilauncher import quietboot
 from pathlib import Path
 import shutil, subprocess
